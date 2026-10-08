@@ -1,0 +1,414 @@
+#include "DeckPanel.h"
+#include "Theme.h"
+
+namespace orbit
+{
+
+namespace
+{
+    juce::String formatTime (double sec, bool tenths = true)
+    {
+        const bool neg = sec < 0;
+        sec = std::abs (sec);
+        const int m = (int) (sec / 60.0);
+        const double s = sec - m * 60.0;
+        auto str = juce::String (m) + ":" + (tenths ? juce::String (s, 1).paddedLeft ('0', 4) : juce::String ((int) s).paddedLeft ('0', 2));
+        return neg ? "-" + str : str;
+    }
+
+    void chip (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& text, bool lit, juce::Colour litColour)
+    {
+        g.setColour (lit ? litColour : Theme::panelHi);
+        g.fillRoundedRectangle (r, 3.0f);
+        g.setColour (lit ? litColour.brighter (0.3f) : Theme::line);
+        g.drawRoundedRectangle (r.reduced (0.5f), 3.0f, 1.0f);
+        g.setColour (lit ? juce::Colours::black : Theme::textDim);
+        g.setFont (Theme::font (11.0f, true));
+        g.drawText (text, r, juce::Justification::centred);
+    }
+}
+
+DeckPanel::DeckPanel (int d, AudioEngine& e, ActionRouter& r) : deck (d), engine (e), router (r)
+{
+    setOpaque (true);
+    startTimerHz (20);
+}
+
+void DeckPanel::resized()
+{
+    auto r = getLocalBounds().toFloat().reduced (10.0f, 8.0f);
+    rowInfo = r.removeFromTop (38.0f);
+    rowStatus = r.removeFromTop (26.0f);
+    r.removeFromTop (6.0f);
+    rowOverview = r.removeFromTop (juce::jlimit (30.0f, 56.0f, r.getHeight() * 0.36f));
+    r.removeFromTop (8.0f);
+    rowPads = r.removeFromTop (26.0f);
+    r.removeFromTop (8.0f);
+    rowControls = r;
+    overviewWidth = 0;
+}
+
+void DeckPanel::timerCallback()
+{
+    const auto& st = engine.deck (deck).state();
+    const int s = st.trackSerial.load();
+    if (s != serial)
+    {
+        serial = s;
+        track = s != 0 ? engine.deck (deck).getLoadedTrack() : nullptr;
+        overviewWidth = 0;
+        loadingText = {};
+        repaint();
+        return;
+    }
+
+    // Repaint only when something visible changed.
+    juce::uint64 h = 1469598103934665603ull;
+    auto mix = [&h] (double v) { h ^= (juce::uint64) std::llround (v * 100.0); h *= 1099511628211ull; };
+    mix (std::floor (st.positionSec.load() * 10.0)); mix (st.bpm.load()); mix (st.playing.load()); mix (st.sync.load());
+    mix (st.master.load()); mix (st.keyLock.load()); mix (st.quantize.load()); mix (st.loopActive.load());
+    mix (st.tempoRatio.load() * 100.0); mix (st.stemsReady.load()); mix (std::floor (st.stemsProgress.load() * 100.0f));
+    mix (st.cuePointSec.load()); mix (st.endWarning.load() ? std::floor (juce::Time::getMillisecondCounter() / 400.0) : 0.0);
+    for (size_t i = 0; i < 8; ++i) mix (st.hotStart[i].load());
+    for (size_t i = 0; i < 4; ++i) mix (st.stemGain[i].load() * 100.0f);
+    mix (router.getPitchRangePercent (deck));
+    if (h != lastHash) { lastHash = h; repaint(); }
+}
+
+void DeckPanel::paint (juce::Graphics& g)
+{
+    g.fillAll (Theme::panel);
+    regions.clear();
+
+    const auto& st = engine.deck (deck).state();
+    const auto col = Theme::deckColour (deck);
+    const bool loaded = track != nullptr;
+
+    // --- Info row ------------------------------------------------------------
+    {
+        auto r = rowInfo;
+        auto badge = r.removeFromLeft (30.0f).withSizeKeepingCentre (28.0f, 28.0f);
+        g.setColour (col);
+        g.fillRoundedRectangle (badge, 4.0f);
+        g.setColour (juce::Colours::black);
+        g.setFont (Theme::font (17.0f, true));
+        g.drawText (juce::String (deck + 1), badge, juce::Justification::centred);
+        r.removeFromLeft (10.0f);
+
+        auto bpmArea = r.removeFromRight (110.0f);
+        g.setColour (st.master.load() ? Theme::accent : Theme::text);
+        g.setFont (Theme::font (27.0f, true));
+        const double bpm = st.bpm.load();
+        g.drawText (loaded && bpm > 0 ? juce::String (bpm, 2) : "--.--", bpmArea.removeFromTop (28.0f), juce::Justification::centredRight);
+        g.setColour (Theme::textDim);
+        g.setFont (Theme::font (10.5f, true));
+        g.drawText ("BPM", bpmArea, juce::Justification::topRight);
+
+        if (loaded && track->info.key.isNotEmpty())
+        {
+            auto keyChip = r.removeFromRight (44.0f).withSizeKeepingCentre (40.0f, 22.0f);
+            g.setColour (Theme::panelHi);
+            g.fillRoundedRectangle (keyChip, 3.0f);
+            g.setColour (Theme::good);
+            g.setFont (Theme::font (13.0f, true));
+            g.drawText (track->info.key, keyChip, juce::Justification::centred);
+            r.removeFromRight (6.0f);
+        }
+
+        if (loaded)
+        {
+            if (! track->info.colour.isTransparent())
+            {
+                g.setColour (track->info.colour);
+                g.fillRect (r.removeFromLeft (3.0f).reduced (0.0f, 4.0f));
+                r.removeFromLeft (7.0f);
+            }
+            g.setColour (Theme::text);
+            g.setFont (Theme::font (16.5f, true));
+            g.drawText (track->info.title, r.removeFromTop (21.0f), juce::Justification::bottomLeft, true);
+            g.setColour (Theme::textDim);
+            g.setFont (Theme::font (13.0f));
+            g.drawText (track->info.artist, r, juce::Justification::topLeft, true);
+        }
+        else
+        {
+            g.setColour (Theme::textFaint);
+            g.setFont (Theme::font (15.0f));
+            g.drawText (loadingText.isNotEmpty() ? loadingText : juce::String ("No track loaded"), r, juce::Justification::centredLeft);
+        }
+    }
+
+    // --- Status row ------------------------------------------------------------
+    {
+        auto r = rowStatus;
+        const double pos = st.positionSec.load(), len = st.lengthSec.load();
+        g.setFont (Theme::font (19.0f, true));
+        g.setColour (Theme::text);
+        g.drawText (loaded ? formatTime (pos) : "0:00.0", r.removeFromLeft (78.0f), juce::Justification::centredLeft);
+        const bool warn = st.endWarning.load() && (juce::Time::getMillisecondCounter() / 400) % 2 == 0;
+        g.setColour (warn ? Theme::bad : Theme::textDim);
+        g.drawText (loaded ? formatTime (-(len - pos)) : "-0:00.0", r.removeFromLeft (86.0f), juce::Justification::centredLeft);
+
+        // Beat counter (position in the bar)
+        r.removeFromLeft (6.0f);
+        int beatInBar = 0;
+        if (loaded && track->grid.isValid() && pos >= track->grid.getBeats().front().timeSec)
+            beatInBar = track->grid.beatInBarAt (pos);
+        for (int i = 1; i <= 4; ++i)
+        {
+            auto b = r.removeFromLeft (14.0f).withSizeKeepingCentre (10.0f, 10.0f);
+            g.setColour (i == beatInBar ? (i == 1 ? Theme::bad : col) : Theme::line);
+            g.fillRoundedRectangle (b, 2.0f);
+        }
+
+        // Tempo + range
+        auto right = r.removeFromRight (196.0f);
+        const double pct = (st.tempoRatio.load() - 1.0) * 100.0;
+        auto tempo = right.removeFromRight (100.0f);
+        g.setColour (Theme::text);
+        g.setFont (Theme::font (14.0f, true));
+        g.drawText ((pct >= 0 ? "+" : "") + juce::String (pct, 2) + "%", tempo.removeFromTop (16.0f), juce::Justification::centredRight);
+        g.setColour (Theme::textDim);
+        g.setFont (Theme::font (10.5f));
+        const int range = router.getPitchRangePercent (deck);
+        g.drawText (range >= 100 ? juce::String ("WIDE") : "\xc2\xb1" + juce::String (range) + "%", tempo, juce::Justification::centredRight);
+
+        right.removeFromRight (8.0f);
+        const auto p = juce::String ("d") + juce::String (deck + 1) + ".";
+        auto addChip = [&] (const juce::String& label, bool lit, juce::Colour c, const juce::String& action, float w)
+        {
+            auto cr = right.removeFromLeft (w).reduced (2.0f, 3.0f);
+            chip (g, cr, label, lit, c);
+            regions.push_back ({ cr, action, 0 });
+        };
+        addChip ("MASTER", st.master.load(), Theme::accent, p + "master", 52.0f);
+        addChip ("SYNC", st.sync.load(), col, p + "sync", 40.0f);
+        addChip ("MT", st.keyLock.load(), Theme::warn, p + "keylock", 28.0f);
+        addChip ("Q", st.quantize.load(), Theme::bad.withSaturation (0.6f), p + "quantize", 24.0f);
+    }
+
+    // --- Overview --------------------------------------------------------------
+    {
+        auto r = rowOverview;
+        g.setColour (Theme::waveBg);
+        g.fillRoundedRectangle (r, 3.0f);
+        regions.push_back ({ r, {}, 1 });
+
+        if (loaded && track->waveform != nullptr)
+        {
+            const float scale = g.getInternalContext().getPhysicalPixelScaleFactor();
+            const int pw = (int) std::lround (r.getWidth() * scale);
+            if (overviewWidth != pw || overview.isNull())
+            {
+                overviewWidth = pw;
+                const auto& w = *track->waveform;
+                overview = renderWaveformStrip (w, 0.0, (double) w.size() / juce::jmax (1, pw), pw,
+                                                (int) std::lround (r.getHeight() * scale), true);
+            }
+            g.drawImage (overview, r);
+
+            const double len = st.lengthSec.load();
+            if (len > 0.0)
+            {
+                auto xOf = [&] (double sec) { return r.getX() + (float) (sec / len) * r.getWidth(); };
+                const float px = xOf (st.positionSec.load());
+
+                g.setColour (juce::Colours::black.withAlpha (0.45f));
+                g.fillRect (juce::Rectangle<float> (r.getX(), r.getY(), px - r.getX(), r.getHeight()));
+
+                if (st.loopInSec.load() >= 0 && st.loopOutSec.load() > st.loopInSec.load())
+                {
+                    g.setColour (Theme::accent.withAlpha (st.loopActive.load() ? 0.45f : 0.2f));
+                    g.fillRect (juce::Rectangle<float>::leftTopRightBottom (xOf (st.loopInSec.load()), r.getY(),
+                                                                            juce::jmax (xOf (st.loopInSec.load()) + 2.0f, xOf (st.loopOutSec.load())), r.getBottom()));
+                }
+
+                for (auto& m : track->memoryCues)
+                {
+                    g.setColour (m.colour.isTransparent() ? Theme::bad : m.colour);
+                    const float x = xOf (m.startSec);
+                    juce::Path tri;
+                    tri.addTriangle (x - 3.5f, r.getY(), x + 3.5f, r.getY(), x, r.getY() + 5.0f);
+                    g.fillPath (tri);
+                }
+                for (size_t i = 0; i < 8; ++i)
+                {
+                    const double hs = st.hotStart[i].load();
+                    if (hs < 0.0) continue;
+                    g.setColour (juce::Colour (st.hotColour[i].load()));
+                    g.fillRect (xOf (hs) - 0.5f, r.getBottom() - 6.0f, 2.0f, 6.0f);
+                }
+
+                g.setColour (Theme::accent);
+                g.fillRect (xOf (st.cuePointSec.load()) - 0.5f, r.getY(), 1.0f, r.getHeight());
+                g.setColour (juce::Colours::white);
+                g.fillRect (px - 1.0f, r.getY() - 2.0f, 2.0f, r.getHeight() + 4.0f);
+            }
+        }
+    }
+
+    // --- Hot cue pads ------------------------------------------------------------
+    {
+        auto r = rowPads;
+        const float w = (r.getWidth() - 7 * 5.0f) / 8.0f;
+        for (int i = 0; i < 8; ++i)
+        {
+            auto pad = juce::Rectangle<float> (r.getX() + i * (w + 5.0f), r.getY(), w, r.getHeight());
+            const bool set = st.hotStart[(size_t) i].load() >= 0.0;
+            const auto c = juce::Colour (st.hotColour[(size_t) i].load());
+            g.setColour (set ? c.withAlpha (0.9f) : Theme::panelHi);
+            g.fillRoundedRectangle (pad, 3.0f);
+            g.setColour (set ? c.brighter (0.3f) : Theme::line);
+            g.drawRoundedRectangle (pad.reduced (0.5f), 3.0f, 1.0f);
+            g.setColour (set ? juce::Colours::black : Theme::textFaint);
+            g.setFont (Theme::font (12.0f, true));
+            g.drawText (juce::String::charToString ((juce::juce_wchar) ('A' + i)), pad, juce::Justification::centred);
+            regions.push_back ({ pad, "d" + juce::String (deck + 1) + ".hotcue." + juce::String (i + 1), 0 });
+        }
+    }
+
+    // --- Transport + stems -------------------------------------------------------
+    {
+        auto r = rowControls;
+        const auto p = juce::String ("d") + juce::String (deck + 1) + ".";
+
+        auto cue = r.removeFromLeft (58.0f).reduced (0.0f, 2.0f);
+        const bool atCue = loaded && ! st.playing.load();
+        g.setColour (atCue ? Theme::accent.withAlpha (0.18f) : Theme::panelHi);
+        g.fillEllipse (cue.withSizeKeepingCentre (cue.getHeight(), cue.getHeight()));
+        g.setColour (Theme::accent);
+        g.drawEllipse (cue.withSizeKeepingCentre (cue.getHeight(), cue.getHeight()).reduced (1.0f), 2.0f);
+        g.setFont (Theme::font (12.0f, true));
+        g.drawText ("CUE", cue, juce::Justification::centred);
+        regions.push_back ({ cue, p + "cue", 0 });
+
+        r.removeFromLeft (6.0f);
+        auto play = r.removeFromLeft (58.0f).reduced (0.0f, 2.0f);
+        const bool playing = st.playing.load();
+        auto pc = play.withSizeKeepingCentre (play.getHeight(), play.getHeight());
+        g.setColour (playing ? Theme::good.withAlpha (0.2f) : Theme::panelHi);
+        g.fillEllipse (pc);
+        g.setColour (Theme::good);
+        g.drawEllipse (pc.reduced (1.0f), 2.0f);
+        juce::Path icon;
+        const auto c = pc.getCentre();
+        if (playing)
+        {
+            icon.addRectangle (c.x - 6.0f, c.y - 7.0f, 4.0f, 14.0f);
+            icon.addRectangle (c.x + 2.0f, c.y - 7.0f, 4.0f, 14.0f);
+        }
+        else
+            icon.addTriangle (c.x - 5.0f, c.y - 8.0f, c.x - 5.0f, c.y + 8.0f, c.x + 8.0f, c.y);
+        g.fillPath (icon);
+        regions.push_back ({ play, p + "play", 0 });
+
+        r.removeFromLeft (10.0f);
+        auto loopBtn = r.removeFromLeft (64.0f).reduced (0.0f, 6.0f);
+        chip (g, loopBtn, "LOOP 4", st.loopActive.load(), Theme::accent);
+        regions.push_back ({ loopBtn, p + "beatloop.4", 0 });
+
+        // Stems
+        r.removeFromLeft (12.0f);
+        const bool ready = st.stemsReady.load();
+        const float prog = st.stemsProgress.load();
+        const float sw = (r.getWidth() - 3 * 6.0f) / 4.0f;
+        for (int s = 0; s < 4; ++s)
+        {
+            auto b = juce::Rectangle<float> (r.getX() + s * (sw + 6.0f), r.getY() + 2.0f, sw, r.getHeight() - 4.0f);
+            const float gain = st.stemGain[(size_t) s].load();
+            g.setColour (Theme::panelHi);
+            g.fillRoundedRectangle (b, 3.0f);
+            if (ready)
+            {
+                g.setColour (col.withAlpha (gain <= 0.0f ? 0.15f : 0.55f));
+                g.fillRoundedRectangle (b.withTrimmedRight (b.getWidth() * (1.0f - gain)), 3.0f);
+            }
+            g.setColour (Theme::line);
+            g.drawRoundedRectangle (b.reduced (0.5f), 3.0f, 1.0f);
+            g.setColour (ready ? (gain <= 0.0f ? Theme::bad : Theme::text) : Theme::textFaint);
+            g.setFont (Theme::font (11.0f, true));
+            g.drawText (juce::String (stemName (s)).toUpperCase(), b, juce::Justification::centred);
+            regions.push_back ({ b, p + "stem." + juce::String (s + 1) + ".mute", 2 });
+        }
+        if (ready && prog < 0.999f)
+        {
+            g.setColour (Theme::textDim);
+            g.setFont (Theme::font (10.0f));
+            g.drawText ("separating " + juce::String (juce::roundToInt (prog * 100.0f)) + "%",
+                        r.withY (r.getBottom() - 1.0f).withHeight (12.0f), juce::Justification::centredRight);
+        }
+    }
+}
+
+const DeckPanel::Region* DeckPanel::regionAt (juce::Point<float> p) const
+{
+    for (auto& r : regions)
+        if (r.r.contains (p))
+            return &r;
+    return nullptr;
+}
+
+void DeckPanel::press (const juce::String& id, bool down)
+{
+    ActionValue v;
+    v.down = down;
+    router.perform (id, v);
+}
+
+void DeckPanel::mouseDown (const juce::MouseEvent& e)
+{
+    auto* r = regionAt (e.position);
+    if (r == nullptr) return;
+
+    if (r->kind == 1)
+    {
+        engine.deck (deck).post (Deck::Cmd::seekFraction, (e.position.x - r->r.getX()) / r->r.getWidth());
+        return;
+    }
+    if (r->kind == 2)
+    {
+        dragStem = r->action.fromFirstOccurrenceOf ("stem.", false, false).getIntValue() - 1;
+        return;
+    }
+
+    auto action = r->action;
+    if (e.mods.isShiftDown() && action.contains (".hotcue."))
+        action += ".delete";
+    heldAction = action;
+    press (action, true);
+}
+
+void DeckPanel::mouseDrag (const juce::MouseEvent& e)
+{
+    if (dragStem >= 0 && e.getDistanceFromDragStart() > 3)
+    {
+        for (auto& r : regions)
+            if (r.kind == 2 && r.action.contains ("stem." + juce::String (dragStem + 1) + "."))
+            {
+                const double v = juce::jlimit (0.0, 1.0, (double) ((e.position.x - r.r.getX()) / r.r.getWidth()));
+                engine.deck (deck).post (Deck::Cmd::stemGain, v, dragStem);
+            }
+        return;
+    }
+    if (regionAt (e.getMouseDownPosition().toFloat()) != nullptr && regionAt (e.getMouseDownPosition().toFloat())->kind == 1)
+        if (auto* r = regionAt (e.getMouseDownPosition().toFloat()))
+            engine.deck (deck).post (Deck::Cmd::seekFraction, juce::jlimit (0.0f, 1.0f, (e.position.x - r->r.getX()) / r->r.getWidth()));
+}
+
+void DeckPanel::mouseUp (const juce::MouseEvent& e)
+{
+    if (dragStem >= 0)
+    {
+        if (e.getDistanceFromDragStart() <= 3)
+            press ("d" + juce::String (deck + 1) + ".stem." + juce::String (dragStem + 1) + ".mute", true);
+        dragStem = -1;
+        return;
+    }
+    if (heldAction.isNotEmpty())
+    {
+        press (heldAction, false);
+        heldAction = {};
+    }
+}
+
+} // namespace orbit

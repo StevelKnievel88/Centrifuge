@@ -1,0 +1,74 @@
+#pragma once
+#include "../Library/LibraryManager.h"
+#include "../Stems/StemManager.h"
+#include <juce_gui_basics/juce_gui_basics.h>
+#include <unordered_map>
+
+namespace orbit
+{
+
+/** rekordbox-style browser: sources and playlists on the left, tracks on the right. */
+class BrowserView : public juce::Component,
+                    private juce::TableListBoxModel,
+                    private juce::Timer
+{
+public:
+    BrowserView (LibraryManager& library, StemManager& stems);
+    ~BrowserView() override;
+
+    void refreshSources();
+
+    /** deck, track, track comes from the PC collection */
+    std::function<void (int, const TrackInfo&, bool)> onLoadToDeck;
+    std::function<int()> chooseDeckForDoubleClick;
+
+    // Hardware browsing
+    void scroll (int delta);
+    void enter();
+    void back();
+    void toggleFocus();
+    void loadSelected (int deck);
+
+    std::vector<TrackInfo> getVisibleTracks() const;
+    std::vector<TrackInfo> getSelectedTracks() const;
+    juce::String getCurrentListName() const { return currentListName; }
+
+    void resized() override;
+    void paint (juce::Graphics&) override;
+
+private:
+    class Item;
+    friend class Item;
+
+    void showList (std::shared_ptr<const LibrarySource> src, const PlaylistNode* node, const juce::String& name, const juce::String& key);
+    void applyFilter();
+
+    int getNumRows() override;
+    void paintRowBackground (juce::Graphics&, int row, int w, int h, bool selected) override;
+    void paintCell (juce::Graphics&, int row, int col, int w, int h, bool selected) override;
+    void cellDoubleClicked (int row, int col, const juce::MouseEvent&) override;
+    void sortOrderChanged (int columnId, bool forwards) override;
+    void cellClicked (int row, int col, const juce::MouseEvent&) override;
+    void timerCallback() override;
+
+    LibraryManager& library;
+    StemManager& stemManager;
+
+    std::vector<std::shared_ptr<const LibrarySource>> sources;
+    std::shared_ptr<const LibrarySource> currentSource;
+    std::vector<int> allRows, rows;   // indices into currentSource->tracks
+    juce::String currentListName, currentKey;
+    mutable std::unordered_map<juce::String, bool> stemCache;
+
+    juce::TreeView tree;
+    std::unique_ptr<juce::TreeViewItem> rootItem;
+    juce::TableListBox table { "tracks", this };
+    juce::TextEditor search;
+    juce::TextButton load1 { "LOAD 1" }, load2 { "LOAD 2" };
+    juce::Label countLabel;
+    bool treeFocused = false;
+    int sortColumn = 0;
+    bool sortForwards = true;
+};
+
+} // namespace orbit

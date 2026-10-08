@@ -1,0 +1,172 @@
+name: Build OrbitDJ
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ORT_VERSION: "1.22.0"
+  DML_VERSION: "1.15.4"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Export the HTDemucs stem model to ONNX (cached: only runs when the script changes)
+  # ---------------------------------------------------------------------------
+  model:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache model
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: model
+          key: htdemucs-onnx-${{ hashFiles('tools/export_htdemucs_onnx.py') }}-v1
+
+      - uses: actions/setup-python@v5
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          python-version: "3.11"
+
+      - name: Export model
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          pip install torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+          pip install "numpy<2" demucs==4.0.1 onnx==1.17.0 onnxruntime==1.20.1 soundfile
+          git clone https://github.com/sevagh/demucs.onnx demucs-onnx
+          git -C demucs-onnx checkout 81fa192e6fcc88e35e887f6e6ccce91227f4e6f5
+          mkdir -p model
+          python tools/export_htdemucs_onnx.py demucs-onnx/demucs-for-onnx model/htdemucs.onnx
+          ls -la model
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: htdemucs-model
+          path: model/htdemucs.onnx
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Check the C++ stem pipeline against the official demucs on Linux
+  # ---------------------------------------------------------------------------
+  validate-stems:
+    needs: model
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: htdemucs-model
+          path: model
+
+      - name: Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev \
+            libfreetype-dev libfontconfig1-dev libasound2-dev ninja-build
+          curl -sSL -o ort.tgz https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz
+          tar xzf ort.tgz && mv onnxruntime-linux-x64-${ORT_VERSION} ort
+
+      - name: Build (Linux)
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DORT_ROOT=$PWD/ort
+          cmake --build build --parallel
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compare with official demucs
+        run: |
+          pip install torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+          pip install "numpy<2" demucs==4.0.1 soundfile
+          python tools/stem_reference.py make-test test.wav
+          python tools/stem_reference.py separate test.wav ref
+          export LD_LIBRARY_PATH=$PWD/ort/lib
+          ./build/OrbitDJ_artefacts/Release/OrbitDJ --separate test.wav --out orbit --model model/htdemucs.onnx --cpu
+          python tools/stem_reference.py compare ref orbit
+
+  # ---------------------------------------------------------------------------
+  # Windows build (the app you run)
+  # ---------------------------------------------------------------------------
+  windows:
+    needs: model
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: htdemucs-model
+          path: model
+
+      - name: ASIO SDK
+        shell: pwsh
+        run: |
+          $urls = @("https://www.steinberg.net/asiosdk", "https://download.steinberg.net/sdk_downloads/asiosdk_2.3.3_2019-06-14.zip")
+          foreach ($u in $urls) {
+            try {
+              Invoke-WebRequest -Uri $u -OutFile asiosdk.zip -MaximumRedirection 10 -UseBasicParsing
+              Expand-Archive asiosdk.zip -DestinationPath asiosdk -Force
+              if (Get-ChildItem -Recurse -Filter iasiodrv.h -Path asiosdk) { break }
+            } catch { Write-Host "ASIO SDK not available from $u" }
+          }
+          $h = Get-ChildItem -Recurse -Filter iasiodrv.h -Path asiosdk -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($h) { "ASIO_DIR=$($h.Directory.Parent.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append; Write-Host "ASIO SDK: $($h.Directory.Parent.FullName)" }
+          else { Write-Host "::warning::ASIO SDK unavailable - building with WASAPI only" }
+
+      - name: ONNX Runtime + DirectML
+        shell: pwsh
+        run: |
+          Invoke-WebRequest "https://www.nuget.org/api/v2/package/Microsoft.ML.OnnxRuntime.DirectML/$env:ORT_VERSION" -OutFile ort.zip
+          Invoke-WebRequest "https://www.nuget.org/api/v2/package/Microsoft.AI.DirectML/$env:DML_VERSION" -OutFile dml.zip
+          Expand-Archive ort.zip ort-pkg
+          Expand-Archive dml.zip dml-pkg
+          New-Item -ItemType Directory -Force ort/include, ort/lib, ort/bin | Out-Null
+          Copy-Item ort-pkg/build/native/include/* ort/include -Recurse
+          Copy-Item ort-pkg/runtimes/win-x64/native/onnxruntime.lib ort/lib
+          Copy-Item ort-pkg/runtimes/win-x64/native/*.dll ort/bin
+          Copy-Item (Get-ChildItem -Recurse dml-pkg -Filter DirectML.dll | Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1).FullName ort/bin
+          Get-ChildItem -Recurse ort | Select-Object FullName
+
+      - name: Configure
+        shell: pwsh
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DORT_ROOT="$PWD/ort" -DASIO_SDK_DIR="$env:ASIO_DIR"
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Recurse build -Filter OrbitDJ.exe | Select-Object -First 1
+          New-Item -ItemType Directory -Force OrbitDJ/models | Out-Null
+          Copy-Item $exe.FullName OrbitDJ/
+          Copy-Item ort/bin/*.dll OrbitDJ/
+          Copy-Item model/htdemucs.onnx OrbitDJ/models/
+          Copy-Item docs/README-Windows.txt OrbitDJ/README.txt
+          Copy-Item resources/fonts/LICENSE-Inter.txt OrbitDJ/
+          Compress-Archive -Path OrbitDJ -DestinationPath OrbitDJ-Windows.zip -CompressionLevel Optimal
+          Get-Item OrbitDJ-Windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OrbitDJ-Windows
+          path: OrbitDJ
+          retention-days: 30
+
+      - name: Publish "latest" release
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete latest --yes --cleanup-tag 2>$null
+          gh release create latest OrbitDJ-Windows.zip --prerelease --title "OrbitDJ (latest build)" --notes "Built from $env:GITHUB_SHA. Download OrbitDJ-Windows.zip, extract it, and run OrbitDJ.exe."
