@@ -185,14 +185,16 @@ void BrowserView::refreshSources()
     else if (rootItem->getNumSubItems() > 0)
         rootItem->getSubItem (0)->setOpen (true);
 
-    // If the selection restore didn't trigger a list, show the first source's tracks.
-    if (currentSource == nullptr && ! sources.empty())
-        if (auto* first = dynamic_cast<Item*> (rootItem->getSubItem (0)))
-        {
-            first->setOpen (true);
-            if (first->getNumSubItems() > 0)
-                first->getSubItem (0)->setSelected (true, true);
-        }
+    // Nothing useful showing yet: open the first source that actually has tracks.
+    if (currentSource == nullptr || currentSource->tracks.empty())
+        for (int i = 0; i < rootItem->getNumSubItems(); ++i)
+            if (auto* item = dynamic_cast<Item*> (rootItem->getSubItem (i)); item != nullptr && ! item->src->tracks.empty())
+            {
+                item->setOpen (true);
+                if (item->getNumSubItems() > 0)
+                    item->getSubItem (0)->setSelected (true, true);
+                break;
+            }
 
     // Keep showing the same list if it still exists (sources are reloaded as new objects).
     if (currentSource != nullptr)
