@@ -147,7 +147,7 @@ jobs:
 
       - name: Build
         shell: bash
-        run: tools/run_logged.sh cmake --build build --config Release --parallel -- /v:minimal /clp:ErrorsOnly
+        run: tools/run_logged.sh cmake --build build --config Release --parallel -- -v:minimal -clp:ErrorsOnly
 
       - name: Package
         shell: pwsh
