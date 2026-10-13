@@ -20,7 +20,7 @@ struct AnlzWaveforms
     }
 };
 
-/** Everything OrbitDJ uses from a track's ANLZ0000.DAT / .EXT / .2EX files. */
+/** Everything Centrifuge uses from a track's ANLZ0000.DAT / .EXT / .2EX files. */
 struct AnlzData
 {
     bool foundAny = false;

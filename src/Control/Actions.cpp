@@ -59,7 +59,7 @@ static std::vector<ActionDef> buildActions()
         add (p + "beatjump.fwd",  "Beat jump forward",   D + " - Loops", B, d);
         add (p + "beatjump.size", "Beat jump size (encoder)", D + " - Loops", E, d);
 
-        const char* stemNames[] = { "Drums", "Bass", "Instruments", "Vocals" };
+        const char* stemNames[] = { "Drums", "Bass", "Inst", "Vocals" };
         for (int s = 0; s < 4; ++s)
         {
             add (p + "stem." + juce::String (s + 1) + ".volume", juce::String (stemNames[s]) + " volume", D + " - Stems", C, d);
@@ -67,6 +67,18 @@ static std::vector<ActionDef> buildActions()
             add (p + "stem." + juce::String (s + 1) + ".solo",   juce::String (stemNames[s]) + " solo",   D + " - Stems", B, d);
         }
         add (p + "stem.reset", "Stems: reset all", D + " - Stems", B, d);
+
+        for (auto letter : { "A", "B", "C", "D" })
+        {
+            add (p + "stemctl." + juce::String (letter) + ".volume", "Stem control " + juce::String (letter) + " volume (matrix)", D + " - Stem controls", C, d);
+            add (p + "stemctl." + juce::String (letter) + ".mute",   "Stem control " + juce::String (letter) + " mute (matrix)",   D + " - Stem controls", B, d, true);
+        }
+
+        add (p + "key.up",    "Key +1 semitone",  D + " - Key", B, d);
+        add (p + "key.down",  "Key -1 semitone",  D + " - Key", B, d);
+        add (p + "key.reset", "Key reset",        D + " - Key", B, d);
+        add (p + "key.shift", "Key shift (encoder)", D + " - Key", E, d);
+        add (p + "key.sync",  "Key sync",         D + " - Key", B, d, true);
     }
 
     const auto B = ActionKind::button, E = ActionKind::encoder;
@@ -80,6 +92,7 @@ static std::vector<ActionDef> buildActions()
     add ("view.zoom",       "Waveform zoom (encoder)", "View", E, -1);
     add ("view.zoomin",     "Waveform zoom in",        "View", B, -1);
     add ("view.zoomout",    "Waveform zoom out",       "View", B, -1);
+    add ("view.wavemode",   "Main waveform: stems / 3-band", "View", B, -1);
     return a;
 }
 

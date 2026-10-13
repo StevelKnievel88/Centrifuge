@@ -19,6 +19,15 @@ namespace Theme
     const juce::Colour bad         (0xffff4d4d);
     const juce::Colour waveBg      (0xff060708);
 
+    inline juce::Colour stemColour (int stem)
+    {
+        static const juce::Colour c[] = { juce::Colour (0xffff3b3b),    // drums: red
+                                          juce::Colour (0xff2ee05a),    // bass: green
+                                          juce::Colour (0xff3d7bff),    // inst: blue
+                                          juce::Colour (0xffff3df2) };  // vocals: magenta
+        return c[juce::jlimit (0, 3, stem)];
+    }
+
     inline juce::Colour deckColour (int deck) { return deck == 0 ? juce::Colour (0xff3aa3ff) : juce::Colour (0xffff8a1f); }
 
     juce::Font font (float height, bool bold = false);

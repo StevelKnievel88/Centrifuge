@@ -27,11 +27,28 @@ public:
 
     void setJogSensitivity (double ticksPerRevolution);
 
+    /** Stem matrix, shared by both decks: for control A..D, a bitmask of the stems it moves
+        (bit 0 drums, 1 bass, 2 inst, 3 vocals). */
+    void setStemMatrix (const std::array<int, 4>& masks);
+    std::array<int, 4> getStemMatrix() const;
+
+    /** The key a deck is effectively playing in (track key + key shift + tempo when key lock is off). */
+    juce::String effectiveKeyText (int deck) const;
+
 private:
+    void updateStems (int deck);
+    void keySync (int deck);
+
     AudioEngine& engine;
     std::array<std::atomic<int>, 4> rangeIndex;
     std::array<std::atomic<double>, 4> beatJump;
     std::array<std::atomic<bool>, 4> vinyl;
+
+    // Stem state per deck: direct per-stem volume/mute, and the four matrix controls.
+    std::array<std::array<std::atomic<float>, 4>, 2> stemVolume, controlVolume;
+    std::array<std::array<std::atomic<bool>, 4>, 2> stemMute, controlMute;
+    std::array<std::atomic<int>, 4> matrix;
+    std::array<std::atomic<bool>, 2> keySyncLit;
 };
 
 } // namespace orbit

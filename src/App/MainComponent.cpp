@@ -9,7 +9,9 @@ MainComponent::MainComponent()
       stemsView (stems,
                  [this] { return browser.getVisibleTracks(); },
                  [this] { return browser.getSelectedTracks(); },
-                 [this] { return browser.getCurrentListName(); }),
+                 [this] { return browser.getCurrentListName(); },
+                 [this] { return router.getStemMatrix(); },
+                 [this] (std::array<int, 4> m) { settings.stemMatrix = m; router.setStemMatrix (m); settings.save(); }),
       settingsView (settings, engine, [this] { applySettings(); }, [this] { library.reloadPcLibrary(); })
 {
     juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
@@ -39,6 +41,7 @@ MainComponent::MainComponent()
     };
 
     waves.onZoomChanged = [this] (double s) { settings.visibleSeconds = s; settings.save(); };
+    waves.onLaneSplitChanged = [this] (int d, float share) { settings.laneSplit[(size_t) d] = share; settings.save(); };
     engine.onDeviceChanged = [this] { settingsView.refreshRouting(); };
 
     // --- UI --------------------------------------------------------------------
@@ -60,6 +63,18 @@ MainComponent::MainComponent()
     showPage (0);
     setWantsKeyboardFocus (true);
     startTimerHz (4);
+
+    splash = std::make_unique<CentrifugeSplash>();
+    splash->onFinished = [this] { skipSplash(); };
+    addAndMakeVisible (*splash);
+}
+
+void MainComponent::skipSplash()
+{
+    if (splash == nullptr) return;
+    splash->setVisible (false);
+    juce::MessageManager::callAsync ([sp = std::shared_ptr<CentrifugeSplash> (splash.release())] {});
+    repaint();
 }
 
 MainComponent::~MainComponent()
@@ -81,6 +96,11 @@ void MainComponent::applySettings()
     midi.setLedFeedbackEnabled (settings.ledFeedback);
     waves.setVisibleSeconds (settings.visibleSeconds);
     waves.setMaxFps (settings.maxFps);
+    waves.setOriginalStyle ((WaveformData::Style) juce::jlimit (0, 2, settings.waveformStyle));
+    waves.setMainMode (settings.mainLaneMode);
+    waves.setLaneSplit (0, settings.laneSplit[0]);
+    waves.setLaneSplit (1, settings.laneSplit[1]);
+    router.setStemMatrix (settings.stemMatrix);
 
     TrackLoader::Options lo;
     lo.waveformStyle = (WaveformData::Style) juce::jlimit (0, 2, settings.waveformStyle);
@@ -122,6 +142,7 @@ void MainComponent::handleAppAction (const juce::String& id, int deck, const Act
     else if (id == "view.zoom")      { waves.setVisibleSeconds (waves.getVisibleSeconds() * std::pow (1.1, -v.delta)); }
     else if (id == "view.zoomin")    { if (v.down) waves.setVisibleSeconds (waves.getVisibleSeconds() / 1.25); }
     else if (id == "view.zoomout")   { if (v.down) waves.setVisibleSeconds (waves.getVisibleSeconds() * 1.25); }
+    else if (id == "view.wavemode")  { if (v.down) { settings.mainLaneMode = settings.mainLaneMode == 0 ? 1 : 0; waves.setMainMode (settings.mainLaneMode); settings.save(); } }
 }
 
 void MainComponent::showPage (int p)
@@ -172,17 +193,23 @@ void MainComponent::paint (juce::Graphics& g)
     g.setColour (Theme::line);
     g.fillRect (topBar.withTop (topBar.getBottom() - 1));
 
+    // Dividers (drag to resize)
+    for (auto d : { dividerDecks, dividerBrowser })
+        if (! d.isEmpty() && page == 0)
+        {
+            g.setColour (Theme::panel);
+            g.fillRect (d);
+            g.setColour (Theme::line.brighter (0.4f));
+            g.fillRoundedRectangle (d.withSizeKeepingCentre (40, 2).toFloat(), 1.0f);
+        }
+
     // Logo
     auto r = topBar.reduced (14, 0);
-    auto logo = r.removeFromLeft (120).toFloat();
-    const auto c = logo.withWidth (24.0f).withSizeKeepingCentre (22.0f, 22.0f);
-    g.setColour (Theme::deckColour (0));
-    g.fillEllipse (c.reduced (6.0f));
-    g.setColour (Theme::accent);
-    g.drawEllipse (c, 2.0f);
+    auto logo = r.removeFromLeft (130).toFloat();
+    CentrifugeRotor::paintRotor (g, logo.withWidth (28.0f).withSizeKeepingCentre (28.0f, 28.0f), 0.4f, 0.0f, 1.0f, 0.0f, 0.0f);
     g.setColour (Theme::text);
     g.setFont (Theme::font (17.0f, true));
-    g.drawText ("OrbitDJ", logo.withTrimmedLeft (30.0f), juce::Justification::centredLeft);
+    g.drawText ("Centrifuge", logo.withTrimmedLeft (30.0f), juce::Justification::centredLeft);
 
     // Status pills (right side)
     auto pills = topBar.reduced (10, 9).toFloat();
@@ -201,10 +228,11 @@ void MainComponent::paint (juce::Graphics& g)
 
 void MainComponent::resized()
 {
+    if (splash != nullptr) splash->setBounds (getLocalBounds());
     auto r = getLocalBounds();
     topBar = r.removeFromTop (44);
 
-    auto tabs = topBar.withTrimmedLeft (150).withWidth (420).reduced (0, 8);
+    auto tabs = topBar.withTrimmedLeft (160).withWidth (420).reduced (0, 8);
     for (auto* t : { &tabPlay, &tabMapping, &tabStems, &tabSettings })
     {
         t->setBounds (tabs.removeFromLeft (98));
@@ -213,19 +241,24 @@ void MainComponent::resized()
 
     if (page == 0)
     {
-        auto decks = r.removeFromTop (juce::jlimit (190, 230, r.getHeight() / 4));
+        const int deckH = juce::jlimit (150, juce::jmax (150, r.getHeight() / 2), settings.deckPanelHeight);
+        auto decks = r.removeFromTop (deckH);
         deck1.setBounds (decks.removeFromLeft (decks.getWidth() / 2).withTrimmedRight (1));
         deck2.setBounds (decks);
-        r.removeFromTop (1);
+        dividerDecks = r.removeFromTop (5);
 
         if (settings.showBrowser)
         {
-            const int waveH = juce::jlimit (200, 380, (int) (r.getHeight() * 0.48));
-            waves.setBounds (r.removeFromTop (waveH));
-            browser.setBounds (r);
+            const int browserH = juce::jlimit (120, juce::jmax (120, r.getHeight() - 160), settings.browserHeight);
+            browser.setBounds (r.removeFromBottom (browserH));
+            dividerBrowser = r.removeFromBottom (5);
+            waves.setBounds (r);
         }
         else
+        {
+            dividerBrowser = {};
             waves.setBounds (r);
+        }
         browser.setVisible (settings.showBrowser);
     }
     else
@@ -234,6 +267,34 @@ void MainComponent::resized()
         stemsView.setBounds (r);
         settingsView.setBounds (r);
     }
+}
+
+void MainComponent::mouseMove (const juce::MouseEvent& e)
+{
+    const bool over = page == 0 && (dividerDecks.contains (e.getPosition()) || dividerBrowser.contains (e.getPosition()));
+    setMouseCursor (over ? juce::MouseCursor::UpDownResizeCursor : juce::MouseCursor::NormalCursor);
+}
+
+void MainComponent::mouseDown (const juce::MouseEvent& e)
+{
+    dragging = 0;
+    if (page != 0) return;
+    if (dividerDecks.contains (e.getPosition()))   { dragging = 1; dragStartValue = settings.deckPanelHeight; }
+    if (dividerBrowser.contains (e.getPosition())) { dragging = 2; dragStartValue = browser.getHeight(); }
+}
+
+void MainComponent::mouseDrag (const juce::MouseEvent& e)
+{
+    if (dragging == 1) settings.deckPanelHeight = juce::jmax (150, dragStartValue + e.getDistanceFromDragStartY());
+    else if (dragging == 2) settings.browserHeight = juce::jmax (120, dragStartValue - e.getDistanceFromDragStartY());
+    else return;
+    resized();
+}
+
+void MainComponent::mouseUp (const juce::MouseEvent&)
+{
+    if (dragging != 0) settings.save();
+    dragging = 0;
 }
 
 bool MainComponent::keyPressed (const juce::KeyPress& k)

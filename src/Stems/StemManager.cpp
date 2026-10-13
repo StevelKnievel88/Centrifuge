@@ -10,7 +10,7 @@ namespace
     const int cacheStemIndex[] = { 0, 1, 3 }; // "other" is rebuilt as original - (drums + bass + vocals)
 }
 
-StemManager::StemManager (AudioFileLoader& l) : juce::Thread ("OrbitDJ stems"), loader (l)
+StemManager::StemManager (AudioFileLoader& l) : juce::Thread ("Centrifuge stems"), loader (l)
 {
     startThread (juce::Thread::Priority::low);
 }

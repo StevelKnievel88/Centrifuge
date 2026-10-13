@@ -7,7 +7,7 @@ namespace orbit
 class AudioEngine::ClockThread : public juce::Thread
 {
 public:
-    explicit ClockThread (AudioEngine& e) : juce::Thread ("OrbitDJ clock"), engine (e) {}
+    explicit ClockThread (AudioEngine& e) : juce::Thread ("Centrifuge clock"), engine (e) {}
 
     void run() override
     {

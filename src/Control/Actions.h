@@ -23,7 +23,7 @@ struct ActionDef
     bool hasLed = false;    // sends LED feedback when mapped to a button
 };
 
-/** Every mappable function in OrbitDJ. */
+/** Every mappable function in Centrifuge. */
 const std::vector<ActionDef>& allActions();
 const ActionDef* findAction (const juce::String& id);
 

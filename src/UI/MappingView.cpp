@@ -24,7 +24,7 @@ MappingView::MappingView (MidiManager& m, std::function<void()> saveFn) : midi (
     filter.setFont (Theme::font (14.0f));
     filter.onTextChange = [this] { refreshFilter(); };
 
-    for (auto* b : { &learnButton, &clearButton, &guidedButton, &skipButton, &stopButton, &invertButton })
+    for (auto* b : { &learnButton, &learnAddButton, &clearButton, &guidedButton, &skipButton, &stopButton, &invertButton })
         addAndMakeVisible (*b);
     learnButton.setColour (juce::TextButton::buttonColourId, Theme::accent.withAlpha (0.85f));
     learnButton.setColour (juce::TextButton::textColourOffId, juce::Colours::black);
@@ -33,6 +33,8 @@ MappingView::MappingView (MidiManager& m, std::function<void()> saveFn) : midi (
     stopButton.setVisible (false);
 
     learnButton.onClick = [this] { learnSelected(); };
+    learnAddButton.onClick = [this] { learnSelected (true); };
+    learnAddButton.setTooltip ("Map this function to a control while keeping what's already on it (one knob, several functions)");
     clearButton.onClick = [this]
     {
         const int r = table.getSelectedRow();
@@ -188,6 +190,8 @@ void MappingView::resized()
 
     learnButton.setBounds (bottom.removeFromLeft (90).reduced (0, 3));
     bottom.removeFromLeft (6);
+    learnAddButton.setBounds (bottom.removeFromLeft (110).reduced (0, 3));
+    bottom.removeFromLeft (6);
     clearButton.setBounds (bottom.removeFromLeft (80).reduced (0, 3));
     bottom.removeFromLeft (6);
     invertButton.setBounds (bottom.removeFromLeft (80).reduced (0, 3));
@@ -230,7 +234,12 @@ void MappingView::paintCell (juce::Graphics& g, int row, int col, int w, int h, 
     {
         juce::StringArray parts;
         for (auto& b : midi.getBindingsFor (a->id))
-            parts.add ((b.device.isNotEmpty() ? b.device + ": " : juce::String()) + b.describe());
+        {
+            auto text = (b.device.isNotEmpty() ? b.device + ": " : juce::String()) + b.describe();
+            const auto shared = midi.getActionsSharingControl (b);
+            if (! shared.empty()) text << "  (+" << (int) shared.size() << " more on this control)";
+            parts.add (text);
+        }
         s = parts.joinIntoString ("   |   ");
         g.setColour (s.isEmpty() ? Theme::textFaint : Theme::good);
         if (s.isEmpty()) s = "-";
@@ -264,13 +273,14 @@ void MappingView::updateDetail()
     sensLabel.setEnabled (encoder);
 }
 
-void MappingView::learnSelected()
+void MappingView::learnSelected (bool add)
 {
     const int r = table.getSelectedRow();
     if (r < 0 || r >= (int) rows.size()) return;
     const auto* a = rows[(size_t) r];
-    midi.startLearn (a->id);
-    banner.setText ("Waiting: move or press the control for  " + a->group + "  >  " + a->label, juce::dontSendNotification);
+    midi.startLearn (a->id, add);
+    banner.setText (juce::String (add ? "Adding: " : "Waiting: ") + "move or press the control for  " + a->group + "  >  " + a->label,
+                    juce::dontSendNotification);
     table.repaint();
 }
 

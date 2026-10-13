@@ -1,19 +1,19 @@
-OrbitDJ - quick start
+Centrifuge - quick start
 =====================
 
 1. Install the Pioneer DJ XDJ-XZ driver (ASIO) if you haven't already
    (it's the same driver rekordbox uses).
 2. Connect the XDJ-XZ by USB and put the unit in PC mode
    (the same way you would for rekordbox / PC control).
-3. Run OrbitDJ.exe from this folder. Keep the "models" folder next to it -
+3. Run Centrifuge.exe from this folder. Keep the "models" folder next to it -
    that's the stem separation model.
 
 First run
 ---------
-- OrbitDJ finds your rekordbox 6/7 collection automatically
+- Centrifuge finds your rekordbox 6/7 collection automatically
   (%APPDATA%\Pioneer\rekordbox\master.db) and any rekordbox USB stick you plug in.
   Your rekordbox library is only ever read, never changed.
-- Audio: OrbitDJ picks the XDJ-XZ's ASIO driver if it can see it. Check
+- Audio: Centrifuge picks the XDJ-XZ's ASIO driver if it can see it. Check
   SETTINGS > AUDIO OUTPUT: Deck 1 and Deck 2 should each go to the XDJ-XZ
   channel they play on, so the unit's own mixer, EQs and FX work as normal.
 - Controls: go to MAPPING and press GUIDED SETUP. It asks you to press or move
@@ -28,6 +28,13 @@ First run
 
 Stems
 -----
+- Each deck has Drums (red), Bass (green), Inst (blue) and Vocals (magenta).
+  Inst also carries anything the separator didn't put elsewhere, so all four
+  at full = the original track.
+- STEMS page: the stem control matrix. Map "Stem control A-D" to knobs, then
+  tick which stems each control moves (e.g. Drums + Bass on one knob).
+- MAPPING: "LEARN + ADD" puts another function on a control without removing
+  what's already there.
 - Tracks you've pre-analysed (STEMS page) load their stems instantly.
 - Anything else is separated in the background as soon as it's loaded; the
   stems fill in from the start of the track. With a graphics card this takes
@@ -36,5 +43,5 @@ Stems
 
 Files
 -----
-Settings and mapping:  %APPDATA%\OrbitDJ\
-Stem cache:            %LOCALAPPDATA%\OrbitDJ\Stems (about 25 MB per track)
+Settings and mapping:  %APPDATA%\Centrifuge\
+Stem cache:            %LOCALAPPDATA%\Centrifuge\Stems (about 25 MB per track)

@@ -1,5 +1,6 @@
 #pragma once
 #include "../Stems/StemManager.h"
+#include "CentrifugeRotor.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 
 namespace orbit
@@ -12,10 +13,13 @@ public:
     StemsView (StemManager& stems,
                std::function<std::vector<TrackInfo>()> currentList,
                std::function<std::vector<TrackInfo>()> selectedTracks,
-               std::function<juce::String()> currentListName);
+               std::function<juce::String()> currentListName,
+               std::function<std::array<int, 4>()> getMatrix,
+               std::function<void (std::array<int, 4>)> setMatrix);
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void mouseDown (const juce::MouseEvent&) override;
 
 private:
     void timerCallback() override;
@@ -28,6 +32,11 @@ private:
     juce::TextButton openCache { "OPEN STEM FOLDER" };
     StemManager::Status shown;
     juce::String listName;
+    std::function<std::array<int, 4>()> getMatrix;
+    std::function<void (std::array<int, 4>)> setMatrix;
+    juce::Rectangle<int> matrixArea;
+    CentrifugeRotor rotor;
+    juce::Rectangle<int> cell (int control, int stem) const;
 };
 
 } // namespace orbit

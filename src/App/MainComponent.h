@@ -10,6 +10,7 @@
 #include "../UI/MappingView.h"
 #include "../UI/StemsView.h"
 #include "../UI/SettingsView.h"
+#include "../UI/CentrifugeRotor.h"
 
 namespace orbit
 {
@@ -23,6 +24,11 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    void skipSplash();
     bool keyPressed (const juce::KeyPress&) override;
 
     // Used by the command-line demo / preview mode
@@ -61,7 +67,9 @@ private:
     juce::TextButton tabPlay { "PLAY" }, tabMapping { "MAPPING" }, tabStems { "STEMS" }, tabSettings { "SETTINGS" };
     int page = 0;
 
-    juce::Rectangle<int> topBar;
+    juce::Rectangle<int> topBar, dividerDecks, dividerBrowser;
+    int dragging = 0, dragStartValue = 0;
+    std::unique_ptr<CentrifugeSplash> splash;
     juce::String midiStatus, audioStatus, stemStatus;
     bool xdjConnected = false;
     double cpu = 0.0;

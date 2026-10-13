@@ -5,7 +5,13 @@ namespace orbit
 
 juce::File AppSettings::folder()
 {
-    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("OrbitDJ");
+    const auto base = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory);
+    auto dir = base.getChildFile ("Centrifuge");
+    // Carry settings and mapping over from the OrbitDJ test builds.
+    auto old = base.getChildFile ("OrbitDJ");
+    if (! dir.exists() && old.isDirectory())
+        old.copyDirectoryTo (dir);
+    return dir;
 }
 
 juce::File AppSettings::modelFile() const
@@ -28,7 +34,14 @@ juce::File AppSettings::stemCacheDir() const
    #else
     auto base = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory);
    #endif
-    return base.getChildFile ("OrbitDJ").getChildFile ("Stems");
+    auto dir = base.getChildFile ("Centrifuge").getChildFile ("Stems");
+    auto old = base.getChildFile ("OrbitDJ").getChildFile ("Stems");
+    if (! dir.exists() && old.isDirectory())
+    {
+        dir.getParentDirectory().createDirectory();
+        old.moveFileTo (dir);
+    }
+    return dir;
 }
 
 void AppSettings::load()
@@ -54,6 +67,12 @@ void AppSettings::load()
     num ("mp3OffsetMs", mp3OffsetMs);
 
     num ("waveformStyle", waveformStyle);
+    num ("mainLaneMode", mainLaneMode);
+    num ("deckPanelHeight", deckPanelHeight);
+    if (auto* arr = v["laneSplit"].getArray())
+        for (int i = 0; i < juce::jmin (2, arr->size()); ++i) laneSplit[(size_t) i] = juce::jlimit (0.1f, 0.9f, (float) (double) (*arr)[i]);
+    if (auto* arr = v["stemMatrix"].getArray())
+        for (int i = 0; i < juce::jmin (4, arr->size()); ++i) stemMatrix[(size_t) i] = juce::jlimit (0, 15, (int) (*arr)[i]);
     num ("visibleSeconds", visibleSeconds);
     num ("maxFps", maxFps);
 
@@ -90,6 +109,10 @@ void AppSettings::save() const
     o->setProperty ("mp3OffsetMs", mp3OffsetMs);
 
     o->setProperty ("waveformStyle", waveformStyle);
+    o->setProperty ("mainLaneMode", mainLaneMode);
+    o->setProperty ("deckPanelHeight", deckPanelHeight);
+    o->setProperty ("laneSplit", juce::Array<juce::var> { laneSplit[0], laneSplit[1] });
+    o->setProperty ("stemMatrix", juce::Array<juce::var> { stemMatrix[0], stemMatrix[1], stemMatrix[2], stemMatrix[3] });
     o->setProperty ("visibleSeconds", visibleSeconds);
     o->setProperty ("maxFps", maxFps);
 

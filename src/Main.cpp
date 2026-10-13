@@ -70,6 +70,21 @@ static int runCommandLine (const juce::StringArray& args)
         return 0;
     }
 
+    if (args.contains ("--render-icon"))
+    {
+        OrbitLookAndFeel laf;
+        const int size = 512;
+        juce::Image img (juce::Image::ARGB, size, size, true);
+        {
+            juce::Graphics g (img);
+            CentrifugeRotor::paintRotor (g, juce::Rectangle<float> (0, 0, (float) size, (float) size).reduced (8.0f), 0.4f, 0.0f, 1.0f, 0.0f, 0.0f);
+        }
+        juce::File out (argAfter ("--render-icon"));
+        out.deleteFile();
+        juce::FileOutputStream os (out);
+        return juce::PNGImageFormat().writeImageToStream (img, os) ? 0 : 1;
+    }
+
     if (args.contains ("--dump"))
     {
         const auto path = juce::File (argAfter ("--dump"));
@@ -121,25 +136,27 @@ private:
             ActionValue up;   up.down = false;
             auto press = [&] (const char* id) { main.getRouter().perform (id, down); main.getRouter().perform (id, up); };
 
-            // A few hot cues on deck 1, then play from the drop
-            for (auto [sec, cue] : { std::pair<double, const char*> { 15.2, "d1.hotcue.1" }, { 30.3, "d1.hotcue.2" }, { 60.4, "d1.hotcue.3" }, { 90.5, "d1.hotcue.5" } })
+            // Deck 1: hot cues, key +2, inst turned down and vocals muted (shows the stem lane following the knobs)
+            for (auto [sec, cue] : { std::pair<double, const char*> { 2.0, "d1.hotcue.1" }, { 9.9, "d1.hotcue.2" }, { 30.4, "d1.hotcue.3" } })
             {
                 d1.post (Deck::Cmd::seekSeconds, sec);
                 press (cue);
             }
-            d1.post (Deck::Cmd::seekSeconds, 58.0);
-            d1.post (Deck::Cmd::setPitchFader, 0.12);
+            d1.post (Deck::Cmd::seekSeconds, 6.5);
             press ("d1.master");
-            press ("d1.play");
+            press ("d1.key.up"); press ("d1.key.up");
+            ActionValue inst; inst.value = 0.25;
+            main.getRouter().perform ("d1.stem.3.volume", inst);
+            press ("d1.stem.4.mute");
 
-            // Deck 2: synced, key lock on, a 4-beat loop running
+            // Deck 2: synced, key sync to deck 1, a 4-beat loop running
             for (auto [sec, cue] : { std::pair<double, const char*> { 8.1, "d2.hotcue.1" }, { 40.0, "d2.hotcue.4" } })
             {
                 d2.post (Deck::Cmd::seekSeconds, sec);
                 press (cue);
             }
             d2.post (Deck::Cmd::seekSeconds, 33.0);
-            press ("d2.keylock");
+            d2.post (Deck::Cmd::setPitchFader, 0.4);
             press ("d2.sync");
             press ("d2.play");
             stage = 2;
@@ -149,8 +166,10 @@ private:
         {
             ActionValue down; down.down = true;
             main.getRouter().perform ("d2.beatloop.4", down);
+            main.getRouter().perform ("d2.key.sync", down);
         }
-        else if (stage == 2 && ticks - t0 > 24)
+        else if (stage == 2 && ticks - t0 > 24
+                 && (main.getEngine().deck (0).state().stemsProgress.load() > 0.08f || ticks - t0 > 400))
         {
             snap ("01_play.png");
             stage = 3;
@@ -205,7 +224,7 @@ private:
 class OrbitApplication : public juce::JUCEApplication
 {
 public:
-    const juce::String getApplicationName() override       { return "OrbitDJ"; }
+    const juce::String getApplicationName() override       { return "Centrifuge"; }
     const juce::String getApplicationVersion() override    { return JUCE_APPLICATION_VERSION_STRING; }
     bool moreThanOneInstanceAllowed() override             { return false; }
 
@@ -256,7 +275,7 @@ public:
     class MainWindow : public juce::DocumentWindow
     {
     public:
-        MainWindow() : DocumentWindow ("OrbitDJ", Theme::bg, DocumentWindow::allButtons)
+        MainWindow() : DocumentWindow ("Centrifuge", Theme::bg, DocumentWindow::allButtons)
         {
             main = new MainComponent();
             setUsingNativeTitleBar (true);

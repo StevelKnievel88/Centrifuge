@@ -16,7 +16,7 @@ namespace orbit
 struct DemucsSeparator::Impl
 {
 #if ORBIT_HAS_ORT
-    Ort::Env env { ORT_LOGGING_LEVEL_WARNING, "OrbitDJ" };
+    Ort::Env env { ORT_LOGGING_LEVEL_WARNING, "Centrifuge" };
     std::unique_ptr<Ort::Session> session;
     std::vector<std::string> inNames, outNames;
     int mixInput = 0, specInput = 1, specOutput = 0, timeOutput = 1;

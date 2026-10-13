@@ -55,7 +55,9 @@ public:
     bool loadFromFile (const juce::File& f);
 
     // Learn -------------------------------------------------------------------
-    void startLearn (const juce::String& actionId);
+    /** addToControl: keep whatever else is already on the control (one knob, several functions). */
+    void startLearn (const juce::String& actionId, bool addToControl = false);
+    std::vector<juce::String> getActionsSharingControl (const MidiBinding& b) const;
     void cancelLearn();
     juce::String getLearningAction() const;
     std::function<void (const MidiBinding&)> onLearned;   // message thread
@@ -108,6 +110,7 @@ private:
     // Learn state
     mutable juce::CriticalSection learnLock;
     juce::String learnAction;
+    bool learnAdd = false;
     bool learnHasCandidate = false;
     MidiBinding learnCandidate;
     double learnStartedMs = 0.0;

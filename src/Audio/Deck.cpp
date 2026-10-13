@@ -59,6 +59,7 @@ void Deck::setLoadedTrackForUi (LoadedTrack::Ptr t)
 {
     const juce::ScopedLock sl (uiTrackLock);
     uiTrack = std::move (t);
+    uiStems = nullptr;
 }
 
 //==============================================================================
@@ -70,6 +71,8 @@ void Deck::prepare (double sr, int block)
     tmpL.assign (tmp, 0.0f);
     tmpR.assign (tmp, 0.0f);
     stretch->s.presetCheaper (2, (float) sr);
+    stretch->s.setTransposeSemitones (0.0f);
+    lastTranspose = 0.0;
     stretchActive = false;
 }
 
@@ -181,6 +184,7 @@ void Deck::loadTrack (LoadedTrack* t)
     stretchActive = false;
     fadeTailLen = 0;
     bendRate = 0.0;
+    keyShift = 0;
     stemMuted.fill (false);
 
     if (track == nullptr || track->audio == nullptr)
@@ -525,6 +529,14 @@ void Deck::apply (const Command& c)
             if (c.down) { keyLock = ! keyLock; stretchActive = false; }
             break;
 
+        case Cmd::keyShiftBy:
+            if (c.down) keyShift = juce::jlimit (-12, 12, keyShift + (int) std::lround (c.value));
+            break;
+
+        case Cmd::keyShiftSet:
+            keyShift = juce::jlimit (-12, 12, (int) std::lround (c.value));
+            break;
+
         case Cmd::keyLockSet:
             keyLock = c.value > 0.5;
             stretchActive = false;
@@ -708,7 +720,18 @@ void Deck::process (float* outL, float* outR, int n)
     if (scratching)    speed = scratchVelocity;
     else if (playing)  speed = tempoRatio + bendRate;
 
-    const bool useStretch = keyLock && playing && ! scratching && speed > 0.05;
+    // Key lock and/or key shift go through the pitch-shifter; otherwise plain resampling (cheapest).
+    const bool useStretch = (keyLock || keyShift != 0) && playing && ! scratching && speed > 0.05;
+    if (useStretch)
+    {
+        // Key lock off + key shift on: the tempo still bends the pitch like vinyl, plus the shift.
+        const double transpose = keyShift + (keyLock ? 0.0 : 12.0 * std::log2 (juce::jmax (0.05, speed)));
+        if (std::abs (transpose - lastTranspose) > 1.0e-4)
+        {
+            stretch->s.setTransposeSemitones ((float) transpose);
+            lastTranspose = transpose;
+        }
+    }
 
     if (useStretch)
     {
@@ -794,6 +817,7 @@ void Deck::publish()
     pub.loopActive = loopActive;
     pub.playing = playing;
     pub.keyLock = keyLock;
+    pub.keyShift = keyShift;
     pub.sync = syncOn;
     pub.quantize = quantize;
     pub.vinylMode = vinylMode;

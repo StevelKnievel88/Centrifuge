@@ -1,5 +1,6 @@
 #pragma once
 #include "WaveformRender.h"
+#include "CentrifugeRotor.h"
 #include "../Control/ActionRouter.h"
 
 namespace orbit
@@ -42,6 +43,8 @@ private:
     juce::String heldAction;
     int dragStem = -1;
     juce::uint64 lastHash = 0;
+    CentrifugeRotor rotor;
+    juce::Rectangle<float> rotorArea;
 };
 
 } // namespace orbit

@@ -30,7 +30,8 @@ public:
         add (&usbFolder, 28, "Extra export folder");
 
         addSection ("WAVEFORMS");
-        add (&waveStyle, 28, "Style");
+        add (&mainMode, 28, "Main lane shows");
+        add (&waveStyle, 28, "Original lane style");
         add (&fps, 28, "Frame rate limit");
         add (&zoom, 28, "Visible seconds");
 
@@ -56,7 +57,9 @@ public:
         usbFolder.setText (settings.usbRoots.joinIntoString (";"), false);
         usbFolder.setTextToShowWhenEmpty ("optional: a folder containing PIONEER/rekordbox/export.pdb", Theme::textFaint);
 
-        waveStyle.addItemList ({ "3-Band (rekordbox default)", "RGB", "Blue" }, 1);
+        mainMode.addItemList ({ "Stems (overlaid, follow the stem knobs)", "rekordbox 3-band" }, 1);
+        mainMode.setSelectedId (settings.mainLaneMode + 1, juce::dontSendNotification);
+        waveStyle.addItemList ({ "3-Band (rekordbox default)", "RGB", "Single colour (blue)" }, 1);
         waveStyle.setSelectedId (settings.waveformStyle + 1, juce::dontSendNotification);
         fps.addItemList ({ "30 fps", "60 fps", "120 fps", "144 fps" }, 1);
         fps.setSelectedId (settings.maxFps <= 30 ? 1 : settings.maxFps <= 60 ? 2 : settings.maxFps <= 120 ? 3 : 4, juce::dontSendNotification);
@@ -97,6 +100,7 @@ public:
         reloadDb.onClick = [this] { onReload(); };
 
         waveStyle.onChange = [this] { settings.waveformStyle = waveStyle.getSelectedId() - 1; onChanged(); };
+        mainMode.onChange = [this] { settings.mainLaneMode = mainMode.getSelectedId() - 1; onChanged(); };
         fps.onChange = [this] { const int v[] = { 30, 60, 120, 144 }; settings.maxFps = v[juce::jlimit (0, 3, fps.getSelectedId() - 1)]; onChanged(); };
         zoom.onValueChange = [this] { settings.visibleSeconds = zoom.getValue(); onChanged(); };
         jogTicks.onValueChange = [this] { settings.jogTicksPerRev = jogTicks.getValue(); onChanged(); };
@@ -229,7 +233,7 @@ private:
     std::vector<Row> rows;
 
     juce::AudioDeviceSelectorComponent deviceSelector;
-    juce::ComboBox deck1Out, deck2Out, waveStyle, fps;
+    juce::ComboBox deck1Out, deck2Out, waveStyle, mainMode, fps;
     juce::ToggleButton sumToMaster, leds, stemsOnLoad, stemsGpu;
     juce::TextEditor dbPath, dbKey, usbFolder, modelPath, cachePath;
     Resizer dbButtons;

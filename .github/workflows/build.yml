@@ -1,4 +1,4 @@
-name: Build OrbitDJ
+name: Build Centrifuge
 
 on:
   push:
@@ -94,7 +94,7 @@ jobs:
           python tools/stem_reference.py make-test test.wav
           tools/run_logged.sh python tools/stem_reference.py separate test.wav ref
           export LD_LIBRARY_PATH=$PWD/ort/lib
-          tools/run_logged.sh xvfb-run -a ./build/OrbitDJ_artefacts/Release/OrbitDJ --separate test.wav --out orbit --model model/htdemucs.onnx --cpu
+          tools/run_logged.sh xvfb-run -a ./build/Centrifuge_artefacts/Release/Centrifuge --separate test.wav --out orbit --model model/htdemucs.onnx --cpu
           tools/run_logged.sh python tools/stem_reference.py compare ref orbit
 
   # ---------------------------------------------------------------------------
@@ -152,20 +152,20 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          $exe = Get-ChildItem -Recurse build -Filter OrbitDJ.exe | Select-Object -First 1
-          New-Item -ItemType Directory -Force OrbitDJ/models | Out-Null
-          Copy-Item $exe.FullName OrbitDJ/
-          Copy-Item ort/bin/*.dll OrbitDJ/
-          if (Test-Path model/htdemucs.onnx) { Copy-Item model/htdemucs.onnx OrbitDJ/models/ } else { Write-Host "::warning::stem model missing from this build" }
-          Copy-Item docs/README-Windows.txt OrbitDJ/README.txt
-          Copy-Item resources/fonts/LICENSE-Inter.txt OrbitDJ/
-          Compress-Archive -Path OrbitDJ -DestinationPath OrbitDJ-Windows.zip -CompressionLevel Optimal
-          Get-Item OrbitDJ-Windows.zip
+          $exe = Get-ChildItem -Recurse build -Filter Centrifuge.exe | Select-Object -First 1
+          New-Item -ItemType Directory -Force Centrifuge/models | Out-Null
+          Copy-Item $exe.FullName Centrifuge/
+          Copy-Item ort/bin/*.dll Centrifuge/
+          if (Test-Path model/htdemucs.onnx) { Copy-Item model/htdemucs.onnx Centrifuge/models/ } else { Write-Host "::warning::stem model missing from this build" }
+          Copy-Item docs/README-Windows.txt Centrifuge/README.txt
+          Copy-Item resources/fonts/LICENSE-Inter.txt Centrifuge/
+          Compress-Archive -Path Centrifuge -DestinationPath Centrifuge-Windows.zip -CompressionLevel Optimal
+          Get-Item Centrifuge-Windows.zip
 
       - uses: actions/upload-artifact@v4
         with:
-          name: OrbitDJ-Windows
-          path: OrbitDJ
+          name: Centrifuge-Windows
+          path: Centrifuge
           retention-days: 30
 
       - name: Publish "latest" release
@@ -175,4 +175,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release delete latest --yes --cleanup-tag 2>$null
-          gh release create latest OrbitDJ-Windows.zip --prerelease --title "OrbitDJ (latest build)" --notes "Built from $env:GITHUB_SHA. Download OrbitDJ-Windows.zip, extract it, and run OrbitDJ.exe."
+          gh release create latest Centrifuge-Windows.zip --prerelease --title "Centrifuge (latest build)" --notes "Built from $env:GITHUB_SHA. Download Centrifuge-Windows.zip, extract it, and run Centrifuge.exe."

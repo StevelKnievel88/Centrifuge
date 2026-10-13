@@ -5,7 +5,7 @@
 namespace orbit
 {
 
-/** Everything the user can configure, saved as JSON in %APPDATA%\OrbitDJ\settings.json. */
+/** Everything the user can configure, saved as JSON in %APPDATA%\Centrifuge\settings.json. */
 struct AppSettings
 {
     // Library
@@ -21,7 +21,11 @@ struct AppSettings
     double mp3OffsetMs = 0.0;          // grid/cue correction for MP3s if your decoder differs from rekordbox's
 
     // Waveforms
-    int waveformStyle = 0;             // 0 = 3-band, 1 = RGB, 2 = blue
+    int waveformStyle = 0;             // original-track lane: 0 = 3-band, 1 = RGB, 2 = single colour
+    int mainLaneMode = 0;              // main lane: 0 = stems, 1 = rekordbox 3-band
+    std::array<float, 2> laneSplit { 0.5f, 0.5f };   // main lane share of each deck's waveform area
+    int deckPanelHeight = 210;
+    std::array<int, 4> stemMatrix { 1, 2, 4, 8 };    // stem controls A-D -> stems (bit 0 drums .. bit 3 vocals)
     double visibleSeconds = 10.0;      // width of the scrolling waveform
     int maxFps = 60;
 
@@ -31,7 +35,7 @@ struct AppSettings
 
     // Stems
     juce::String modelPath;            // empty = models/htdemucs.onnx next to the app
-    juce::String stemCachePath;        // empty = %LOCALAPPDATA%\OrbitDJ\Stems
+    juce::String stemCachePath;        // empty = %LOCALAPPDATA%\Centrifuge\Stems
     bool stemsOnLoad = true;
     bool stemsUseGpu = true;
     int stemThreads = 0;

@@ -1,4 +1,4 @@
-# OrbitDJ
+# Centrifuge
 
 A lightweight Windows DJ player for the Pioneer XDJ-XZ that uses your rekordbox library.
 
@@ -11,7 +11,7 @@ A lightweight Windows DJ player for the Pioneer XDJ-XZ that uses your rekordbox 
 
 ## Download
 
-Every push to `main` builds `OrbitDJ-Windows.zip` and attaches it to the **latest** release (see the Releases section of this repository). Extract it and run `OrbitDJ.exe`. See `docs/README-Windows.txt` for first-run steps.
+Every push to `main` builds `Centrifuge-Windows.zip` and attaches it to the **latest** release (see the Releases section of this repository). Extract it and run `Centrifuge.exe`. See `docs/README-Windows.txt` for first-run steps.
 
 ## Building
 

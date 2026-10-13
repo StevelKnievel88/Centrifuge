@@ -117,7 +117,7 @@ std::unique_ptr<LibrarySource> loadRekordboxMasterDb (const juce::File& dbFile, 
         shareDir = dbFile.getParentDirectory().getChildFile ("share");
 
     // Work on a private copy so rekordbox's own files are never touched or locked.
-    auto copyDir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("OrbitDJ-dbcopy");
+    auto copyDir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("Centrifuge-dbcopy");
     copyDir.createDirectory();
     auto copy = copyDir.getChildFile ("master.db");
     auto copyWal = copyDir.getChildFile ("master.db-wal");

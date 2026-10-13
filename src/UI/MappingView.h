@@ -29,7 +29,7 @@ private:
     void paintListBoxItem (int row, juce::Graphics&, int w, int h, bool selected);
 
     void timerCallback() override;
-    void learnSelected();
+    void learnSelected (bool add = false);
     void startGuided();
     void advanceGuided (bool skip);
     void updateDetail();
@@ -53,7 +53,7 @@ private:
     juce::uint32 lastCounter = 0;
 
     juce::TextEditor filter;
-    juce::TextButton learnButton { "LEARN" }, clearButton { "CLEAR" }, guidedButton { "GUIDED SETUP" },
+    juce::TextButton learnButton { "LEARN" }, learnAddButton { "LEARN + ADD" }, clearButton { "CLEAR" }, guidedButton { "GUIDED SETUP" },
                      skipButton { "SKIP" }, stopButton { "STOP" }, invertButton { "INVERT" };
     juce::ComboBox modeBox;
     juce::Slider sensitivity;

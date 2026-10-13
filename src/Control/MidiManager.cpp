@@ -175,7 +175,7 @@ bool MidiManager::saveToFile (const juce::File& f) const
     juce::Array<juce::var> arr;
     for (auto& b : getBindings()) arr.add (b.toVar());
     auto* root = new juce::DynamicObject();
-    root->setProperty ("format", "OrbitDJ mapping v1");
+    root->setProperty ("format", "Centrifuge mapping v1");
     root->setProperty ("bindings", arr);
     f.getParentDirectory().createDirectory();
     return f.replaceWithText (juce::JSON::toString (juce::var (root)));
@@ -197,9 +197,20 @@ bool MidiManager::loadFromFile (const juce::File& f)
 }
 
 //==============================================================================
-void MidiManager::startLearn (const juce::String& id)
+std::vector<juce::String> MidiManager::getActionsSharingControl (const MidiBinding& b) const
+{
+    const juce::ScopedLock sl (bindingLock);
+    std::vector<juce::String> r;
+    for (auto& x : bindings)
+        if (x.sameControl (b) && x.actionId != b.actionId)
+            r.push_back (x.actionId);
+    return r;
+}
+
+void MidiManager::startLearn (const juce::String& id, bool addToControl)
 {
     const juce::ScopedLock sl (learnLock);
+    learnAdd = addToControl;
     learnAction = id;
     learnHasCandidate = false;
     learnValues.clear();
@@ -222,8 +233,10 @@ juce::String MidiManager::getLearningAction() const
 void MidiManager::finishLearn()
 {
     MidiBinding b;
+    bool add = false;
     {
         const juce::ScopedLock sl (learnLock);
+        add = learnAdd;
         if (learnAction.isEmpty() || ! learnHasCandidate) return;
         b = learnCandidate;
         const auto* def = findAction (learnAction);
@@ -259,8 +272,9 @@ void MidiManager::finishLearn()
 
     {
         const juce::ScopedLock sl (bindingLock);
+        // Replace: the control does only this now. Add: other functions stay on the control too.
         bindings.erase (std::remove_if (bindings.begin(), bindings.end(),
-                                        [&] (auto& x) { return x.actionId == b.actionId || x.sameControl (b); }),
+                                        [&] (auto& x) { return x.actionId == b.actionId || (! add && x.sameControl (b)); }),
                         bindings.end());
         bindings.push_back (b);
         ledCache.clear();

@@ -10,28 +10,39 @@ namespace orbit
 juce::Image renderWaveformStrip (const WaveformData& w, double firstEntry, double entriesPerPixel,
                                  int width, int height, bool overview);
 
+/** Renders one stem's waveform in a single colour (columns beyond `validEntries` are left empty). */
+juce::Image renderStemStrip (const StemWaveform& w, int stem, juce::Colour colour, int validEntries,
+                             double firstEntry, double entriesPerPixel, int width, int height);
+
 /** Caches pre-rendered tiles of a scrolling waveform so each frame is just a couple of image blits. */
 class WaveformTileCache
 {
 public:
     static constexpr int tileWidth = 512;
+    using Renderer = std::function<juce::Image (double firstEntry, double entriesPerPixel, int width, int height)>;
 
-    /** Returns true if the cache had to be cleared (new waveform, zoom or size). */
-    bool configure (const WaveformData* w, double pixelsPerSecond, int height, float pixelScale);
+    /** Returns true if the cache had to be cleared (new waveform, zoom, size or style). */
+    bool configure (const void* key, int styleKey, double entriesPerSecond, double lengthSeconds,
+                    double pixelsPerSecond, int height, float pixelScale, Renderer renderer);
+
+    /** For data that grows (stems being separated): tiles drawn before their data existed get redrawn. */
+    void setValidEntries (int n) { validEntries = n; }
 
     /** Draws the waveform so that time `centreTime` lands at x = `playheadX` within `area`. */
-    void draw (juce::Graphics& g, juce::Rectangle<int> area, double centreTime, float playheadX);
+    void draw (juce::Graphics& g, juce::Rectangle<int> area, double centreTime, float playheadX, float opacity = 1.0f);
 
 private:
+    struct Tile { juce::Image image; int validAtRender = 0; juce::uint32 lastUsed = 0; };
     const juce::Image& tile (int index);
 
-    WaveformData::Ptr wave;
-    const WaveformData* key = nullptr;
-    double pps = 0.0;
+    const void* key = nullptr;
+    int style = -1;
+    double eps = 150.0, length = 0.0, pps = 0.0;
     int h = 0;
     float scale = 1.0f;
-    std::map<int, juce::Image> tiles;
-    std::map<int, juce::uint32> lastUsed;
+    int validEntries = std::numeric_limits<int>::max();
+    Renderer render;
+    std::map<int, Tile> tiles;
     juce::uint32 useCounter = 0;
 };
 

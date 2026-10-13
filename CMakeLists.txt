@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(OrbitDJ VERSION 0.1.0 LANGUAGES C CXX)
+project(Centrifuge VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -97,30 +97,30 @@ endif()
 # ---------------------------------------------------------------------------
 # The app
 # ---------------------------------------------------------------------------
-juce_add_gui_app(OrbitDJ
-    PRODUCT_NAME "OrbitDJ"
-    COMPANY_NAME "OrbitDJ"
+juce_add_gui_app(Centrifuge
+    PRODUCT_NAME "Centrifuge"
+    COMPANY_NAME "Centrifuge"
     VERSION ${PROJECT_VERSION}
     ICON_BIG ${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.png)
 
-juce_add_binary_data(OrbitDJData SOURCES
+juce_add_binary_data(CentrifugeData SOURCES
     resources/fonts/Inter-Regular.otf
     resources/fonts/Inter-SemiBold.otf)
 
 file(GLOB_RECURSE ORBIT_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.h)
-target_sources(OrbitDJ PRIVATE ${ORBIT_SOURCES})
-target_include_directories(OrbitDJ PRIVATE
+target_sources(Centrifuge PRIVATE ${ORBIT_SOURCES})
+target_include_directories(Centrifuge PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${sigstretch_SOURCE_DIR}/include
     ${siglinear_SOURCE_DIR}/include)
 
-target_compile_definitions(OrbitDJ PRIVATE
+target_compile_definitions(Centrifuge PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
-    JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:OrbitDJ,JUCE_PRODUCT_NAME>"
-    JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:OrbitDJ,JUCE_VERSION>"
+    JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:Centrifuge,JUCE_PRODUCT_NAME>"
+    JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:Centrifuge,JUCE_VERSION>"
     JUCE_USE_MP3AUDIOFORMAT=1
     JUCE_USE_FLAC=1
     JUCE_USE_OGGVORBIS=1
@@ -134,28 +134,28 @@ target_compile_definitions(OrbitDJ PRIVATE
 
 if(UNIX AND NOT APPLE)
     # Linux is only used for the preview/test build: no audio drivers needed.
-    target_compile_definitions(OrbitDJ PRIVATE
+    target_compile_definitions(Centrifuge PRIVATE
         JUCE_ALSA=0 JUCE_JACK=0 JUCE_USE_XRANDR=0 JUCE_USE_XINERAMA=0 JUCE_USE_XCURSOR=0)
 endif()
 
 if(ORBIT_HAS_ASIO)
-    target_compile_definitions(OrbitDJ PRIVATE JUCE_ASIO=1)
-    target_include_directories(OrbitDJ PRIVATE ${ASIO_SDK_DIR}/common)
+    target_compile_definitions(Centrifuge PRIVATE JUCE_ASIO=1)
+    target_include_directories(Centrifuge PRIVATE ${ASIO_SDK_DIR}/common)
 endif()
 
 if(ORBIT_HAS_ORT)
-    target_include_directories(OrbitDJ PRIVATE ${ORT_INCLUDE_DIR})
-    target_link_libraries(OrbitDJ PRIVATE ${ORT_LIBRARY})
+    target_include_directories(Centrifuge PRIVATE ${ORT_INCLUDE_DIR})
+    target_link_libraries(Centrifuge PRIVATE ${ORT_LIBRARY})
 endif()
 
 if(WIN32)
-    target_link_libraries(OrbitDJ PRIVATE mfplat mfreadwrite mfuuid propsys)
+    target_link_libraries(Centrifuge PRIVATE mfplat mfreadwrite mfuuid propsys)
 endif()
 
-target_link_libraries(OrbitDJ
+target_link_libraries(Centrifuge
     PRIVATE
         orbit_sqlite3mc
-        OrbitDJData
+        CentrifugeData
         juce::juce_audio_basics
         juce::juce_audio_devices
         juce::juce_audio_formats
@@ -169,8 +169,8 @@ target_link_libraries(OrbitDJ
         juce::juce_recommended_warning_flags)
 
 if(MSVC)
-    target_compile_options(OrbitDJ PRIVATE /bigobj /fp:fast)
+    target_compile_options(Centrifuge PRIVATE /bigobj /fp:fast)
 else()
-    target_compile_options(OrbitDJ PRIVATE -ffast-math -Wno-shadow -Wno-sign-conversion -Wno-float-conversion
+    target_compile_options(Centrifuge PRIVATE -ffast-math -Wno-shadow -Wno-sign-conversion -Wno-float-conversion
         -Wno-implicit-float-conversion -Wno-conversion -Wno-unused-parameter)
 endif()

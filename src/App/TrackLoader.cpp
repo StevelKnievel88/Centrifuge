@@ -53,8 +53,9 @@ LoadedTrack::Ptr TrackLoader::build (const TrackInfo& info, TrackAudio::Ptr audi
     }
     std::sort (t->memoryCues.begin(), t->memoryCues.end(), [] (auto& a, auto& b) { return a.startSec < b.startSec; });
 
+    t->anlzWave = anlz.waveforms;
     if (anlz.waveforms.numDetailEntries() > 0)
-        t->waveform = WaveformData::fromAnlz (anlz.waveforms, o.waveformStyle);
+        t->waveform = WaveformData::fromAnlz (anlz.waveforms, WaveformData::Style::threeBand);
     else if (audio != nullptr)
         t->waveform = WaveformData::fromAudio (*audio);
 
@@ -116,6 +117,7 @@ void TrackLoader::load (int deck, const TrackInfo& info, bool fromPc)
             {
                 if (pending[(size_t) deck].load() != serial || stems == nullptr) return;
                 engine.getReleasePool().add (stems);
+                engine.deck (deck).setStemsForUi (stems);
                 Deck::Command sc;
                 sc.cmd = Deck::Cmd::attachStems;
                 sc.ptr = stems.get();

@@ -36,6 +36,22 @@ struct WaveformData : public juce::ReferenceCountedObject
     static Ptr fromStem (const StemAudio& stems, int stemIndex);
 };
 
+/** Per-stem waveform (peak per column, 150 per second). Filled in progressively while stems are separated. */
+struct StemWaveform : public juce::ReferenceCountedObject
+{
+    using Ptr = juce::ReferenceCountedObjectPtr<StemWaveform>;
+    double entriesPerSecond = 150.0;
+    int total = 0;
+    std::array<std::vector<uint8_t>, 4> peak;
+    std::atomic<int> computed { 0 };
+
+    double lengthSeconds() const noexcept { return total / entriesPerSecond; }
+
+    static Ptr create (const StemAudio& stems);
+    /** Computes columns that are covered by finished stem audio. Returns true when more were added. */
+    bool update (const StemAudio& stems);
+};
+
 /** rekordbox 3-band colours (from Deep Symmetry's reverse-engineering notes). */
 namespace WaveColours
 {

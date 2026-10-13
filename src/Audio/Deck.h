@@ -19,8 +19,19 @@ struct LoadedTrack : public juce::ReferenceCountedObject
     std::vector<CuePoint> memoryCues;
     std::array<CuePoint, 8> hotCues {};
     std::array<bool, 8> hotCueSet {};
-    WaveformData::Ptr waveform;
+    WaveformData::Ptr waveform;          // 3-band (rekordbox analysis, or our own)
+    AnlzWaveforms anlzWave;              // raw rekordbox waveforms, to draw in any style
     int serial = 0;
+
+    /** The track's waveform in the requested style (message thread; cached). */
+    WaveformData::Ptr waveformInStyle (WaveformData::Style s)
+    {
+        if (s == WaveformData::Style::threeBand || anlzWave.numDetailEntries() == 0) return waveform;
+        auto& slot = styled[(size_t) s];
+        if (slot == nullptr) slot = WaveformData::fromAnlz (anlzWave, s);
+        return slot;
+    }
+    std::array<WaveformData::Ptr, 3> styled;
 };
 
 /** One playback deck. All `process` work happens on the audio thread; controls arrive through a
@@ -42,7 +53,7 @@ public:
         jogTouch, jogTurn, setVinylMode,
         loopIn, loopOut, reloopExit, beatLoop, loopHalve, loopDouble, loopOff,
         beatJump, syncToggle, syncSet, masterSet, keyLockToggle, keyLockSet, quantizeToggle, seekFraction, seekSeconds,
-        stemGain, stemMuteToggle, stemSolo, stemReset, eject, shift
+        stemGain, stemMuteToggle, stemSolo, stemReset, eject, shift, keyShiftBy, keyShiftSet
     };
 
     struct Command
@@ -99,6 +110,7 @@ public:
         std::atomic<double> loopInSec { -1.0 }, loopOutSec { -1.0 };
         std::atomic<bool> loopActive { false };
         std::atomic<bool> playing { false }, keyLock { false }, sync { false }, master { false }, quantize { true };
+        std::atomic<int> keyShift { 0 };          // semitones
         std::atomic<bool> vinylMode { true }, jogTouched { false }, stemsReady { false };
         std::atomic<float> stemsProgress { 0.0f };   // 0..1 while separating
         std::array<std::atomic<double>, 8> hotStart, hotEnd;
@@ -121,6 +133,8 @@ public:
     /** Message thread: the track currently on this deck (for the UI). */
     LoadedTrack::Ptr getLoadedTrack() const;
     void setLoadedTrackForUi (LoadedTrack::Ptr t);
+    StemAudio::Ptr getStemsForUi() const { const juce::ScopedLock sl (uiTrackLock); return uiStems; }
+    void setStemsForUi (StemAudio::Ptr s) { const juce::ScopedLock sl (uiTrackLock); uiStems = std::move (s); }
 
 private:
     void apply (const Command& c);
@@ -163,6 +177,8 @@ private:
     double phaseNudge = 0.0;
     bool syncOn = false, syncSnapRequested = false;
     bool keyLock = false, quantize = true, vinylMode = true, shiftHeld = false;
+    int keyShift = 0;
+    double lastTranspose = 0.0;
 
     // Jog / scratch
     bool jogTouched = false, scratching = false;
@@ -204,6 +220,7 @@ private:
 
     mutable juce::CriticalSection uiTrackLock;
     LoadedTrack::Ptr uiTrack;
+    StemAudio::Ptr uiStems;
 
     JUCE_DECLARE_NON_COPYABLE (Deck)
 };

@@ -169,4 +169,40 @@ WaveformData::Ptr WaveformData::fromStem (const StemAudio& s, int stem)
     return analyse (s.numFrames, s.sampleRate, [l, r] (int64_t i) { return 0.5f * StemAudio::toFloat * (float) (l[i] + r[i]); });
 }
 
+StemWaveform::Ptr StemWaveform::create (const StemAudio& st)
+{
+    StemWaveform::Ptr w = new StemWaveform();
+    w->total = (int) std::ceil ((double) st.numFrames * w->entriesPerSecond / st.sampleRate);
+    for (auto& p : w->peak) p.assign ((size_t) w->total, 0);
+    w->update (st);
+    return w;
+}
+
+bool StemWaveform::update (const StemAudio& st)
+{
+    const double perCol = st.sampleRate / entriesPerSecond;
+    const auto valid = st.validFrames.load (std::memory_order_acquire);
+    const int canDo = juce::jmin (total, (int) std::floor ((double) valid / perCol));
+    const int from = computed.load();
+    if (canDo <= from) return false;
+
+    for (int c = from; c < canDo; ++c)
+    {
+        const auto i0 = (size_t) (c * perCol);
+        const auto i1 = (size_t) std::min<int64_t> (st.numFrames, (int64_t) ((c + 1) * perCol));
+        for (size_t s = 0; s < 4; ++s)
+        {
+            const auto* l = st.channels[s * 2].data();
+            const auto* r = st.channels[s * 2 + 1].data();
+            int pk = 0;
+            for (size_t i = i0; i < i1; ++i)
+                pk = std::max (pk, std::abs ((int) l[i] + (int) r[i]));
+            // stems are stored with 6 dB headroom: full scale = 16383 per channel
+            peak[s][(size_t) c] = (uint8_t) juce::jlimit (0, 255, (int) (pk / 32766.0 * 255.0 * 0.95));
+        }
+    }
+    computed.store (canDo, std::memory_order_release);
+    return true;
+}
+
 } // namespace orbit

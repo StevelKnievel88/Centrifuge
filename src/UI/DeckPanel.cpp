@@ -1,5 +1,6 @@
 #include "DeckPanel.h"
 #include "Theme.h"
+#include "../Control/Actions.h"
 
 namespace orbit
 {
@@ -31,6 +32,7 @@ namespace
 DeckPanel::DeckPanel (int d, AudioEngine& e, ActionRouter& r) : deck (d), engine (e), router (r)
 {
     setOpaque (true);
+    addAndMakeVisible (rotor);
     startTimerHz (20);
 }
 
@@ -46,6 +48,7 @@ void DeckPanel::resized()
     r.removeFromTop (8.0f);
     rowControls = r;
     overviewWidth = 0;
+    repaint();
 }
 
 void DeckPanel::timerCallback()
@@ -71,6 +74,10 @@ void DeckPanel::timerCallback()
     mix (st.cuePointSec.load()); mix (st.endWarning.load() ? std::floor (juce::Time::getMillisecondCounter() / 400.0) : 0.0);
     for (size_t i = 0; i < 8; ++i) mix (st.hotStart[i].load());
     for (size_t i = 0; i < 4; ++i) mix (st.stemGain[i].load() * 100.0f);
+    mix (st.keyShift.load()); mix (st.keyLock.load());
+    rotor.setBounds (rotorArea.toNearestInt());
+    rotor.setSpinning (st.stemsReady.load() && st.stemsProgress.load() < 0.999f);
+    rotor.setProgress (st.stemsReady.load() ? st.stemsProgress.load() : 0.0f);
     mix (router.getPitchRangePercent (deck));
     if (h != lastHash) { lastHash = h; repaint(); }
 }
@@ -106,12 +113,30 @@ void DeckPanel::paint (juce::Graphics& g)
 
         if (loaded && track->info.key.isNotEmpty())
         {
-            auto keyChip = r.removeFromRight (44.0f).withSizeKeepingCentre (40.0f, 22.0f);
+            // [-] [key +n] [+] [KEY SYNC]
+            const auto p = "d" + juce::String (deck + 1) + ".";
+            const int shift = st.keyShift.load();
+            auto syncChip = r.removeFromRight (40.0f).withSizeKeepingCentre (38.0f, 22.0f);
+            chip (g, syncChip, "K.SYNC", router.ledState (*findAction (p + "key.sync")), Theme::good.darker (0.2f));
+            regions.push_back ({ syncChip, p + "key.sync", 0 });
+            r.removeFromRight (4.0f);
+
+            auto plus = r.removeFromRight (18.0f).withSizeKeepingCentre (18.0f, 22.0f);
+            auto keyChip = r.removeFromRight (shift != 0 ? 66.0f : 44.0f).withSizeKeepingCentre (shift != 0 ? 64.0f : 42.0f, 22.0f);
+            auto minus = r.removeFromRight (18.0f).withSizeKeepingCentre (18.0f, 22.0f);
+            chip (g, minus, "-", false, Theme::good);
+            chip (g, plus, "+", false, Theme::good);
+            regions.push_back ({ minus, p + "key.down", 0 });
+            regions.push_back ({ plus, p + "key.up", 0 });
+            regions.push_back ({ keyChip, p + "key.reset", 0 });
+
             g.setColour (Theme::panelHi);
             g.fillRoundedRectangle (keyChip, 3.0f);
-            g.setColour (Theme::good);
+            g.setColour (shift != 0 ? Theme::warn : Theme::good);
             g.setFont (Theme::font (13.0f, true));
-            g.drawText (track->info.key, keyChip, juce::Justification::centred);
+            auto keyText = router.effectiveKeyText (deck);
+            if (shift != 0) keyText << "  " << (shift > 0 ? "+" : "") << shift;
+            g.drawText (keyText, keyChip, juce::Justification::centred);
             r.removeFromRight (6.0f);
         }
 
@@ -307,8 +332,10 @@ void DeckPanel::paint (juce::Graphics& g)
         chip (g, loopBtn, "LOOP 4", st.loopActive.load(), Theme::accent);
         regions.push_back ({ loopBtn, p + "beatloop.4", 0 });
 
-        // Stems
-        r.removeFromLeft (12.0f);
+        // Stems (rotor shows separation progress)
+        r.removeFromLeft (8.0f);
+        rotorArea = r.removeFromLeft (r.getHeight()).reduced (1.0f);
+        r.removeFromLeft (8.0f);
         const bool ready = st.stemsReady.load();
         const float prog = st.stemsProgress.load();
         const float sw = (r.getWidth() - 3 * 6.0f) / 4.0f;
@@ -316,26 +343,20 @@ void DeckPanel::paint (juce::Graphics& g)
         {
             auto b = juce::Rectangle<float> (r.getX() + s * (sw + 6.0f), r.getY() + 2.0f, sw, r.getHeight() - 4.0f);
             const float gain = st.stemGain[(size_t) s].load();
+            const auto sc = Theme::stemColour (s);
             g.setColour (Theme::panelHi);
             g.fillRoundedRectangle (b, 3.0f);
             if (ready)
             {
-                g.setColour (col.withAlpha (gain <= 0.0f ? 0.15f : 0.55f));
-                g.fillRoundedRectangle (b.withTrimmedRight (b.getWidth() * (1.0f - gain)), 3.0f);
+                g.setColour (sc.withAlpha (gain <= 0.0f ? 0.12f : 0.6f));
+                g.fillRoundedRectangle (b.withTrimmedRight (b.getWidth() * (1.0f - juce::jmax (gain, 0.04f))), 3.0f);
             }
-            g.setColour (Theme::line);
+            g.setColour (ready ? sc.withAlpha (0.8f) : Theme::line);
             g.drawRoundedRectangle (b.reduced (0.5f), 3.0f, 1.0f);
-            g.setColour (ready ? (gain <= 0.0f ? Theme::bad : Theme::text) : Theme::textFaint);
+            g.setColour (ready ? (gain <= 0.0f ? Theme::textFaint : Theme::text) : Theme::textFaint);
             g.setFont (Theme::font (11.0f, true));
             g.drawText (juce::String (stemName (s)).toUpperCase(), b, juce::Justification::centred);
             regions.push_back ({ b, p + "stem." + juce::String (s + 1) + ".mute", 2 });
-        }
-        if (ready && prog < 0.999f)
-        {
-            g.setColour (Theme::textDim);
-            g.setFont (Theme::font (10.0f));
-            g.drawText ("separating " + juce::String (juce::roundToInt (prog * 100.0f)) + "%",
-                        r.withY (r.getBottom() - 1.0f).withHeight (12.0f), juce::Justification::centredRight);
         }
     }
 }
@@ -386,7 +407,11 @@ void DeckPanel::mouseDrag (const juce::MouseEvent& e)
             if (r.kind == 2 && r.action.contains ("stem." + juce::String (dragStem + 1) + "."))
             {
                 const double v = juce::jlimit (0.0, 1.0, (double) ((e.position.x - r.r.getX()) / r.r.getWidth()));
-                engine.deck (deck).post (Deck::Cmd::stemGain, v, dragStem);
+            {
+                ActionValue av;
+                av.value = v;
+                router.perform ("d" + juce::String (deck + 1) + ".stem." + juce::String (dragStem + 1) + ".volume", av);
+            }
             }
         return;
     }
