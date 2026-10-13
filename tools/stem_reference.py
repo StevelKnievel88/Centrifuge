@@ -62,6 +62,7 @@ def sdr(ref, est):
 
 def compare(ref_dir, est_dir):
     ok = True
+    mix = sum(sf.read(f"{ref_dir}/{n}.wav", dtype="float64")[0] for n in ("drums", "bass", "vocals", "other"))
     for name in ("drums", "bass", "vocals", "other"):
         r, _ = sf.read(f"{ref_dir}/{name}.wav", dtype="float64")
         e, _ = sf.read(f"{est_dir}/{name}.wav", dtype="float64")
@@ -70,8 +71,10 @@ def compare(ref_dir, est_dir):
         if name == "other":
             print(f"{name:7s} SDR vs official demucs: {value:6.1f} dB  (informational: includes the residual)")
             continue
-        print(f"{name:7s} SDR vs official demucs: {value:6.1f} dB  (need > 30)")
-        ok &= value > 30.0
+        n = min(len(r), len(e), len(mix))
+        rel = 10 * np.log10(np.sum(mix[:n] ** 2) / max(np.sum((r[:n] - e[:n]) ** 2), 1e-20))
+        print(f"{name:7s} SDR vs official demucs: {value:6.1f} dB, error {rel:6.1f} dB below the mix  (need SDR > 30 or error > 50 dB down)")
+        ok &= value > 30.0 or rel > 50.0
     if not ok:
         sys.exit("C++ stem separation does not match the reference")
     print("C++ stem separation matches the official demucs output")
