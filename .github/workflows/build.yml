@@ -143,7 +143,7 @@ jobs:
 
       - name: Configure
         shell: bash
-        run: tools/run_logged.sh cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DORT_ROOT="$(pwd -W)/ort" -DASIO_SDK_DIR="$ASIO_DIR"
+        run: tools/run_logged.sh cmake -S . -B build -A x64 -DORT_ROOT="$(pwd -W)/ort" -DASIO_SDK_DIR="$ASIO_DIR"
 
       - name: Build
         shell: bash
