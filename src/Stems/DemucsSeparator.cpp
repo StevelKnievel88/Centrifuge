@@ -19,6 +19,9 @@ struct DemucsSeparator::Impl
     Ort::Env env { ORT_LOGGING_LEVEL_WARNING, "Centrifuge" };
     std::unique_ptr<Ort::Session> session;
     std::vector<std::string> inNames, outNames;
+    bool usingGpu = false, gpuVerified = false;
+    juce::File modelFile;
+    int cpuThreads = 1;
     int mixInput = 0, specInput = 1, specOutput = 0, timeOutput = 1;
 #endif
     int segment = 343980;
@@ -78,6 +81,9 @@ bool DemucsSeparator::load (const Options& opt, juce::String& error)
     };
 
     impl->session.reset();
+    impl->usingGpu = false;
+    impl->modelFile = opt.modelFile;
+    impl->cpuThreads = threads;
     juce::String gpuError;
 
    #if ORBIT_HAS_DML
@@ -92,6 +98,8 @@ bool DemucsSeparator::load (const Options& opt, juce::String& error)
             Ort::ThrowOnError (OrtSessionOptionsAppendExecutionProvider_DML (so, 0));
             impl->session = std::make_unique<Ort::Session> (impl->env, path, so);
             impl->backend = "GPU (DirectML)";
+            impl->usingGpu = true;
+            impl->gpuVerified = false;
         }
         catch (const std::exception& e)
         {
@@ -182,10 +190,26 @@ bool DemucsSeparator::separate (const TrackAudio& audio, StemAudio& out,
         n44 = (int64_t) std::floor ((double) N * modelRate / srcRate);
         rl.resize ((size_t) n44);
         rr.resize ((size_t) n44);
-        juce::WindowedSincInterpolator il, ir;
+        // Zero-latency cubic resampling, so the stems stay sample-aligned with the original
+        // (a delay here would leave the stems slightly late, and muting any stem would sound broken).
         const double ratio = srcRate / modelRate;
-        il.process (ratio, audio.left.data(), rl.data(), (int) n44, (int) N, 0);
-        ir.process (ratio, audio.right.data(), rr.data(), (int) n44, (int) N, 0);
+        auto resample = [&] (const float* in, float* out)
+        {
+            auto at = [&] (int64_t i) { return in[juce::jlimit<int64_t> (0, N - 1, i)]; };
+            for (int64_t o = 0; o < n44; ++o)
+            {
+                const double p = (double) o * ratio;
+                const auto ip = (int64_t) std::floor (p);
+                const float t = (float) (p - (double) ip);
+                const float xm1 = at (ip - 1), x0 = at (ip), x1 = at (ip + 1), x2 = at (ip + 2);
+                const float c1 = 0.5f * (x1 - xm1);
+                const float c2 = xm1 - 2.5f * x0 + 2.0f * x1 - 0.5f * x2;
+                const float c3 = 0.5f * (x2 - xm1) + 1.5f * (x0 - x1);
+                out[o] = ((c3 * t + c2) * t + c1) * t + x0;
+            }
+        };
+        resample (audio.left.data(), rl.data());
+        resample (audio.right.data(), rr.data());
         inL = rl.data();
         inR = rr.data();
     }
@@ -341,6 +365,57 @@ bool DemucsSeparator::separate (const TrackAudio& audio, StemAudio& out,
         {
             error = "Stem model failed: " + juce::String (e.what());
             return false;
+        }
+
+        // The first time the GPU is used, check one segment against the CPU. If the graphics driver
+        // gives different results, switch to the CPU for good.
+        if (impl->usingGpu && ! impl->gpuVerified)
+        {
+            try
+            {
+                Ort::SessionOptions so;
+                so.SetGraphOptimizationLevel (GraphOptimizationLevel::ORT_ENABLE_ALL);
+                so.SetIntraOpNumThreads (impl->cpuThreads);
+               #if JUCE_WINDOWS
+                auto cpu = std::make_unique<Ort::Session> (impl->env, impl->modelFile.getFullPathName().toWideCharPointer(), so);
+               #else
+                auto cpu = std::make_unique<Ort::Session> (impl->env, impl->modelFile.getFullPathName().toRawUTF8(), so);
+               #endif
+                std::vector<Ort::Value> cin;
+                Ort::Value m2 = Ort::Value::CreateTensor<float> (memInfo, mix.data(), mix.size(), mixShape.data(), mixShape.size());
+                Ort::Value s2 = Ort::Value::CreateTensor<float> (memInfo, spec.data(), spec.size(), specShape.data(), specShape.size());
+                std::array<Ort::Value*, 2> order {};
+                order[(size_t) impl->mixInput] = &m2;
+                order[(size_t) impl->specInput] = &s2;
+                cin.push_back (std::move (*order[0]));
+                cin.push_back (std::move (*order[1]));
+                auto cout = cpu->Run (Ort::RunOptions { nullptr }, inNames.data(), cin.data(), cin.size(), outNames.data(), outNames.size());
+
+                double maxRef = 0.0, maxErr = 0.0;
+                for (size_t o = 0; o < 2; ++o)
+                {
+                    const auto count = cout[o].GetTensorTypeAndShapeInfo().GetElementCount();
+                    const float* a = cout[o].GetTensorData<float>();
+                    const float* b = outputs[o].GetTensorData<float>();
+                    for (size_t i = 0; i < count; ++i)
+                    {
+                        const double ref = std::abs ((double) a[i]);
+                        const double err = StemAudio::isFiniteBits (b[i]) ? std::abs ((double) a[i] - (double) b[i]) : 1.0e9;
+                        maxRef = std::max (maxRef, ref);
+                        maxErr = std::max (maxErr, err);
+                    }
+                }
+
+                impl->gpuVerified = true;
+                if (maxErr > 0.02 * std::max (1.0, maxRef))
+                {
+                    impl->session = std::move (cpu);
+                    impl->usingGpu = false;
+                    impl->backend = "CPU (" + juce::String (impl->cpuThreads) + " threads) - the GPU gave wrong results";
+                    outputs = std::move (cout);
+                }
+            }
+            catch (const std::exception&) { impl->gpuVerified = true; }
         }
 
         const float* xSpec = outputs[(size_t) impl->specOutput].GetTensorData<float>();

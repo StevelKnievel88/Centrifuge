@@ -70,6 +70,51 @@ static int runCommandLine (const juce::StringArray& args)
         return 0;
     }
 
+    if (args.contains ("--deck-test"))
+    {
+        // Plays a track through a real Deck with one stem muted and writes what comes out.
+        const auto input = juce::File (argAfter ("--deck-test"));
+        const auto outFile = juce::File (argAfter ("--out"));
+        AudioFileLoader loader;
+        juce::String err;
+        auto audio = loader.load (input, err);
+        if (audio == nullptr) return 2;
+        DemucsSeparator sep;
+        DemucsSeparator::Options o;
+        o.modelFile = juce::File (argAfter ("--model"));
+        o.useGpu = false;
+        if (! sep.load (o, err)) return 3;
+        StemAudio::Ptr stems = new StemAudio();
+        if (! sep.separate (*audio, *stems, nullptr, err)) return 4;
+
+        TrackInfo info;
+        LoadedTrack::Ptr t = new LoadedTrack();
+        t->info = info; t->audio = audio; t->serial = 1;
+        const double rate = argAfter ("--rate").isNotEmpty() ? argAfter ("--rate").getDoubleValue() : 44100.0;
+        Deck deck (0);
+        deck.prepare (rate, 512);
+        Deck::Command c; c.cmd = Deck::Cmd::load; c.ptr = t.get(); deck.post (c);
+        Deck::Command a; a.cmd = Deck::Cmd::attachStems; a.ptr = stems.get(); a.serial = 1; deck.post (a);
+        const int mute = argAfter ("--mute").getIntValue();
+        deck.post (Deck::Cmd::stemGain, 0.0, mute);
+        deck.post (Deck::Cmd::play);
+
+        const int total = (int) (audio->lengthSeconds() * rate) - 2048;
+        juce::AudioBuffer<float> out (2, total);
+        for (int pos = 0; pos < total; pos += 512)
+        {
+            const int n = juce::jmin (512, total - pos);
+            deck.handleCommands();
+            deck.process (out.getWritePointer (0) + pos, out.getWritePointer (1) + pos, n);
+        }
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::OutputStream> os = std::make_unique<juce::FileOutputStream> (outFile);
+        auto w = wav.createWriterFor (os, juce::AudioFormatWriterOptions{}.withSampleRate (rate).withNumChannels (2).withBitsPerSample (32)
+                                        .withSampleFormat (juce::AudioFormatWriterOptions::SampleFormat::floatingPoint));
+        w->writeFromAudioSampleBuffer (out, 0, total);
+        return 0;
+    }
+
     if (args.contains ("--render-icon"))
     {
         OrbitLookAndFeel laf;

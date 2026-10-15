@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <vector>
 
 namespace orbit
@@ -38,8 +39,17 @@ struct StemAudio : public juce::ReferenceCountedObject
 
     // 16-bit with 6 dB of headroom: separated stems can individually exceed full scale.
     static constexpr float toFloat = 2.0f / 32767.0f;
+    /** NaN/inf check that still works with fast-math compiler settings. */
+    static inline bool isFiniteBits (float v) noexcept
+    {
+        uint32_t u;
+        std::memcpy (&u, &v, sizeof (u));
+        return (u & 0x7f800000u) != 0x7f800000u;
+    }
+
     static inline int16_t fromFloat (float v) noexcept
     {
+        if (! isFiniteBits (v)) return 0;
         const float x = v * (32767.0f / 2.0f);
         return (int16_t) (x >= 32767.0f ? 32767 : x <= -32767.0f ? -32767 : (int) std::lrint (x));
     }
