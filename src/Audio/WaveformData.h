@@ -34,13 +34,27 @@ struct WaveformData : public juce::ReferenceCountedObject
 
     /** Same, for one stem's audio (used to draw stem lanes). */
     static Ptr fromStem (const StemAudio& stems, int stemIndex);
+
+    /** Builds an RGB or single-colour waveform from a 3-band one (for tracks rekordbox hasn't analysed). */
+    static Ptr deriveFrom3Band (const WaveformData& threeBand, Style target);
 };
 
-/** Per-stem waveform (peak per column, 150 per second). Filled in progressively while stems are separated. */
+/** Fine detail for zooming in: the track's peak level 1200 times a second, relative to the loudest peak of
+    the 150-per-second waveform column it falls in (255 = that column's peak). Multiplying a waveform column by
+    this brings back the transients that 150 columns per second can't show. */
+struct WaveformDetail : public juce::ReferenceCountedObject
+{
+    using Ptr = juce::ReferenceCountedObjectPtr<WaveformDetail>;
+    static constexpr double perSecond = 1200.0;
+    std::vector<uint8_t> shape;
+    static Ptr fromAudio (const TrackAudio& audio);
+};
+
+/** Per-stem waveform (peak per column, 600 per second). Filled in progressively while stems are separated. */
 struct StemWaveform : public juce::ReferenceCountedObject
 {
     using Ptr = juce::ReferenceCountedObjectPtr<StemWaveform>;
-    double entriesPerSecond = 150.0;
+    double entriesPerSecond = 600.0;
     int total = 0;
     std::array<std::vector<uint8_t>, 4> peak;
     std::atomic<int> computed { 0 };

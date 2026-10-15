@@ -51,6 +51,37 @@ LoadedTrack::Ptr TrackLoader::build (const TrackInfo& info, TrackAudio::Ptr audi
             t->memoryCues.push_back (c);
         }
     }
+    // Centrifuge's own edits replace rekordbox's cues (rekordbox's data is never changed).
+    t->cueShift = shift;
+    t->cueKey = CueStore::keyFor (info, length);
+    if (o.cueStore != nullptr)
+        if (auto e = o.cueStore->get (t->cueKey))
+        {
+            if (e->hotCues)
+                for (size_t i = 0; i < 8; ++i)
+                {
+                    t->hotCueSet[i] = (*e->hotCues)[i].has_value();
+                    if (t->hotCueSet[i])
+                    {
+                        auto c = *(*e->hotCues)[i];
+                        c.startSec += shift;
+                        if (c.endSec > 0) c.endSec += shift;
+                        t->hotCues[i] = c;
+                    }
+                }
+            if (e->locators)
+            {
+                t->memoryCues.clear();
+                for (auto c : *e->locators)
+                {
+                    c.startSec += shift;
+                    if (c.endSec > 0) c.endSec += shift;
+                    t->memoryCues.push_back (c);
+                }
+            }
+            for (auto& k : e->skips)
+                t->skips.push_back ({ k.first + shift, k.second + shift });
+        }
     std::sort (t->memoryCues.begin(), t->memoryCues.end(), [] (auto& a, auto& b) { return a.startSec < b.startSec; });
 
     t->anlzWave = anlz.waveforms;
@@ -58,6 +89,8 @@ LoadedTrack::Ptr TrackLoader::build (const TrackInfo& info, TrackAudio::Ptr audi
         t->waveform = WaveformData::fromAnlz (anlz.waveforms, WaveformData::Style::threeBand);
     else if (audio != nullptr)
         t->waveform = WaveformData::fromAudio (*audio);
+    if (audio != nullptr)
+        t->detail = WaveformDetail::fromAudio (*audio);
 
     return t;
 }

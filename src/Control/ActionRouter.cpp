@@ -147,6 +147,13 @@ void ActionRouter::perform (const ActionDef& a, const ActionValue& v)
     else if (name == "needle")      deck.post (C::seekFraction, v.value);
     else if (name == "callprev")    { if (v.down) button (C::memoryCuePrev); }
     else if (name == "callnext")    { if (v.down) button (C::memoryCueNext); }
+    else if (name == "locator.add")    { if (v.down) deck.post (C::locatorAdd, -1.0); }
+    else if (name == "locator.delete") { if (v.down) button (C::locatorDeleteNearest); }
+    else if (name == "skip.set")       { if (v.down) button (C::skipSet); }
+    else if (name == "skip.in")        { if (v.down) button (C::skipIn); }
+    else if (name == "skip.out")       { if (v.down) button (C::skipOut); }
+    else if (name == "skip.delete")    { if (v.down) button (C::skipDeleteNearest); }
+    else if (name == "skip.toggle")    { if (v.down) button (C::skipsToggle); }
     else if (name == "load")
     {
         if (v.down && onAppAction)
@@ -266,6 +273,8 @@ bool ActionRouter::ledState (const ActionDef& a) const
     if (name == "keylock")   return st.keyLock.load();
     if (name == "quantize")  return st.quantize.load();
     if (name == "jog.vinyl") return st.vinylMode.load();
+    if (name == "skip.toggle") return st.skipsOn.load();
+    if (name == "skip.set" || name == "skip.in") return st.skipPendingFrom.load() >= 0.0;
     if (name.startsWith ("loop."))     return st.loopActive.load();
     if (name.startsWith ("hotcue."))
     {

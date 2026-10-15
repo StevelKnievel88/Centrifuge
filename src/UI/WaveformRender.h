@@ -1,18 +1,31 @@
 #pragma once
 #include "../Audio/WaveformData.h"
+#include "../Audio/TimeFold.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <map>
 
 namespace orbit
 {
 
+/** How a waveform strip is drawn. */
+struct StripOptions
+{
+    enum Shape { full = 0, halfUp = 1, halfDown = 2 };
+    int shape = full;
+    bool overview = false;
+    juce::Colour tint;                          // set: single-colour waveform in this colour
+    const WaveformDetail* detail = nullptr;     // fine detail used when zoomed in
+    const TimeFold* fold = nullptr;             // skipped sections folded out (entries are then display entries)
+    double entriesPerSecond = 150.0;            // of the data being drawn (needed for the fold)
+};
+
 /** Renders waveform columns straight into pixels (software image), rekordbox style. */
 juce::Image renderWaveformStrip (const WaveformData& w, double firstEntry, double entriesPerPixel,
-                                 int width, int height, bool overview);
+                                 int width, int height, const StripOptions& options);
 
 /** Renders one stem's waveform in a single colour (columns beyond `validEntries` are left empty). */
 juce::Image renderStemStrip (const StemWaveform& w, int stem, juce::Colour colour, int validEntries,
-                             double firstEntry, double entriesPerPixel, int width, int height);
+                             double firstEntry, double entriesPerPixel, int width, int height, const StripOptions& options);
 
 /** Caches pre-rendered tiles of a scrolling waveform so each frame is just a couple of image blits. */
 class WaveformTileCache
@@ -21,8 +34,8 @@ public:
     static constexpr int tileWidth = 512;
     using Renderer = std::function<juce::Image (double firstEntry, double entriesPerPixel, int width, int height)>;
 
-    /** Returns true if the cache had to be cleared (new waveform, zoom, size or style). */
-    bool configure (const void* key, int styleKey, double entriesPerSecond, double lengthSeconds,
+    /** Returns true if the cache had to be cleared (new waveform, zoom, size, style or fold). */
+    bool configure (const void* key, juce::int64 styleKey, double entriesPerSecond, double lengthSeconds,
                     double pixelsPerSecond, int height, float pixelScale, Renderer renderer);
 
     /** For data that grows (stems being separated): tiles drawn before their data existed get redrawn. */
@@ -36,7 +49,7 @@ private:
     const juce::Image& tile (int index);
 
     const void* key = nullptr;
-    int style = -1;
+    juce::int64 style = -1;
     double eps = 150.0, length = 0.0, pps = 0.0;
     int h = 0;
     float scale = 1.0f;

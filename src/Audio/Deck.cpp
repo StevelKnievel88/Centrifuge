@@ -158,6 +158,7 @@ void Deck::jumpTo (double sec, bool quantized)
     }
 
     pos = juce::jlimit (0.0, (double) track->audio->numFrames - 1.0, sec * srcRate);
+    xfRemain = 0;
     stretchActive = false;
 }
 
@@ -197,10 +198,70 @@ void Deck::loadTrack (LoadedTrack* t)
     hot = track->hotCues;
     hotSet = track->hotCueSet;
 
+    numLocs = 0;
+    for (auto& m : track->memoryCues)
+        if (numLocs < maxLocators)
+            locs[(size_t) numLocs++] = { m.startSec, m.isLoop() ? m.endSec : -1.0, (m.colour.isTransparent() ? juce::Colour (0xffe62828) : m.colour).getARGB() };
+    std::sort (locs.begin(), locs.begin() + numLocs, [] (const Loc& a, const Loc& b) { return a.start < b.start; });
+
+    numSkipsLocal = 0;
+    for (auto& k : track->skips)
+        if (numSkipsLocal < maxSkips && k.second > k.first)
+            skips[(size_t) numSkipsLocal++] = { k.first, k.second };
+    sortSkips();
+    skipPending = -1.0;
+    xfRemain = 0;
+
     cuePoint = 0.0;
-    if (! track->memoryCues.empty())
-        cuePoint = track->memoryCues.front().startSec;
+    if (numLocs > 0)
+        cuePoint = locs[0].start;
     pos = cuePoint * srcRate;
+}
+
+void Deck::addLocator (double sec, juce::Colour colour, double endSec)
+{
+    if (nearestLocator (sec, 0.01) >= 0 || numLocs >= maxLocators) return;
+    locs[(size_t) numLocs++] = { sec, endSec, colour.getARGB() };
+    std::sort (locs.begin(), locs.begin() + numLocs, [] (const Loc& a, const Loc& b) { return a.start < b.start; });
+    cueEdited();
+}
+
+int Deck::nearestLocator (double sec, double within) const noexcept
+{
+    int best = -1;
+    double bestD = within;
+    for (int i = 0; i < numLocs; ++i)
+    {
+        const double d = std::abs (locs[(size_t) i].start - sec);
+        if (d <= bestD) { bestD = d; best = i; }
+    }
+    return best;
+}
+
+void Deck::sortSkips()
+{
+    std::sort (skips.begin(), skips.begin() + numSkipsLocal, [] (const Skip& a, const Skip& b) { return a.from < b.from; });
+    // Merge overlaps
+    int w = 0;
+    for (int i = 0; i < numSkipsLocal; ++i)
+    {
+        if (w > 0 && skips[(size_t) i].from <= skips[(size_t) w - 1].to)
+            skips[(size_t) w - 1].to = juce::jmax (skips[(size_t) w - 1].to, skips[(size_t) i].to);
+        else
+            skips[(size_t) w++] = skips[(size_t) i];
+    }
+    numSkipsLocal = w;
+}
+
+void Deck::addSkip (double from, double to)
+{
+    if (to < from) std::swap (from, to);
+    if (track == nullptr || track->audio == nullptr || to - from < 0.05) return;
+    to = juce::jmin (to, track->audio->lengthSeconds());
+    if (numSkipsLocal >= maxSkips) return;
+    skips[(size_t) numSkipsLocal++] = { from, to };
+    sortSkips();
+    cueEdited();
 }
 
 void Deck::startStretch()
@@ -290,11 +351,13 @@ void Deck::apply (const Command& c)
                 if (shiftHeld)
                 {
                     hotSet[(size_t) i] = false;
+                    cueEdited();
                     break;
                 }
                 if (! hotSet[(size_t) i])
                 {
                     setHotCueAt (i, quantizeTime (now));
+                    cueEdited();
                     break;
                 }
                 const auto& hc = hot[(size_t) i];
@@ -337,28 +400,136 @@ void Deck::apply (const Command& c)
         }
 
         case Cmd::hotCueDelete:
-            if (c.down && c.index >= 0 && c.index < 8) hotSet[(size_t) c.index] = false;
+            if (c.down && c.index >= 0 && c.index < 8 && hotSet[(size_t) c.index]) { hotSet[(size_t) c.index] = false; cueEdited(); }
+            break;
+
+        case Cmd::hotCueColour:
+            if (c.index >= 0 && c.index < 8 && hotSet[(size_t) c.index])
+            {
+                hot[(size_t) c.index].colour = juce::Colour ((juce::uint32) c.value);
+                cueEdited();
+            }
             break;
 
         case Cmd::memoryCuePrev:
         case Cmd::memoryCueNext:
         {
-            if (! c.down || track == nullptr || track->memoryCues.empty()) break;
+            if (! c.down || track == nullptr || numLocs == 0) break;
             const bool next = c.cmd == Cmd::memoryCueNext;
-            const CuePoint* best = nullptr;
-            for (auto& m : track->memoryCues)
+            const Loc* best = nullptr;
+            for (int k = 0; k < numLocs; ++k)
             {
-                if (next && m.startSec > now + 0.05 && (best == nullptr || m.startSec < best->startSec)) best = &m;
-                if (! next && m.startSec < now - 0.05 && (best == nullptr || m.startSec > best->startSec)) best = &m;
+                const auto& m = locs[(size_t) k];
+                if (next && m.start > now + 0.05 && (best == nullptr || m.start < best->start)) best = &m;
+                if (! next && m.start < now - 0.05 && (best == nullptr || m.start > best->start)) best = &m;
             }
             if (best != nullptr)
             {
-                cuePoint = best->startSec;
+                cuePoint = best->start;
                 jumpTo (cuePoint, false);
-                if (best->isLoop()) { loopIn = best->startSec; loopOut = best->endSec; loopActive = false; }
+                if (best->end > best->start) { loopIn = best->start; loopOut = best->end; loopActive = false; }
             }
             break;
         }
+
+        case Cmd::locatorAdd:
+            if (c.down && track != nullptr)
+            {
+                // From the UI a time is given; from a button, store the cue point when stopped (like rekordbox's
+                // MEMORY button) or the playing position.
+                const double at = c.value >= 0.0 ? quantizeTime (c.value) : (playing ? quantizeTime (now) : cuePoint);
+                addLocator (at, juce::Colour (0xffe62828));
+            }
+            break;
+
+        case Cmd::locatorDelete:
+            if (c.index >= 0 && c.index < numLocs)
+            {
+                for (int k = c.index; k < numLocs - 1; ++k) locs[(size_t) k] = locs[(size_t) k + 1];
+                --numLocs;
+                cueEdited();
+            }
+            break;
+
+        case Cmd::locatorDeleteNearest:
+            if (c.down && track != nullptr)
+            {
+                int k = nearestLocator (now, 0.1);
+                if (k < 0) k = nearestLocator (cuePoint, 0.1);
+                if (k >= 0)
+                {
+                    for (int j = k; j < numLocs - 1; ++j) locs[(size_t) j] = locs[(size_t) j + 1];
+                    --numLocs;
+                    cueEdited();
+                }
+            }
+            break;
+
+        case Cmd::locatorColour:
+            if (c.index >= 0 && c.index < numLocs) { locs[(size_t) c.index].colour = (juce::uint32) c.value; cueEdited(); }
+            break;
+
+        case Cmd::skipIn:
+            if (c.down && track != nullptr) skipPending = quantizeTime (now);
+            break;
+
+        case Cmd::skipOut:
+            if (c.down && track != nullptr && skipPending >= 0.0)
+            {
+                addSkip (skipPending, quantizeTime (now));
+                skipPending = -1.0;
+            }
+            break;
+
+        case Cmd::skipSet:
+            if (c.down && track != nullptr)
+            {
+                if (skipPending < 0.0) skipPending = quantizeTime (now);
+                else { addSkip (skipPending, quantizeTime (now)); skipPending = -1.0; }
+            }
+            break;
+
+        case Cmd::skipAdd:
+            addSkip (quantizeTime (c.value), quantizeTime (c.value2));
+            break;
+
+        case Cmd::skipDelete:
+            if (c.index >= 0 && c.index < numSkipsLocal)
+            {
+                for (int k = c.index; k < numSkipsLocal - 1; ++k) skips[(size_t) k] = skips[(size_t) k + 1];
+                --numSkipsLocal;
+                cueEdited();
+            }
+            break;
+
+        case Cmd::skipDeleteNearest:
+            if (c.down && track != nullptr)
+            {
+                // The skip we're in or just passed, else the next one.
+                int best = -1;
+                double bestD = 1.0e9;
+                for (int k = 0; k < numSkipsLocal; ++k)
+                {
+                    const double d = juce::jmin (std::abs (now - skips[(size_t) k].from), std::abs (now - skips[(size_t) k].to));
+                    if (d < bestD) { bestD = d; best = k; }
+                }
+                if (skipPending >= 0.0) { skipPending = -1.0; break; }
+                if (best >= 0)
+                {
+                    for (int k = best; k < numSkipsLocal - 1; ++k) skips[(size_t) k] = skips[(size_t) k + 1];
+                    --numSkipsLocal;
+                    cueEdited();
+                }
+            }
+            break;
+
+        case Cmd::skipsToggle:
+            if (c.down) skipsOn = ! skipsOn;
+            break;
+
+        case Cmd::skipsSet:
+            skipsOn = c.value > 0.5;
+            break;
 
         case Cmd::setPitchFader:
         {
@@ -546,6 +717,10 @@ void Deck::apply (const Command& c)
             if (c.down) quantize = ! quantize;
             break;
 
+        case Cmd::quantizeSet:
+            quantize = c.value > 0.5;
+            break;
+
         case Cmd::seekFraction:
             if (track != nullptr && track->audio != nullptr)
                 jumpTo (juce::jlimit (0.0, 1.0, c.value) * track->audio->lengthSeconds(), false);
@@ -608,11 +783,37 @@ inline void Deck::frameAt (int64_t i, float& l, float& r, const float* g) const 
     }
 }
 
+inline void Deck::sampleAt (double p, float& l, float& r, const float* g) const noexcept
+{
+    const double fl = std::floor (p);
+    const auto ip = (int64_t) fl;
+    const float t = (float) (p - fl);
+    float l0, r0, l1, r1, l2, r2, l3, r3;
+    frameAt (ip - 1, l0, r0, g);
+    frameAt (ip,     l1, r1, g);
+    frameAt (ip + 1, l2, r2, g);
+    frameAt (ip + 2, l3, r3, g);
+    l = hermite (l0, l1, l2, l3, t);
+    r = hermite (r0, r1, r2, r3, t);
+}
+
 void Deck::readResampled (float* outL, float* outR, int n, double step)
 {
     const auto& a = *track->audio;
     const double loopInF = loopIn * srcRate, loopOutF = loopOut * srcRate;
     const bool looping = loopActive && loopOutF > loopInF + 8.0;
+
+    // Skips only apply while playing forwards (not scratching or previewing backwards).
+    const bool skipping = skipsOn && numSkipsLocal > 0 && step > 0.0 && ! scratching;
+    int nextSkip = -1;
+    double skipFromF = 0.0, skipToF = 0.0;
+    auto findNextSkip = [&]
+    {
+        nextSkip = -1;
+        for (int k = 0; k < numSkipsLocal; ++k)
+            if (skips[(size_t) k].to * srcRate > pos + 1.0) { nextSkip = k; skipFromF = skips[(size_t) k].from * srcRate; skipToF = skips[(size_t) k].to * srcRate; break; }
+    };
+    if (skipping) findNextSkip();
 
     // Stem gain ramp across this block
     std::array<float, 4> target;
@@ -625,8 +826,9 @@ void Deck::readResampled (float* outL, float* outR, int n, double step)
     stemsActive = stemsActive && stems != nullptr && stems->numFrames == a.numFrames;
     stemsValid = stemsActive ? stems->validFrames.load (std::memory_order_acquire) : 0;
 
-    // Fast path: straight copy (no resampling, no stems, no loop crossing)
-    if (! stemsActive && step == 1.0 && pos == std::floor (pos) && pos >= 0
+    // Fast path: straight copy (no resampling, no stems, no loop or skip crossing, no cross-fade running)
+    const bool skipInBlock = nextSkip >= 0 && skipFromF < pos + n + 1.0;
+    if (! stemsActive && step == 1.0 && pos == std::floor (pos) && pos >= 0 && xfRemain == 0 && ! skipInBlock
         && (int64_t) pos + n < a.numFrames && (! looping || pos + n < loopOutF || pos >= loopOutF))
     {
         std::memcpy (outL, a.left.data() + (size_t) pos, sizeof (float) * (size_t) n);
@@ -641,8 +843,27 @@ void Deck::readResampled (float* outL, float* outR, int n, double step)
 
     for (int i = 0; i < n; ++i)
     {
+        // Jumps inside the block (loop wrap, skip) cross-fade from the old position over a few ms.
+        double jumpedFrom = -1.0;
         if (looping && step > 0.0 && pos >= loopOutF)
+        {
+            jumpedFrom = pos;
             pos = loopInF + std::fmod (pos - loopInF, loopOutF - loopInF);
+        }
+        if (nextSkip >= 0 && pos >= skipFromF)
+        {
+            if (pos < skipToF)
+            {
+                if (jumpedFrom < 0.0) jumpedFrom = pos;
+                pos = juce::jmin ((double) a.numFrames - 1.0, skipToF + (pos - skipFromF));
+            }
+            findNextSkip();
+        }
+        if (jumpedFrom >= 0.0)
+        {
+            xfPos = jumpedFrom;
+            xfRemain = xfadeLen;
+        }
 
         const float* gp = nullptr;
         if (stemsActive)
@@ -653,17 +874,20 @@ void Deck::readResampled (float* outL, float* outR, int n, double step)
             gp = g;
         }
 
-        const double fl = std::floor (pos);
-        const auto ip = (int64_t) fl;
-        const float t = (float) (pos - fl);
-
-        float l0, r0, l1, r1, l2, r2, l3, r3;
-        frameAt (ip - 1, l0, r0, gp);
-        frameAt (ip,     l1, r1, gp);
-        frameAt (ip + 1, l2, r2, gp);
-        frameAt (ip + 2, l3, r3, gp);
-        outL[i] = hermite (l0, l1, l2, l3, t);
-        outR[i] = hermite (r0, r1, r2, r3, t);
+        float l, r;
+        sampleAt (pos, l, r, gp);
+        if (xfRemain > 0)
+        {
+            float ol, orr;
+            sampleAt (xfPos, ol, orr, gp);
+            const float w = (float) xfRemain / (float) xfadeLen;
+            l = l * (1.0f - w) + ol * w;
+            r = r * (1.0f - w) + orr * w;
+            xfPos += step;
+            --xfRemain;
+        }
+        outL[i] = l;
+        outR[i] = r;
 
         pos += step;
     }
@@ -796,6 +1020,8 @@ void Deck::publish()
     if (track == nullptr || track->audio == nullptr)
     {
         pub.trackSerial = 0;
+        pub.numLocators = 0;
+        pub.numSkips = 0;
         pub.playing = false;
         pub.stemsReady = false;
         pub.lengthSec = 0.0;
@@ -834,6 +1060,25 @@ void Deck::publish()
     }
     for (size_t s = 0; s < 4; ++s)
         pub.stemGain[s] = stemMuted[s] ? 0.0f : stemTarget[s];
+
+    for (int i = 0; i < maxLocators; ++i)
+    {
+        const bool on = i < numLocs;
+        pub.locStart[(size_t) i] = on ? locs[(size_t) i].start : -1.0;
+        pub.locEnd[(size_t) i] = on ? locs[(size_t) i].end : -1.0;
+        pub.locColour[(size_t) i] = on ? locs[(size_t) i].colour : 0u;
+    }
+    pub.numLocators = numLocs;
+    for (int i = 0; i < maxSkips; ++i)
+    {
+        const bool on = i < numSkipsLocal;
+        pub.skipFrom[(size_t) i] = on ? skips[(size_t) i].from : -1.0;
+        pub.skipTo[(size_t) i] = on ? skips[(size_t) i].to : -1.0;
+    }
+    pub.numSkips = numSkipsLocal;
+    pub.skipsOn = skipsOn;
+    pub.skipPendingFrom = skipPending;
+    pub.cueEdits = editCount;
 }
 
 } // namespace orbit

@@ -1,6 +1,7 @@
 #pragma once
 #include "WaveformRender.h"
 #include "CentrifugeRotor.h"
+#include "ColourPicker.h"
 #include "../Control/ActionRouter.h"
 
 namespace orbit
@@ -20,6 +21,14 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
 
     void setLoadingText (const juce::String& s) { loadingText = s; repaint(); }
+
+    /** Overview waveform: style 1 = 3-band, 2 = RGB, 3 = single colour; half = bars from the bottom only. */
+    void setOverviewStyle (int style, bool half, juce::Colour single)
+    {
+        overviewStyle = style; overviewHalf = half; singleColour = single;
+        overviewWidth = 0;
+        repaint();
+    }
 
 private:
     void timerCallback() override;
@@ -45,6 +54,10 @@ private:
     juce::uint64 lastHash = 0;
     CentrifugeRotor rotor;
     juce::Rectangle<float> rotorArea;
+    int overviewStyle = 1;
+    bool overviewHalf = false;
+    juce::Colour singleColour { 0xff3d9bff };
+    void showPadMenu (int pad, juce::Rectangle<float> area);
 };
 
 } // namespace orbit

@@ -1,6 +1,7 @@
 #pragma once
 #include "../Control/MidiManager.h"
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <set>
 
 namespace orbit
 {
@@ -22,6 +23,7 @@ private:
     int getNumRows() override;
     void paintRowBackground (juce::Graphics&, int, int, int, bool) override;
     void paintCell (juce::Graphics&, int row, int col, int w, int h, bool selected) override;
+    void cellClicked (int row, int col, const juce::MouseEvent&) override;
     void cellDoubleClicked (int row, int col, const juce::MouseEvent&) override;
     void selectedRowsChanged (int) override;
 
@@ -34,6 +36,8 @@ private:
     void advanceGuided (bool skip);
     void updateDetail();
     void refreshFilter();
+    void revealAction (const juce::String& id);
+    const ActionDef* selectedAction() const;
 
     struct ListAdapter : juce::ListBoxModel
     {
@@ -46,7 +50,12 @@ private:
     MidiManager& midi;
     std::function<void()> save;
 
-    std::vector<const ActionDef*> rows;
+    /** The list is a fold-out tree: Deck 1 > Transport > Play. */
+    struct Row { int level = 0; juce::String key, title; const ActionDef* action = nullptr; };
+    std::vector<Row> rows;
+    std::set<juce::String> expanded;
+    static juce::String topOf (const ActionDef& a) { return a.group.upToFirstOccurrenceOf (" - ", false, false); }
+    static juce::String subOf (const ActionDef& a) { return a.group.contains (" - ") ? a.group : juce::String(); }
     juce::TableListBox table { "actions", this };
     juce::ListBox monitor { "monitor", &listAdapter };
     std::vector<MidiManager::MonitorEntry> monitorRows;

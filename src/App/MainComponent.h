@@ -11,6 +11,8 @@
 #include "../UI/StemsView.h"
 #include "../UI/SettingsView.h"
 #include "../UI/CentrifugeRotor.h"
+#include "../UI/AboutView.h"
+#include "../Library/CueStore.h"
 
 namespace orbit
 {
@@ -38,17 +40,21 @@ public:
     LibraryManager& getLibrary() { return library; }
     ActionRouter& getRouter() { return router; }
     void showPage (int page);
+    void showAbout() { about.show(); }
+    ScrollingWaveforms& getWaves() { return waves; }
 
 private:
     void timerCallback() override;
     void applySettings();
     void handleAppAction (const juce::String& id, int deck, const ActionValue& v);
     void loadToDeck (int deck, const TrackInfo& info, bool fromPc);
+    void saveCueEdits();
 
     struct SettingsHolder { AppSettings s; SettingsHolder() { s.load(); } } settingsHolder;
     AppSettings& settings = settingsHolder.s;
 
     OrbitLookAndFeel lookAndFeel;
+    CueStore cueStore { AppSettings::folder().getChildFile ("cues.json") };
     AudioEngine engine;
     ActionRouter router { engine };
     MidiManager midi { router };
@@ -67,7 +73,11 @@ private:
     juce::TextButton tabPlay { "PLAY" }, tabMapping { "MAPPING" }, tabStems { "STEMS" }, tabSettings { "SETTINGS" };
     int page = 0;
 
-    juce::Rectangle<int> topBar, dividerDecks, dividerBrowser;
+    juce::Rectangle<int> topBar, dividerDecks, dividerBrowser, logoArea;
+    AboutView about;
+    int appliedQuantize = -1;
+    struct CueTracking { int serial = -1, edits = 0; };
+    std::array<CueTracking, 2> cueTracking;
     int dragging = 0, dragStartValue = 0;
     std::unique_ptr<CentrifugeSplash> splash;
     juce::String midiStatus, audioStatus, stemStatus;

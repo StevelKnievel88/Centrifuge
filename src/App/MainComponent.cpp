@@ -42,6 +42,8 @@ MainComponent::MainComponent()
 
     waves.onZoomChanged = [this] (double s) { settings.visibleSeconds = s; settings.save(); };
     waves.onLaneSplitChanged = [this] (int d, float share) { settings.laneSplit[(size_t) d] = share; settings.save(); };
+    waves.onPlayheadMoved = [this] (float f) { settings.playheadPosition = f; settings.save(); };
+    waves.onFoldChanged = [this] (bool f) { settings.foldSkips = f; settings.save(); };
     engine.onDeviceChanged = [this] { settingsView.refreshRouting(); };
 
     // --- UI --------------------------------------------------------------------
@@ -52,12 +54,12 @@ MainComponent::MainComponent()
     for (auto* t : { &tabPlay, &tabMapping, &tabStems, &tabSettings })
     {
         addAndMakeVisible (*t);
-        t->setClickingTogglesState (true);
-        t->setRadioGroupId (1001);
         t->setColour (juce::TextButton::buttonColourId, Theme::panel);
         const int p = i++;
         t->onClick = [this, p] { showPage (p); };
     }
+
+    addChildComponent (about);
 
     applySettings();
     showPage (0);
@@ -81,6 +83,7 @@ MainComponent::~MainComponent()
 {
     settings.audioDeviceState = engine.saveDeviceState();
     settings.save();
+    saveCueEdits();
     midi.saveToFile (AppSettings::mappingFile());
     juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
 }
@@ -96,15 +99,31 @@ void MainComponent::applySettings()
     midi.setLedFeedbackEnabled (settings.ledFeedback);
     waves.setVisibleSeconds (settings.visibleSeconds);
     waves.setMaxFps (settings.maxFps);
-    waves.setOriginalStyle ((WaveformData::Style) juce::jlimit (0, 2, settings.waveformStyle));
-    waves.setMainMode (settings.mainLaneMode);
-    waves.setLaneSplit (0, settings.laneSplit[0]);
-    waves.setLaneSplit (1, settings.laneSplit[1]);
+    for (int d = 0; d < 2; ++d)
+    {
+        waves.setLanes (d, { settings.laneStyle[(size_t) d][0], settings.laneShape[(size_t) d][0] },
+                           { settings.laneStyle[(size_t) d][1], settings.laneShape[(size_t) d][1] });
+        waves.setLaneSplit (d, settings.laneSplit[(size_t) d]);
+    }
+    waves.setSingleColour (juce::Colour (settings.singleColour));
+    waves.setStemLayers (settings.stemLayerOrder, settings.stemOpacity);
+    waves.setFoldSkips (settings.foldSkips);
+    waves.setPlayheadPosition (settings.playheadPosition);
+    for (auto* dp : { &deck1, &deck2 })
+        dp->setOverviewStyle (settings.overviewStyle, settings.overviewShape == 1, juce::Colour (settings.singleColour));
     router.setStemMatrix (settings.stemMatrix);
 
+    // Quantize: applied at start-up and when the setting changes (each deck's button can still toggle it).
+    if (appliedQuantize != (int) settings.quantize)
+    {
+        appliedQuantize = (int) settings.quantize;
+        for (int d = 0; d < AudioEngine::maxDecks; ++d)
+            engine.deck (d).post (Deck::Cmd::quantizeSet, settings.quantize ? 1.0 : 0.0);
+    }
+
     TrackLoader::Options lo;
-    lo.waveformStyle = (WaveformData::Style) juce::jlimit (0, 2, settings.waveformStyle);
     lo.mp3OffsetMs = settings.mp3OffsetMs;
+    lo.cueStore = &cueStore;
     loader.setOptions (lo);
 
     StemManager::Settings ss;
@@ -142,14 +161,17 @@ void MainComponent::handleAppAction (const juce::String& id, int deck, const Act
     else if (id == "view.zoom")      { waves.setVisibleSeconds (waves.getVisibleSeconds() * std::pow (1.1, -v.delta)); }
     else if (id == "view.zoomin")    { if (v.down) waves.setVisibleSeconds (waves.getVisibleSeconds() / 1.25); }
     else if (id == "view.zoomout")   { if (v.down) waves.setVisibleSeconds (waves.getVisibleSeconds() * 1.25); }
-    else if (id == "view.wavemode")  { if (v.down) { settings.mainLaneMode = settings.mainLaneMode == 0 ? 1 : 0; waves.setMainMode (settings.mainLaneMode); settings.save(); } }
+    else if (id == "view.wavemode")  { if (v.down) waves.setStemsHidden (! waves.getStemsHidden()); }
+    else if (id == "view.fold")      { if (v.down) { settings.foldSkips = ! settings.foldSkips; waves.setFoldSkips (settings.foldSkips); settings.save(); } }
 }
 
 void MainComponent::showPage (int p)
 {
     page = p;
     juce::TextButton* tabs[] = { &tabPlay, &tabMapping, &tabStems, &tabSettings };
-    tabs[p]->setToggleState (true, juce::dontSendNotification);
+    for (int i = 0; i < 4; ++i)
+        tabs[i]->setToggleState (i == p, juce::dontSendNotification);
+    if (p == 3) settingsView.refreshValues();
 
     deck1.setVisible (p == 0);
     deck2.setVisible (p == 0);
@@ -161,9 +183,66 @@ void MainComponent::showPage (int p)
     resized();
 }
 
+void MainComponent::saveCueEdits()
+{
+    // Hot cue / locator / skip edits made on a deck are saved to Centrifuge's own cue file.
+    for (int d = 0; d < 2; ++d)
+    {
+        const auto& st = engine.deck (d).state();
+        const int serial = st.trackSerial.load(), edits = st.cueEdits.load();
+        auto& ct = cueTracking[(size_t) d];
+        if (serial != ct.serial) { ct.serial = serial; ct.edits = edits; continue; }
+        if (serial == 0 || edits == ct.edits) continue;
+        ct.edits = edits;
+
+        auto t = engine.deck (d).getLoadedTrack();
+        if (t == nullptr || t->serial != serial || t->cueKey.isEmpty()) continue;
+        const double shift = t->cueShift;
+
+        CueStore::Entry e;
+        std::array<std::optional<CuePoint>, 8> hot;
+        for (int i = 0; i < 8; ++i)
+        {
+            const double hs = st.hotStart[(size_t) i].load();
+            if (hs < 0.0) continue;
+            CuePoint c;
+            c.type = CuePoint::Type::hot;
+            c.hotIndex = i;
+            c.startSec = hs - shift;
+            const double he = st.hotEnd[(size_t) i].load();
+            c.endSec = he > hs ? he - shift : -1.0;
+            c.colour = juce::Colour (st.hotColour[(size_t) i].load());
+            if (t->hotCueSet[(size_t) i] && std::abs (t->hotCues[(size_t) i].startSec - hs) < 1.0e-6)
+                c.comment = t->hotCues[(size_t) i].comment;
+            hot[(size_t) i] = c;
+        }
+        e.hotCues = hot;
+
+        std::vector<CuePoint> locs;
+        for (int i = 0; i < juce::jmin (st.numLocators.load(), Deck::maxLocators); ++i)
+        {
+            CuePoint c;
+            c.type = CuePoint::Type::memory;
+            c.startSec = st.locStart[(size_t) i].load() - shift;
+            const double le = st.locEnd[(size_t) i].load();
+            c.endSec = le > 0.0 ? le - shift : -1.0;
+            c.colour = juce::Colour (st.locColour[(size_t) i].load());
+            locs.push_back (c);
+        }
+        e.locators = locs;
+
+        for (int i = 0; i < juce::jmin (st.numSkips.load(), Deck::maxSkips); ++i)
+            e.skips.push_back ({ st.skipFrom[(size_t) i].load() - shift, st.skipTo[(size_t) i].load() - shift });
+
+        cueStore.put (t->cueKey, e);
+    }
+    cueStore.flush();
+}
+
 void MainComponent::timerCallback()
 {
     engine.getReleasePool().collect();
+    saveCueEdits();
 
     const auto newMidi = midi.getXdjStatus();
     const bool newXdj = midi.isXdjConnected();
@@ -203,9 +282,10 @@ void MainComponent::paint (juce::Graphics& g)
             g.fillRoundedRectangle (d.withSizeKeepingCentre (40, 2).toFloat(), 1.0f);
         }
 
-    // Logo
+    // Logo (click for About)
     auto r = topBar.reduced (14, 0);
     auto logo = r.removeFromLeft (130).toFloat();
+    logoArea = logo.toNearestInt();
     CentrifugeRotor::paintRotor (g, logo.withWidth (28.0f).withSizeKeepingCentre (28.0f, 28.0f), 0.4f, 0.0f, 1.0f, 0.0f, 0.0f);
     g.setColour (Theme::text);
     g.setFont (Theme::font (17.0f, true));
@@ -229,6 +309,7 @@ void MainComponent::paint (juce::Graphics& g)
 void MainComponent::resized()
 {
     if (splash != nullptr) splash->setBounds (getLocalBounds());
+    about.setBounds (getLocalBounds());
     auto r = getLocalBounds();
     topBar = r.removeFromTop (44);
 
@@ -272,12 +353,14 @@ void MainComponent::resized()
 void MainComponent::mouseMove (const juce::MouseEvent& e)
 {
     const bool over = page == 0 && (dividerDecks.contains (e.getPosition()) || dividerBrowser.contains (e.getPosition()));
-    setMouseCursor (over ? juce::MouseCursor::UpDownResizeCursor : juce::MouseCursor::NormalCursor);
+    setMouseCursor (over ? juce::MouseCursor::UpDownResizeCursor
+                         : logoArea.contains (e.getPosition()) ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
 }
 
 void MainComponent::mouseDown (const juce::MouseEvent& e)
 {
     dragging = 0;
+    if (logoArea.contains (e.getPosition())) { about.show(); return; }
     if (page != 0) return;
     if (dividerDecks.contains (e.getPosition()))   { dragging = 1; dragStartValue = settings.deckPanelHeight; }
     if (dividerBrowser.contains (e.getPosition())) { dragging = 2; dragStartValue = browser.getHeight(); }

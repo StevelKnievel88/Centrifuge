@@ -16,6 +16,7 @@ public:
     void resized() override;
     void paint (juce::Graphics&) override;
     void refreshRouting();
+    void refreshValues();
 
 private:
     class Content;

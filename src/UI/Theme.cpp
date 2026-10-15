@@ -162,7 +162,7 @@ void OrbitLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int w,
     auto track = juce::Rectangle<float> ((float) x, (float) y + (float) h * 0.5f - 2.0f, (float) w, 4.0f);
     g.setColour (Theme::line);
     g.fillRoundedRectangle (track, 2.0f);
-    g.setColour (Theme::accent);
+    g.setColour (s.findColour (juce::Slider::trackColourId));
     g.fillRoundedRectangle (track.withRight (pos), 2.0f);
     g.setColour (Theme::text);
     g.fillEllipse (pos - 6.0f, (float) y + (float) h * 0.5f - 6.0f, 12.0f, 12.0f);

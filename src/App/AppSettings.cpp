@@ -66,8 +66,34 @@ void AppSettings::load()
     num ("sumToMaster", sumToMaster);
     num ("mp3OffsetMs", mp3OffsetMs);
 
-    num ("waveformStyle", waveformStyle);
-    num ("mainLaneMode", mainLaneMode);
+    // Lanes (older settings had one main-lane mode and one original-lane style for both decks)
+    if (auto* arr = v["laneStyle"].getArray())
+    {
+        for (int i = 0; i < juce::jmin (4, arr->size()); ++i) laneStyle[(size_t) i / 2][(size_t) i % 2] = juce::jlimit (0, 3, (int) (*arr)[i]);
+    }
+    else if (v.hasProperty ("mainLaneMode") || v.hasProperty ("waveformStyle"))
+    {
+        const int main = (int) v.getProperty ("mainLaneMode", 0) == 0 ? 0 : 1;
+        const int orig = juce::jlimit (0, 2, (int) v.getProperty ("waveformStyle", 0)) + 1;
+        laneStyle = { { { main, orig }, { main, orig } } };
+    }
+    if (auto* arr = v["laneShape"].getArray())
+        for (int i = 0; i < juce::jmin (4, arr->size()); ++i) laneShape[(size_t) i / 2][(size_t) i % 2] = juce::jlimit (0, 2, (int) (*arr)[i]);
+    num ("overviewStyle", overviewStyle);
+    num ("overviewShape", overviewShape);
+    if (v.hasProperty ("singleColour")) singleColour = (juce::uint32) juce::Colour::fromString (v["singleColour"].toString()).getARGB();
+    if (auto* arr = v["stemLayerOrder"].getArray(); arr != nullptr && arr->size() == 4)
+    {
+        std::array<int, 4> o {};
+        int seen = 0;
+        for (int i = 0; i < 4; ++i) { o[(size_t) i] = juce::jlimit (0, 3, (int) (*arr)[i]); seen |= 1 << o[(size_t) i]; }
+        if (seen == 15) stemLayerOrder = o;   // must be each stem once
+    }
+    if (auto* arr = v["stemOpacity"].getArray())
+        for (int i = 0; i < juce::jmin (4, arr->size()); ++i) stemOpacity[(size_t) i] = juce::jlimit (0.0f, 1.0f, (float) (double) (*arr)[i]);
+    boolean ("foldSkips", foldSkips);
+    num ("playheadPosition", playheadPosition);
+    boolean ("quantize", quantize);
     num ("deckPanelHeight", deckPanelHeight);
     if (auto* arr = v["laneSplit"].getArray())
         for (int i = 0; i < juce::jmin (2, arr->size()); ++i) laneSplit[(size_t) i] = juce::jlimit (0.1f, 0.9f, (float) (double) (*arr)[i]);
@@ -88,7 +114,10 @@ void AppSettings::load()
     boolean ("showBrowser", showBrowser);
     num ("browserHeight", browserHeight);
 
-    visibleSeconds = juce::jlimit (2.0, 60.0, visibleSeconds);
+    visibleSeconds = juce::jlimit (1.0, 60.0, visibleSeconds);
+    overviewStyle = juce::jlimit (1, 3, overviewStyle);
+    overviewShape = juce::jlimit (0, 1, overviewShape);
+    playheadPosition = juce::jlimit (0.1f, 0.9f, playheadPosition);
     maxFps = juce::jlimit (15, 240, maxFps);
     jogTicksPerRev = juce::jlimit (32.0, 16384.0, jogTicksPerRev);
 }
@@ -108,8 +137,16 @@ void AppSettings::save() const
     o->setProperty ("sumToMaster", sumToMaster);
     o->setProperty ("mp3OffsetMs", mp3OffsetMs);
 
-    o->setProperty ("waveformStyle", waveformStyle);
-    o->setProperty ("mainLaneMode", mainLaneMode);
+    o->setProperty ("laneStyle", juce::Array<juce::var> { laneStyle[0][0], laneStyle[0][1], laneStyle[1][0], laneStyle[1][1] });
+    o->setProperty ("laneShape", juce::Array<juce::var> { laneShape[0][0], laneShape[0][1], laneShape[1][0], laneShape[1][1] });
+    o->setProperty ("overviewStyle", overviewStyle);
+    o->setProperty ("overviewShape", overviewShape);
+    o->setProperty ("singleColour", juce::Colour (singleColour).toString());
+    o->setProperty ("stemLayerOrder", juce::Array<juce::var> { stemLayerOrder[0], stemLayerOrder[1], stemLayerOrder[2], stemLayerOrder[3] });
+    o->setProperty ("stemOpacity", juce::Array<juce::var> { stemOpacity[0], stemOpacity[1], stemOpacity[2], stemOpacity[3] });
+    o->setProperty ("foldSkips", foldSkips);
+    o->setProperty ("playheadPosition", playheadPosition);
+    o->setProperty ("quantize", quantize);
     o->setProperty ("deckPanelHeight", deckPanelHeight);
     o->setProperty ("laneSplit", juce::Array<juce::var> { laneSplit[0], laneSplit[1] });
     o->setProperty ("stemMatrix", juce::Array<juce::var> { stemMatrix[0], stemMatrix[1], stemMatrix[2], stemMatrix[3] });

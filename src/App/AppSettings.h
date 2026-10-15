@@ -1,5 +1,6 @@
 #pragma once
 #include <juce_core/juce_core.h>
+#include <juce_graphics/juce_graphics.h>
 #include <array>
 
 namespace orbit
@@ -21,15 +22,25 @@ struct AppSettings
     double mp3OffsetMs = 0.0;          // grid/cue correction for MP3s if your decoder differs from rekordbox's
 
     // Waveforms
-    int waveformStyle = 0;             // original-track lane: 0 = 3-band, 1 = RGB, 2 = single colour
-    int mainLaneMode = 0;              // main lane: 0 = stems, 1 = rekordbox 3-band
-    std::array<float, 2> laneSplit { 0.5f, 0.5f };   // main lane share of each deck's waveform area
+    // Each deck's top [0] and bottom [1] lane: style 0 = stems, 1 = 3-band, 2 = RGB, 3 = single colour;
+    // shape 0 = full, 1 = half (bars grow up), 2 = half (bars grow down).
+    std::array<std::array<int, 2>, 2> laneStyle { { { 0, 1 }, { 0, 1 } } };
+    std::array<std::array<int, 2>, 2> laneShape { { { 0, 0 }, { 0, 0 } } };
+    int overviewStyle = 1;             // deck overview: 1 = 3-band, 2 = RGB, 3 = single colour
+    int overviewShape = 0;             // 0 = full, 1 = half
+    juce::uint32 singleColour = 0xff3d9bff;
+    std::array<int, 4> stemLayerOrder { 2, 1, 3, 0 };          // stems from back to front (0 drums, 1 bass, 2 inst, 3 vocals)
+    std::array<float, 4> stemOpacity { 1.0f, 1.0f, 1.0f, 1.0f }; // per stem (drums, bass, inst, vocals)
+    bool foldSkips = true;             // fold skipped sections out of the scrolling waveform
+    float playheadPosition = 0.5f;     // across the scrolling waveform (0.5 = centre)
+    std::array<float, 2> laneSplit { 0.5f, 0.5f };   // top lane share of each deck's waveform area
     int deckPanelHeight = 210;
     std::array<int, 4> stemMatrix { 1, 2, 4, 8 };    // stem controls A-D -> stems (bit 0 drums .. bit 3 vocals)
     double visibleSeconds = 10.0;      // width of the scrolling waveform
     int maxFps = 60;
 
     // Control
+    bool quantize = true;              // quantize on for both decks at start-up
     double jogTicksPerRev = 720.0;
     bool ledFeedback = true;
 

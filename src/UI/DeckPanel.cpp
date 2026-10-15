@@ -75,6 +75,8 @@ void DeckPanel::timerCallback()
     for (size_t i = 0; i < 8; ++i) mix (st.hotStart[i].load());
     for (size_t i = 0; i < 4; ++i) mix (st.stemGain[i].load() * 100.0f);
     mix (st.keyShift.load()); mix (st.keyLock.load());
+    mix (st.numLocators.load()); mix (st.numSkips.load()); mix (st.skipsOn.load()); mix (st.skipPendingFrom.load()); mix (st.cueEdits.load());
+    for (size_t i = 0; i < 8; ++i) mix ((double) st.hotColour[i].load());
     rotor.setBounds (rotorArea.toNearestInt());
     rotor.setSpinning (st.stemsReady.load() && st.stemsProgress.load() < 0.999f);
     rotor.setProgress (st.stemsReady.load() ? st.stemsProgress.load() : 0.0f);
@@ -187,7 +189,7 @@ void DeckPanel::paint (juce::Graphics& g)
         }
 
         // Tempo + range
-        auto right = r.removeFromRight (196.0f);
+        auto right = r.removeFromRight (300.0f);
         const double pct = (st.tempoRatio.load() - 1.0) * 100.0;
         auto tempo = right.removeFromRight (100.0f);
         g.setColour (Theme::text);
@@ -209,7 +211,7 @@ void DeckPanel::paint (juce::Graphics& g)
         addChip ("MASTER", st.master.load(), Theme::accent, p + "master", 52.0f);
         addChip ("SYNC", st.sync.load(), col, p + "sync", 40.0f);
         addChip ("MT", st.keyLock.load(), Theme::warn, p + "keylock", 28.0f);
-        addChip ("Q", st.quantize.load(), Theme::bad.withSaturation (0.6f), p + "quantize", 24.0f);
+        addChip ("QUANTIZE", st.quantize.load(), Theme::bad.withSaturation (0.6f), p + "quantize", 62.0f);
     }
 
     // --- Overview --------------------------------------------------------------
@@ -226,9 +228,15 @@ void DeckPanel::paint (juce::Graphics& g)
             if (overviewWidth != pw || overview.isNull())
             {
                 overviewWidth = pw;
-                const auto& w = *track->waveform;
-                overview = renderWaveformStrip (w, 0.0, (double) w.size() / juce::jmax (1, pw), pw,
-                                                (int) std::lround (r.getHeight() * scale), true);
+                const auto wdStyle = overviewStyle == 2 ? WaveformData::Style::rgb
+                                   : overviewStyle == 3 ? WaveformData::Style::blue : WaveformData::Style::threeBand;
+                auto wd = track->waveformInStyle (wdStyle);
+                StripOptions o;
+                o.overview = true;
+                o.shape = overviewHalf ? StripOptions::halfUp : StripOptions::full;
+                o.tint = overviewStyle == 3 ? singleColour : juce::Colour();
+                overview = renderWaveformStrip (*wd, 0.0, (double) wd->size() / juce::jmax (1, pw), pw,
+                                                (int) std::lround (r.getHeight() * scale), o);
             }
             g.drawImage (overview, r);
 
@@ -248,10 +256,26 @@ void DeckPanel::paint (juce::Graphics& g)
                                                                             juce::jmax (xOf (st.loopInSec.load()) + 2.0f, xOf (st.loopOutSec.load())), r.getBottom()));
                 }
 
-                for (auto& m : track->memoryCues)
+                // Skipped sections
+                for (int i = 0; i < juce::jmin (st.numSkips.load(), Deck::maxSkips); ++i)
                 {
-                    g.setColour (m.colour.isTransparent() ? Theme::bad : m.colour);
-                    const float x = xOf (m.startSec);
+                    const float x0 = xOf (st.skipFrom[(size_t) i].load()), x1 = xOf (st.skipTo[(size_t) i].load());
+                    if (x1 <= x0) continue;
+                    g.setColour (juce::Colours::black.withAlpha (st.skipsOn.load() ? 0.62f : 0.35f));
+                    g.fillRect (juce::Rectangle<float>::leftTopRightBottom (x0, r.getY(), x1, r.getBottom()));
+                    g.setColour (juce::Colour (0xff38d9ff).withAlpha (st.skipsOn.load() ? 0.9f : 0.4f));
+                    g.fillRect (x0 - 0.5f, r.getY(), 1.0f, r.getHeight());
+                    juce::Path p;
+                    p.addTriangle (x0, r.getY(), x0, r.getY() + 6.0f, x0 + 5.0f, r.getY() + 3.0f);
+                    p.addTriangle (x0 + 4.0f, r.getY(), x0 + 4.0f, r.getY() + 6.0f, x0 + 9.0f, r.getY() + 3.0f);
+                    g.fillPath (p);
+                }
+
+                // Locators
+                for (int i = 0; i < juce::jmin (st.numLocators.load(), Deck::maxLocators); ++i)
+                {
+                    g.setColour (juce::Colour (st.locColour[(size_t) i].load()));
+                    const float x = xOf (st.locStart[(size_t) i].load());
                     juce::Path tri;
                     tri.addTriangle (x - 3.5f, r.getY(), x + 3.5f, r.getY(), x, r.getY() + 5.0f);
                     g.fillPath (tri);
@@ -288,7 +312,7 @@ void DeckPanel::paint (juce::Graphics& g)
             g.setColour (set ? juce::Colours::black : Theme::textFaint);
             g.setFont (Theme::font (12.0f, true));
             g.drawText (juce::String::charToString ((juce::juce_wchar) ('A' + i)), pad, juce::Justification::centred);
-            regions.push_back ({ pad, "d" + juce::String (deck + 1) + ".hotcue." + juce::String (i + 1), 0 });
+            regions.push_back ({ pad, "d" + juce::String (deck + 1) + ".hotcue." + juce::String (i + 1), 3 });
         }
     }
 
@@ -332,6 +356,17 @@ void DeckPanel::paint (juce::Graphics& g)
         chip (g, loopBtn, "LOOP 4", st.loopActive.load(), Theme::accent);
         regions.push_back ({ loopBtn, p + "beatloop.4", 0 });
 
+        // Locator (memory) and skip: SKIP once to start, again to end
+        r.removeFromLeft (6.0f);
+        auto memBtn = r.removeFromLeft (64.0f).reduced (0.0f, 6.0f);
+        chip (g, memBtn, "MEMORY", false, Theme::bad);
+        regions.push_back ({ memBtn, p + "locator.add", 0 });
+        r.removeFromLeft (6.0f);
+        auto skipBtn = r.removeFromLeft (56.0f).reduced (0.0f, 6.0f);
+        const bool pending = st.skipPendingFrom.load() >= 0.0;
+        chip (g, skipBtn, pending ? "SKIP TO" : "SKIP", pending, juce::Colour (0xff38d9ff));
+        regions.push_back ({ skipBtn, p + "skip.set", 0 });
+
         // Stems (rotor shows separation progress)
         r.removeFromLeft (8.0f);
         rotorArea = r.removeFromLeft (r.getHeight()).reduced (1.0f);
@@ -361,6 +396,30 @@ void DeckPanel::paint (juce::Graphics& g)
     }
 }
 
+void DeckPanel::showPadMenu (int pad, juce::Rectangle<float> area)
+{
+    const auto& st = engine.deck (deck).state();
+    if (pad < 0 || pad >= 8 || st.hotStart[(size_t) pad].load() < 0.0) return;
+    const auto current = juce::Colour (st.hotColour[(size_t) pad].load());
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("Hot cue " + juce::String::charToString ((juce::juce_wchar) ('A' + pad)));
+    addCueColourItems (menu, 100, current);
+    menu.addSeparator();
+    menu.addItem (1, "Delete   (shift + click)");
+    const auto screen = localAreaToGlobal (area.toNearestInt());
+    juce::Component::SafePointer<DeckPanel> safe (this);
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (screen),
+                        [safe, pad, screen, current] (int result)
+    {
+        if (safe == nullptr) return;
+        auto& d = safe->engine.deck (safe->deck);
+        auto setColour = [safe, pad] (juce::Colour c) { if (safe != nullptr) safe->engine.deck (safe->deck).post (Deck::Cmd::hotCueColour, (double) c.getARGB(), pad); };
+        if (result == 1) d.post (Deck::Cmd::hotCueDelete, 0.0, pad, true);
+        else if (result >= 100 && result < 116) setColour (juce::Colour (rekordboxCueColours()[(size_t) (result - 100)].argb));
+        else if (result == 116) ColourPickerBubble::show (screen, current, setColour);
+    });
+}
+
 const DeckPanel::Region* DeckPanel::regionAt (juce::Point<float> p) const
 {
     for (auto& r : regions)
@@ -380,6 +439,7 @@ void DeckPanel::mouseDown (const juce::MouseEvent& e)
 {
     auto* r = regionAt (e.position);
     if (r == nullptr) return;
+    if (e.mods.isPopupMenu() && r->kind != 3) return;
 
     if (r->kind == 1)
     {
@@ -389,6 +449,11 @@ void DeckPanel::mouseDown (const juce::MouseEvent& e)
     if (r->kind == 2)
     {
         dragStem = r->action.fromFirstOccurrenceOf ("stem.", false, false).getIntValue() - 1;
+        return;
+    }
+    if (r->kind == 3 && e.mods.isPopupMenu())
+    {
+        showPadMenu (r->action.fromLastOccurrenceOf (".", false, false).getIntValue() - 1, r->r);
         return;
     }
 

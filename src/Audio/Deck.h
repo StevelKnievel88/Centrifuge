@@ -20,15 +20,28 @@ struct LoadedTrack : public juce::ReferenceCountedObject
     std::array<CuePoint, 8> hotCues {};
     std::array<bool, 8> hotCueSet {};
     WaveformData::Ptr waveform;          // 3-band (rekordbox analysis, or our own)
+    WaveformDetail::Ptr detail;          // fine detail for zooming in
     AnlzWaveforms anlzWave;              // raw rekordbox waveforms, to draw in any style
     int serial = 0;
+
+    // memoryCues / hotCues above hold the locators and hot cues as loaded (Centrifuge's own edits if any,
+    // otherwise rekordbox's). Skips are Centrifuge-only. The deck holds the live, editable copies.
+    std::vector<std::pair<double, double>> skips;
+    juce::String cueKey;                 // identifies the track in Centrifuge's cue store
+    double cueShift = 0.0;               // MP3 offset applied to all cue times (removed again when saving)
 
     /** The track's waveform in the requested style (message thread; cached). */
     WaveformData::Ptr waveformInStyle (WaveformData::Style s)
     {
-        if (s == WaveformData::Style::threeBand || anlzWave.numDetailEntries() == 0) return waveform;
+        if (s == WaveformData::Style::threeBand || waveform == nullptr) return waveform;
         auto& slot = styled[(size_t) s];
-        if (slot == nullptr) slot = WaveformData::fromAnlz (anlzWave, s);
+        if (slot == nullptr)
+        {
+            if (anlzWave.numDetailEntries() > 0) slot = WaveformData::fromAnlz (anlzWave, s);
+            if ((slot == nullptr || slot->style != s) && waveform->style == WaveformData::Style::threeBand)
+                slot = WaveformData::deriveFrom3Band (*waveform, s);
+            if (slot == nullptr) slot = waveform;
+        }
         return slot;
     }
     std::array<WaveformData::Ptr, 3> styled;
@@ -53,8 +66,14 @@ public:
         jogTouch, jogTurn, setVinylMode,
         loopIn, loopOut, reloopExit, beatLoop, loopHalve, loopDouble, loopOff,
         beatJump, syncToggle, syncSet, masterSet, keyLockToggle, keyLockSet, quantizeToggle, seekFraction, seekSeconds,
-        stemGain, stemMuteToggle, stemSolo, stemReset, eject, shift, keyShiftBy, keyShiftSet
+        stemGain, stemMuteToggle, stemSolo, stemReset, eject, shift, keyShiftBy, keyShiftSet,
+        quantizeSet, hotCueColour,
+        locatorAdd, locatorDelete, locatorDeleteNearest, locatorColour,
+        skipIn, skipOut, skipSet, skipAdd, skipDelete, skipDeleteNearest, skipsToggle, skipsSet
     };
+
+    static constexpr int maxLocators = 32;
+    static constexpr int maxSkips = 16;
 
     struct Command
     {
@@ -64,10 +83,12 @@ public:
         bool down = true;     // button pressed (true) or released (false)
         void* ptr = nullptr;  // LoadedTrack* / StemAudio* (kept alive by ReleasePool)
         int serial = 0;
+        double value2 = 0.0;  // second argument (e.g. skip end)
     };
 
     void post (const Command& c);
-    void post (Cmd cmd, double value = 0.0, int idx = 0, bool down = true) { post (Command { cmd, value, idx, down, nullptr, 0 }); }
+    void post (Cmd cmd, double value = 0.0, int idx = 0, bool down = true) { post (Command { cmd, value, idx, down, nullptr, 0, 0.0 }); }
+    void post2 (Cmd cmd, double value, double value2) { post (Command { cmd, value, 0, true, nullptr, 0, value2 }); }
 
     //==========================================================================
     // Audio thread
@@ -119,8 +140,23 @@ public:
         std::atomic<float> peakL { 0.0f }, peakR { 0.0f };
         std::atomic<bool> endWarning { false };
 
+        // Locators (memory cues) and skips
+        std::atomic<int> numLocators { 0 }, numSkips { 0 };
+        std::array<std::atomic<double>, maxLocators> locStart, locEnd;
+        std::array<std::atomic<juce::uint32>, maxLocators> locColour;
+        std::array<std::atomic<double>, maxSkips> skipFrom, skipTo;
+        std::atomic<bool> skipsOn { true };
+        std::atomic<double> skipPendingFrom { -1.0 };
+        /** Counts edits to hot cues, locators and skips (so the app knows to save them). */
+        std::atomic<int> cueEdits { 0 };
+
         Published()
         {
+            for (auto& v : locStart) v = -1.0;
+            for (auto& v : locEnd) v = -1.0;
+            for (auto& v : locColour) v = 0;
+            for (auto& v : skipFrom) v = -1.0;
+            for (auto& v : skipTo) v = -1.0;
             for (auto& h : hotStart) h = -1.0;
             for (auto& h : hotEnd) h = -1.0;
             for (auto& c : hotColour) c = 0;
@@ -147,6 +183,12 @@ private:
 
     void readResampled (float* outL, float* outR, int n, double step);
     inline void frameAt (int64_t idx, float& l, float& r, const float* g) const noexcept;
+    inline void sampleAt (double p, float& l, float& r, const float* g) const noexcept;
+    void addLocator (double sec, juce::Colour colour, double endSec = -1.0);
+    int nearestLocator (double sec, double within) const noexcept;
+    void addSkip (double from, double to);
+    void sortSkips();
+    void cueEdited() noexcept { ++editCount; }
 
     const int index;
     double deviceRate = 44100.0;
@@ -195,6 +237,22 @@ private:
     // Hot cues (deck-local copy; set/delete happen here)
     std::array<CuePoint, 8> hot {};
     std::array<bool, 8> hotSet {};
+
+    // Locators (memory cues), sorted by time, and skips (sorted, non-overlapping)
+    struct Loc { double start = 0.0, end = -1.0; juce::uint32 colour = 0; };
+    std::array<Loc, maxLocators> locs {};
+    int numLocs = 0;
+    struct Skip { double from = 0.0, to = 0.0; };
+    std::array<Skip, maxSkips> skips {};
+    int numSkipsLocal = 0;
+    bool skipsOn = true;
+    double skipPending = -1.0;
+    int editCount = 0;
+
+    // Short cross-fade when playback jumps inside a block (loop wrap or skip)
+    static constexpr int xfadeLen = 64;
+    double xfPos = 0.0;
+    int xfRemain = 0;
     double heldRatio = 1.0;
     bool masterRequested = false;
 

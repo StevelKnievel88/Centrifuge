@@ -34,14 +34,15 @@ public:
         return (int) (it - beats.begin()) - 1;
     }
 
-    /** Length of the beat containing t, in seconds. */
+    /** Length of the beat containing t, in seconds. Uses the grid's stored tempo: rekordbox rounds beat times
+        to whole milliseconds, so the gap between two beats jitters (e.g. 121.21 / 120.97 for a 121 BPM track). */
     double beatLengthAt (double t) const noexcept
     {
         if (! isValid()) return 0.0;
         int i = juce::jlimit (0, (int) beats.size() - 2, beatIndexAt (t));
+        if (beats[(size_t) i].bpm > 20.0f) return 60.0 / beats[(size_t) i].bpm;
         const double len = beats[(size_t) i + 1].timeSec - beats[(size_t) i].timeSec;
-        if (len > 0.1 && len < 3.0) return len;
-        return beats[(size_t) i].bpm > 0 ? 60.0 / beats[(size_t) i].bpm : 0.5;
+        return (len > 0.1 && len < 3.0) ? len : 0.5;
     }
 
     double bpmAt (double t) const noexcept

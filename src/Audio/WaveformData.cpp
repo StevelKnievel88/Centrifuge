@@ -169,6 +169,71 @@ WaveformData::Ptr WaveformData::fromStem (const StemAudio& s, int stem)
     return analyse (s.numFrames, s.sampleRate, [l, r] (int64_t i) { return 0.5f * StemAudio::toFloat * (float) (l[i] + r[i]); });
 }
 
+WaveformData::Ptr WaveformData::deriveFrom3Band (const WaveformData& src, Style target)
+{
+    WaveformData::Ptr w = new WaveformData();
+    w->entriesPerSecond = src.entriesPerSecond;
+    w->fromRekordbox = src.fromRekordbox;
+    w->style = target == Style::threeBand ? Style::rgb : target;
+    const size_t n = src.low.size();
+    w->height.resize (n);
+    w->colour.resize (n);
+    for (size_t i = 0; i < n; ++i)
+    {
+        const float l = src.low[i] / 255.0f, m = src.mid[i] / 255.0f, h = src.high[i] / 255.0f;
+        const float top = juce::jmax (l, m, h);
+        w->height[i] = toByte (top);
+        if (w->style == Style::rgb)
+        {
+            // rekordbox RGB: lows red, mids green, highs blue, scaled so the strongest band is full brightness.
+            const float k = top > 0.0f ? 1.0f / top : 0.0f;
+            w->colour[i] = juce::Colour::fromFloatRGBA (juce::jmin (1.0f, l * k * 1.05f), juce::jmin (1.0f, m * k * 0.95f),
+                                                        juce::jmin (1.0f, h * k * 1.3f), 1.0f).getARGB();
+        }
+        else
+        {
+            // Single colour: brighter where there's more top end, like rekordbox's blue waveform.
+            const float bright = juce::jlimit (0.0f, 1.0f, top > 0.0f ? h / top : 0.0f);
+            w->colour[i] = juce::Colour (0xff0088b0).interpolatedWith (juce::Colour (0xffc8e0e8), bright).getARGB();
+        }
+    }
+    return w;
+}
+
+WaveformDetail::Ptr WaveformDetail::fromAudio (const TrackAudio& a)
+{
+    WaveformDetail::Ptr d = new WaveformDetail();
+    if (a.numFrames <= 0 || a.sampleRate <= 0) return d;
+
+    const double perEntry = a.sampleRate / perSecond;
+    const int n = (int) std::ceil ((double) a.numFrames / perEntry);
+    std::vector<float> peak ((size_t) n, 0.0f);
+    const float* l = a.left.data();
+    const float* r = a.right.data();
+    for (int e = 0; e < n; ++e)
+    {
+        const auto i0 = (int64_t) (e * perEntry);
+        const auto i1 = std::min<int64_t> (a.numFrames, (int64_t) ((e + 1) * perEntry));
+        float pk = 0.0f;
+        for (auto i = i0; i < i1; ++i)
+            pk = std::max (pk, std::abs (l[i] + r[i]));
+        peak[(size_t) e] = pk;
+    }
+
+    // Relative to the loudest fine entry within each 150-per-second column.
+    constexpr int per = (int) (perSecond / 150.0);
+    d->shape.resize ((size_t) n);
+    for (int c0 = 0; c0 < n; c0 += per)
+    {
+        const int c1 = std::min (n, c0 + per);
+        float mx = 0.0f;
+        for (int e = c0; e < c1; ++e) mx = std::max (mx, peak[(size_t) e]);
+        for (int e = c0; e < c1; ++e)
+            d->shape[(size_t) e] = mx > 1.0e-6f ? toByte (peak[(size_t) e] / mx) : 255;
+    }
+    return d;
+}
+
 StemWaveform::Ptr StemWaveform::create (const StemAudio& st)
 {
     StemWaveform::Ptr w = new StemWaveform();

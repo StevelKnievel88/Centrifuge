@@ -1,5 +1,6 @@
 #include "BrowserView.h"
 #include "Theme.h"
+#include "CentrifugeRotor.h"
 
 namespace orbit
 {
@@ -323,8 +324,10 @@ void BrowserView::paintCell (juce::Graphics& g, int row, int col, int w, int h, 
             else has = it->second;
             if (has)
             {
-                g.setColour (Theme::good);
-                g.fillEllipse ((float) w * 0.5f - 4.0f, (float) h * 0.5f - 4.0f, 8.0f, 8.0f);
+                // The Centrifuge rotor with full tubes: this track's stems are ready.
+                const float sz = juce::jmin ((float) h - 4.0f, 20.0f);
+                CentrifugeRotor::paintRotor (g, juce::Rectangle<float> ((float) w * 0.5f - sz * 0.5f, (float) h * 0.5f - sz * 0.5f, sz, sz),
+                                             0.4f, 0.0f, 1.0f, 0.0f, 0.0f);
             }
             return;
         }

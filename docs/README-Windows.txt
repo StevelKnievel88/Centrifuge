@@ -41,6 +41,29 @@ Stems
   seconds; on CPU only it can take a minute or two per track.
 - With every stem at full volume you hear the original file, untouched.
 
+Waveforms
+---------
+- SETTINGS > WAVEFORMS: each deck has a top and a bottom lane. Pick Stems,
+  3-Band, RGB or Single colour for each, full or half height (e.g. deck 1
+  stems on top, deck 2 stems underneath, so the two originals sit together).
+  Also: overview style, single-colour colour picker, stem layer order and
+  the opacity of each stem.
+- Drag the playhead left/right to see more of what's coming.
+- Zoom with the mouse wheel; zoomed in, the waveform shows the fine detail.
+
+Hot cues, locators and skips
+----------------------------
+- Hot cue pads: shift+click deletes, right-click picks a colour
+  (rekordbox colours or any colour). The same works on the waveform flags.
+- MEMORY adds a locator (like a rekordbox memory cue, up to 32 per track).
+- SKIP: press at the start of a section, press again at its end. Playback
+  jumps over it (snapped to the beat grid with QUANTIZE on) and the
+  waveform folds it out. Your audio files are never changed.
+- Right-click the waveform for: add locator here, start/end skip here,
+  skips on/off, fold on/off.
+- Your edits are saved in %APPDATA%\Centrifuge\cues.json. rekordbox's
+  library is never changed.
+
 Files
 -----
 Settings and mapping:  %APPDATA%\Centrifuge\

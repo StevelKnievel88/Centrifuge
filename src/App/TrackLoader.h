@@ -2,6 +2,7 @@
 #include "../Audio/AudioEngine.h"
 #include "../Audio/AudioFileLoader.h"
 #include "../Stems/StemManager.h"
+#include "../Library/CueStore.h"
 
 namespace orbit
 {
@@ -19,6 +20,7 @@ public:
         WaveformData::Style waveformStyle = WaveformData::Style::threeBand;
         double mp3OffsetMs = 0.0;
         bool preferDbCues = true;   // PC collection: cues from master.db rather than ANLZ
+        CueStore* cueStore = nullptr;   // Centrifuge's own hot cue / locator edits and skips
     };
     void setOptions (const Options& o) { const juce::ScopedLock sl (lock); options = o; }
 

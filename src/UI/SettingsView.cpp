@@ -1,5 +1,6 @@
 #include "SettingsView.h"
 #include "Theme.h"
+#include "ColourPicker.h"
 #include "../Library/RekordboxMasterDb.h"
 
 namespace orbit
@@ -30,12 +31,94 @@ public:
         add (&usbFolder, 28, "Extra export folder");
 
         addSection ("WAVEFORMS");
-        add (&mainMode, 28, "Main lane shows");
-        add (&waveStyle, 28, "Original lane style");
+        const char* laneLabels[] = { "Deck 1 top lane", "Deck 1 bottom lane", "Deck 2 top lane", "Deck 2 bottom lane" };
+        for (int i = 0; i < 4; ++i)
+        {
+            auto& row = laneRows[(size_t) i];
+            row.style.addItemList ({ "Stems (overlaid, follow the stem knobs)", "3-Band", "RGB", "Single colour" }, 1);
+            row.shape.addItemList ({ "Full waveform", "Half (bars grow up)", "Half (bars grow down)" }, 1);
+            row.style.setSelectedId (settings.laneStyle[(size_t) i / 2][(size_t) i % 2] + 1, juce::dontSendNotification);
+            row.shape.setSelectedId (settings.laneShape[(size_t) i / 2][(size_t) i % 2] + 1, juce::dontSendNotification);
+            row.style.onChange = row.shape.onChange = [this, i]
+            {
+                auto& rw = laneRows[(size_t) i];
+                settings.laneStyle[(size_t) i / 2][(size_t) i % 2] = rw.style.getSelectedId() - 1;
+                settings.laneShape[(size_t) i / 2][(size_t) i % 2] = rw.shape.getSelectedId() - 1;
+                onChanged();
+            };
+            add (&row, 28, laneLabels[i]);
+        }
+        overviewRow.style.addItemList ({ "3-Band", "RGB", "Single colour" }, 1);
+        overviewRow.shape.addItemList ({ "Full waveform", "Half waveform" }, 1);
+        overviewRow.style.setSelectedId (settings.overviewStyle, juce::dontSendNotification);
+        overviewRow.shape.setSelectedId (settings.overviewShape + 1, juce::dontSendNotification);
+        overviewRow.style.onChange = overviewRow.shape.onChange = [this]
+        {
+            settings.overviewStyle = overviewRow.style.getSelectedId();
+            settings.overviewShape = overviewRow.shape.getSelectedId() - 1;
+            onChanged();
+        };
+        add (&overviewRow, 28, "Overview (whole track)");
+        add (&colourButton, 28, "Single colour");
+        colourButton.setColour (juce::TextButton::buttonColourId, juce::Colour (settings.singleColour));
+        colourButton.setButtonText ("CHOOSE COLOUR");
+        colourButton.onClick = [this]
+        {
+            juce::Component::SafePointer<Content> safe (this);
+            ColourPickerBubble::show (colourButton.getScreenBounds(), juce::Colour (settings.singleColour), [safe] (juce::Colour c)
+            {
+                if (safe == nullptr) return;
+                safe->settings.singleColour = c.getARGB();
+                safe->colourButton.setColour (juce::TextButton::buttonColourId, c);
+                safe->onChanged();
+            });
+        };
+        // Stem layer order (back to front) and opacity of each stem
+        const char* posNames[] = { "Back", "2nd", "3rd", "Front" };
+        for (int i = 0; i < 4; ++i)
+        {
+            auto& cb = layerRow.boxes[(size_t) i];
+            for (int st = 0; st < 4; ++st)
+                cb.addItem (juce::String (posNames[i]) + ":  " + (st == 0 ? "Drums" : st == 1 ? "Bass" : st == 2 ? "Inst" : "Vocals"), st + 1);
+            cb.setSelectedId (settings.stemLayerOrder[(size_t) i] + 1, juce::dontSendNotification);
+            cb.onChange = [this, i]
+            {
+                // Keep each stem once: swap with the layer that had the chosen stem.
+                const int chosen = layerRow.boxes[(size_t) i].getSelectedId() - 1;
+                auto& o = settings.stemLayerOrder;
+                for (int j = 0; j < 4; ++j)
+                    if (j != i && o[(size_t) j] == chosen) o[(size_t) j] = o[(size_t) i];
+                o[(size_t) i] = chosen;
+                for (int j = 0; j < 4; ++j)
+                    layerRow.boxes[(size_t) j].setSelectedId (o[(size_t) j] + 1, juce::dontSendNotification);
+                onChanged();
+            };
+        }
+        add (&layerRow, 28, "Stem layers (back to front)");
+        const char* stemLabels[] = { "Drums opacity (%)", "Bass opacity (%)", "Inst opacity (%)", "Vocals opacity (%)" };
+        for (int st = 0; st < 4; ++st)
+        {
+            auto& sl = stemOpacity[(size_t) st];
+            add (&sl, 28, stemLabels[st]);
+            setupSlider (sl, 0.0, 100.0, 1.0, settings.stemOpacity[(size_t) st] * 100.0);
+            sl.setColour (juce::Slider::trackColourId, Theme::stemColour (st));
+            sl.onValueChange = [this, st] { settings.stemOpacity[(size_t) st] = (float) stemOpacity[(size_t) st].getValue() / 100.0f; onChanged(); };
+        }
+        add (&foldSkips, 28, {});
+        foldSkips.setButtonText ("Fold skipped sections out of the scrolling waveform");
+        foldSkips.setToggleState (settings.foldSkips, juce::dontSendNotification);
+        foldSkips.onClick = [this] { settings.foldSkips = foldSkips.getToggleState(); onChanged(); };
+        add (&playhead, 28, "Playhead position (%)");
+        setupSlider (playhead, 10.0, 90.0, 1.0, settings.playheadPosition * 100.0);
+        playhead.onValueChange = [this] { settings.playheadPosition = (float) playhead.getValue() / 100.0f; onChanged(); };
         add (&fps, 28, "Frame rate limit");
         add (&zoom, 28, "Visible seconds");
 
         addSection ("CONTROLLER");
+        add (&quantize, 28, {});
+        quantize.setButtonText ("Quantize on at start-up (each deck's QUANTIZE button turns it on / off)");
+        quantize.setToggleState (settings.quantize, juce::dontSendNotification);
+        quantize.onClick = [this] { settings.quantize = quantize.getToggleState(); onChanged(); };
         add (&jogTicks, 28, "Jog ticks / revolution");
         add (&leds, 28, {});
         leds.setButtonText ("Send LED feedback to the XDJ-XZ");
@@ -57,13 +140,9 @@ public:
         usbFolder.setText (settings.usbRoots.joinIntoString (";"), false);
         usbFolder.setTextToShowWhenEmpty ("optional: a folder containing PIONEER/rekordbox/export.pdb", Theme::textFaint);
 
-        mainMode.addItemList ({ "Stems (overlaid, follow the stem knobs)", "rekordbox 3-band" }, 1);
-        mainMode.setSelectedId (settings.mainLaneMode + 1, juce::dontSendNotification);
-        waveStyle.addItemList ({ "3-Band (rekordbox default)", "RGB", "Single colour (blue)" }, 1);
-        waveStyle.setSelectedId (settings.waveformStyle + 1, juce::dontSendNotification);
         fps.addItemList ({ "30 fps", "60 fps", "120 fps", "144 fps" }, 1);
         fps.setSelectedId (settings.maxFps <= 30 ? 1 : settings.maxFps <= 60 ? 2 : settings.maxFps <= 120 ? 3 : 4, juce::dontSendNotification);
-        setupSlider (zoom, 2.0, 30.0, 0.5, settings.visibleSeconds);
+        setupSlider (zoom, 1.0, 30.0, 0.5, settings.visibleSeconds);
         setupSlider (jogTicks, 64.0, 4096.0, 1.0, settings.jogTicksPerRev);
         jogTicks.setSkewFactorFromMidPoint (720.0);
         leds.setToggleState (settings.ledFeedback, juce::dontSendNotification);
@@ -99,8 +178,6 @@ public:
         };
         reloadDb.onClick = [this] { onReload(); };
 
-        waveStyle.onChange = [this] { settings.waveformStyle = waveStyle.getSelectedId() - 1; onChanged(); };
-        mainMode.onChange = [this] { settings.mainLaneMode = mainMode.getSelectedId() - 1; onChanged(); };
         fps.onChange = [this] { const int v[] = { 30, 60, 120, 144 }; settings.maxFps = v[juce::jlimit (0, 3, fps.getSelectedId() - 1)]; onChanged(); };
         zoom.onValueChange = [this] { settings.visibleSeconds = zoom.getValue(); onChanged(); };
         jogTicks.onValueChange = [this] { settings.jogTicksPerRev = jogTicks.getValue(); onChanged(); };
@@ -125,6 +202,14 @@ public:
     }
 
     ~Content() override { engine.getDeviceManager().removeChangeListener (this); }
+
+    /** Values that can also be changed from the play page. */
+    void refreshValues()
+    {
+        foldSkips.setToggleState (settings.foldSkips, juce::dontSendNotification);
+        playhead.setValue (settings.playheadPosition * 100.0, juce::dontSendNotification);
+        zoom.setValue (settings.visibleSeconds, juce::dontSendNotification);
+    }
 
     void refreshRouting()
     {
@@ -233,12 +318,39 @@ private:
     std::vector<Row> rows;
 
     juce::AudioDeviceSelectorComponent deviceSelector;
-    juce::ComboBox deck1Out, deck2Out, waveStyle, mainMode, fps;
-    juce::ToggleButton sumToMaster, leds, stemsOnLoad, stemsGpu;
+    struct PairRow : juce::Component
+    {
+        juce::ComboBox style, shape;
+        PairRow() { addAndMakeVisible (style); addAndMakeVisible (shape); }
+        void resized() override
+        {
+            auto r = getLocalBounds();
+            style.setBounds (r.removeFromLeft (r.getWidth() * 3 / 5));
+            r.removeFromLeft (8);
+            shape.setBounds (r);
+        }
+    };
+    std::array<PairRow, 4> laneRows;
+    struct LayerRow : juce::Component
+    {
+        std::array<juce::ComboBox, 4> boxes;
+        LayerRow() { for (auto& b : boxes) addAndMakeVisible (b); }
+        void resized() override
+        {
+            auto r = getLocalBounds();
+            const int w = (r.getWidth() - 18) / 4;
+            for (auto& b : boxes) { b.setBounds (r.removeFromLeft (w)); r.removeFromLeft (6); }
+        }
+    } layerRow;
+    std::array<juce::Slider, 4> stemOpacity;
+    PairRow overviewRow;
+    juce::TextButton colourButton;
+    juce::ComboBox deck1Out, deck2Out, fps;
+    juce::ToggleButton sumToMaster, leds, stemsOnLoad, stemsGpu, foldSkips, quantize;
     juce::TextEditor dbPath, dbKey, usbFolder, modelPath, cachePath;
     Resizer dbButtons;
     juce::TextButton browseDb { "BROWSE..." }, reloadDb { "RELOAD LIBRARY" };
-    juce::Slider zoom, jogTicks, stemThreads, mp3Offset;
+    juce::Slider zoom, jogTicks, stemThreads, mp3Offset, playhead;
     std::unique_ptr<juce::FileChooser> chooser;
 };
 
@@ -253,6 +365,7 @@ SettingsView::SettingsView (AppSettings& s, AudioEngine& e, std::function<void()
 SettingsView::~SettingsView() = default;
 
 void SettingsView::refreshRouting() { content->refreshRouting(); }
+void SettingsView::refreshValues() { content->refreshValues(); }
 
 void SettingsView::paint (juce::Graphics& g) { g.fillAll (Theme::bg); }
 

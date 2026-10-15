@@ -5,28 +5,43 @@
 namespace orbit
 {
 
-/** Scrolling waveforms for both decks. Each deck has two lanes that scroll together:
-      - main lane: the stems overlaid in their colours (following the stem knobs), or rekordbox's 3-band view
-      - original lane: the unaltered track, in its own style (3-band / RGB / single colour)
-    The split between the lanes can be dragged. Repaints are synced to the display and skipped while nothing moves. */
+/** Scrolling waveforms for both decks. Each deck has a top and a bottom lane that scroll together; each lane
+    can show the stems (overlaid in their colours, following the stem knobs), the 3-band, RGB or single-colour
+    waveform, full or half height. The split between the lanes and the playhead position can be dragged.
+    Skipped sections are folded out so the waveform shows the track as it will play.
+    Repaints are synced to the display and skipped while nothing moves. */
 class ScrollingWaveforms : public juce::Component
 {
 public:
+    enum LaneStyle { stems = 0, threeBand = 1, rgb = 2, singleColour = 3 };
+    struct LaneConfig { int style = threeBand; int shape = StripOptions::full; };
+
     explicit ScrollingWaveforms (AudioEngine& engine);
     ~ScrollingWaveforms() override;
 
     void setVisibleSeconds (double s);
     double getVisibleSeconds() const { return visibleSeconds; }
     void setMaxFps (int fps) { maxFps = juce::jlimit (15, 240, fps); }
-    void setOriginalStyle (WaveformData::Style s) { originalStyle = s; needsRedraw = true; }
-    void setMainMode (int m) { mainMode = m; needsRedraw = true; }
-    int getMainMode() const { return mainMode; }
+    void setLanes (int deck, LaneConfig top, LaneConfig bottom);
+    void setSingleColour (juce::Colour c) { singleTint = c; needsRedraw = true; }
+    /** Stem layers from back to front, and each stem's opacity (0..1). */
+    void setStemLayers (std::array<int, 4> backToFront, std::array<float, 4> opacity)
+    {
+        stemOrder = backToFront; stemOpacity = opacity; needsRedraw = true;
+    }
+    void setFoldSkips (bool f) { foldSkips = f; needsRedraw = true; }
+    bool getFoldSkips() const { return foldSkips; }
+    void setStemsHidden (bool h) { stemsHidden = h; needsRedraw = true; }
+    bool getStemsHidden() const { return stemsHidden; }
+    void setPlayheadPosition (float fraction) { playhead = juce::jlimit (0.1f, 0.9f, fraction); needsRedraw = true; }
     void setLaneSplit (int deck, float share) { laneSplit[(size_t) deck] = juce::jlimit (0.1f, 0.9f, share); needsRedraw = true; }
     float getLaneSplit (int deck) const { return laneSplit[(size_t) deck]; }
     void forceRedraw() { needsRedraw = true; }
 
     std::function<void (double newVisibleSeconds)> onZoomChanged;
     std::function<void (int deck, float share)> onLaneSplitChanged;
+    std::function<void (float fraction)> onPlayheadMoved;
+    std::function<void (bool fold)> onFoldChanged;
 
     void paint (juce::Graphics&) override;
     void resized() override { needsRedraw = true; }
@@ -43,22 +58,39 @@ private:
         int serial = -1;
         StemAudio::Ptr stems;
         StemWaveform::Ptr stemWave;
-        WaveformTileCache mainTiles, originalTiles;
-        std::array<WaveformTileCache, 4> stemTiles;
+        std::array<WaveformTileCache, 2> laneTiles, underTiles;
+        std::array<std::array<WaveformTileCache, 4>, 2> stemTiles;
         PositionSmoother smoother;
-        double shownPos = 0.0;
+        double shownPos = 0.0;      // display time (skipped sections folded out)
         juce::uint64 lastHash = 0;
         int lastComputed = 0;
         std::shared_ptr<std::atomic<bool>> stemJobCancel;
+        TimeFold fold;
+        std::vector<std::pair<double, double>> lastSkips;
+        bool lastFoldActive = false;
+        double uiSkipFrom = -1.0;   // skip started from the right-click menu
     };
+
+    /** A clickable marker drawn on the waveform (for colour / delete). */
+    struct Marker { juce::Rectangle<float> r; int deck; int kind; int index; };   // kind 0 hot cue, 1 locator, 2 skip
+    enum { markerHot = 0, markerLocator = 1, markerSkip = 2 };
 
     void onVBlank (double timestampSec);
     void paintDeck (juce::Graphics& g, int deck, juce::Rectangle<int> r);
-    void paintLane (juce::Graphics& g, int deck, juce::Rectangle<int> r, bool mainLane);
-    void paintOverlays (juce::Graphics& g, int deck, juce::Rectangle<int> lane, juce::Rectangle<int> whole, bool withFlags);
+    void paintLane (juce::Graphics& g, int deck, int lane, juce::Rectangle<int> r);
+    void paintOverlays (juce::Graphics& g, int deck, juce::Rectangle<int> wave, juce::Rectangle<int> lane, bool withFlags);
+    void drawLabel (juce::Graphics& g, juce::Rectangle<int> lane, const juce::String& text, bool atTop);
     juce::Rectangle<int> deckBounds (int deck) const;
     juce::Rectangle<int> dividerBounds (int deck) const;
     int dividerAt (juce::Point<int> p) const;
+    float playheadX (juce::Rectangle<int> r) const { return (float) r.getX() + (float) r.getWidth() * playhead; }
+    bool nearPlayhead (juce::Point<int> p) const;
+    double sourceTimeAt (int deck, float x) const;
+    const Marker* markerAt (juce::Point<float> p) const;
+    void showMarkerMenu (const Marker& m);
+    void showDeckMenu (int deck, double sourceTime);
+    void deleteMarker (const Marker& m);
+    juce::String laneName (int deck, int lane) const;
 
     AudioEngine& engine;
     std::array<DeckView, 2> decks;
@@ -66,13 +98,20 @@ private:
 
     double visibleSeconds = 10.0;
     int maxFps = 60;
-    int mainMode = 0;
-    WaveformData::Style originalStyle = WaveformData::Style::threeBand;
+    std::array<std::array<LaneConfig, 2>, 2> lanes { { { LaneConfig { stems, 0 }, LaneConfig { threeBand, 0 } },
+                                                       { LaneConfig { stems, 0 }, LaneConfig { threeBand, 0 } } } };
+    juce::Colour singleTint { 0xff3d9bff };
+    std::array<int, 4> stemOrder { 2, 1, 3, 0 };
+    std::array<float, 4> stemOpacity { 1.0f, 1.0f, 1.0f, 1.0f };
+    bool foldSkips = true, stemsHidden = false;
+    float playhead = 0.5f;
     std::array<float, 2> laneSplit { 0.5f, 0.5f };
     double lastPaintTime = 0.0;
     bool needsRedraw = true;
 
+    std::vector<Marker> markers;
     int dragDeck = -1, dragDivider = -1;
+    bool dragPlayhead = false;
     double dragStartPos = 0.0;
 
     juce::VBlankAttachment vblank;

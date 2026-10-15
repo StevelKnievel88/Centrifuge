@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(Centrifuge VERSION 0.2.0 LANGUAGES C CXX)
+project(Centrifuge VERSION 0.3.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -131,6 +131,12 @@ target_compile_definitions(Centrifuge PRIVATE
     ORBIT_HAS_ORT=${ORBIT_HAS_ORT}
     ORBIT_HAS_DML=${ORBIT_HAS_DML}
     ORBIT_HAS_ASIO=${ORBIT_HAS_ASIO})
+
+# Build number and commit shown in the About screen (set by GitHub Actions)
+if(DEFINED ENV{GITHUB_RUN_NUMBER} AND DEFINED ENV{GITHUB_SHA})
+    string(SUBSTRING "$ENV{GITHUB_SHA}" 0 7 CENTRIFUGE_SHA)
+    target_compile_definitions(Centrifuge PRIVATE CENTRIFUGE_BUILD_INFO="build $ENV{GITHUB_RUN_NUMBER}, ${CENTRIFUGE_SHA}")
+endif()
 
 if(UNIX AND NOT APPLE)
     # Linux is only used for the preview/test build: no audio drivers needed.

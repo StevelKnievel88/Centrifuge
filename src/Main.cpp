@@ -194,6 +194,12 @@ private:
             main.getRouter().perform ("d1.stem.3.volume", inst);
             press ("d1.stem.4.mute");
 
+            // Deck 1: a locator and a skip (folded out of the waveform)
+            d1.post (Deck::Cmd::locatorAdd, 4.0);
+            d1.post (Deck::Cmd::locatorAdd, 14.0);
+            d1.post2 (Deck::Cmd::skipAdd, 11.0, 13.0);
+            d1.post (Deck::Cmd::locatorColour, (double) 0xff28e214u, 1);
+
             // Deck 2: synced, key sync to deck 1, a 4-beat loop running
             for (auto [sec, cue] : { std::pair<double, const char*> { 8.1, "d2.hotcue.1" }, { 40.0, "d2.hotcue.4" } })
             {
@@ -245,7 +251,22 @@ private:
         {
             snap ("05_stems.png");
             main.showPage (0);
+            main.getWaves().setVisibleSeconds (2.0);
             stage = 7;
+            t0 = ticks;
+        }
+        else if (stage == 7 && ticks - t0 > 4)
+        {
+            snap ("06_zoomed.png");
+            main.getWaves().setVisibleSeconds (10.0);
+            main.showAbout();
+            stage = 8;
+            t0 = ticks;
+        }
+        else if (stage == 8 && ticks - t0 > 8)
+        {
+            snap ("07_about.png");
+            stage = 9;
         }
     }
 

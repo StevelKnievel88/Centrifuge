@@ -23,8 +23,6 @@ static std::vector<ActionDef> buildActions()
         add (p + "load",        "Load selected track",   D + " - Transport", B, d);
         add (p + "eject",       "Eject",                 D + " - Transport", B, d);
         add (p + "needle",      "Needle search (position)", D + " - Transport", C, d);
-        add (p + "callprev",    "Memory cue: previous",  D + " - Transport", B, d);
-        add (p + "callnext",    "Memory cue: next",      D + " - Transport", B, d);
 
         add (p + "jog.touch",   "Jog: top touch",        D + " - Jog", B, d);
         add (p + "jog.turn",    "Jog: turn (top)",       D + " - Jog", E, d);
@@ -47,6 +45,16 @@ static std::vector<ActionDef> buildActions()
             add (p + "hotcue." + juce::String (h + 1), "Hot cue " + letter, D + " - Hot cues", B, d, true);
             add (p + "hotcue." + juce::String (h + 1) + ".delete", "Delete hot cue " + letter, D + " - Hot cues", B, d);
         }
+
+        add (p + "callprev",       "Locator: previous (call)",    D + " - Locators & skips", B, d);
+        add (p + "callnext",       "Locator: next (call)",        D + " - Locators & skips", B, d);
+        add (p + "locator.add",    "Locator: add (memory)",       D + " - Locators & skips", B, d);
+        add (p + "locator.delete", "Locator: delete current",     D + " - Locators & skips", B, d);
+        add (p + "skip.set",       "Skip: set start, then end (press twice)", D + " - Locators & skips", B, d, true);
+        add (p + "skip.in",        "Skip: start (skip from)",     D + " - Locators & skips", B, d, true);
+        add (p + "skip.out",       "Skip: end (skip to)",         D + " - Locators & skips", B, d);
+        add (p + "skip.delete",    "Skip: delete nearest",        D + " - Locators & skips", B, d);
+        add (p + "skip.toggle",    "Skips on / off",              D + " - Locators & skips", B, d, true);
 
         add (p + "loop.in",     "Loop in",               D + " - Loops", B, d, true);
         add (p + "loop.out",    "Loop out",              D + " - Loops", B, d, true);
@@ -92,7 +100,8 @@ static std::vector<ActionDef> buildActions()
     add ("view.zoom",       "Waveform zoom (encoder)", "View", E, -1);
     add ("view.zoomin",     "Waveform zoom in",        "View", B, -1);
     add ("view.zoomout",    "Waveform zoom out",       "View", B, -1);
-    add ("view.wavemode",   "Main waveform: stems / 3-band", "View", B, -1);
+    add ("view.wavemode",   "Stem lanes: show stems / 3-band", "View", B, -1);
+    add ("view.fold",       "Fold skipped sections on / off", "View", B, -1);
     return a;
 }
 
