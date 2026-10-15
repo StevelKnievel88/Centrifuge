@@ -401,13 +401,13 @@ bool DemucsSeparator::separate (const TrackAudio& audio, StemAudio& out,
                     {
                         const double ref = std::abs ((double) a[i]);
                         const double err = StemAudio::isFiniteBits (b[i]) ? std::abs ((double) a[i] - (double) b[i]) : 1.0e9;
-                        maxRef = std::max (maxRef, ref);
-                        maxErr = std::max (maxErr, err);
+                        maxRef = juce::jmax (maxRef, ref);
+                        maxErr = juce::jmax (maxErr, err);
                     }
                 }
 
                 impl->gpuVerified = true;
-                if (maxErr > 0.02 * std::max (1.0, maxRef))
+                if (maxErr > 0.02 * juce::jmax (1.0, maxRef))
                 {
                     impl->session = std::move (cpu);
                     impl->usingGpu = false;
