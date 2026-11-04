@@ -4,6 +4,10 @@
 namespace orbit
 {
 
+/** Loop locator lines: active loops get an orange line, cycle loops a red one. */
+constexpr juce::uint32 activeLoopLine = 0xffff8c00, cycleLoopLine = 0xffff2d2d;
+
+
 /** rekordbox's hot cue / memory cue colour palette (as shown in rekordbox's cue colour picker). */
 struct NamedColour { const char* name; juce::uint32 argb; };
 inline const std::array<NamedColour, 16>& rekordboxCueColours()

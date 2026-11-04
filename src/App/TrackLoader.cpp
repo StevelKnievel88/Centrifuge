@@ -42,6 +42,16 @@ void TrackLoader::applyVersion (LoadedTrack& t, const TrackVersion& v)
     std::sort (t.memoryCues.begin(), t.memoryCues.end(), [] (auto& a, auto& b) { return a.startSec < b.startSec; });
     t.skips.clear();
     for (auto& k : v.skips) t.skips.push_back ({ k.first + shift, k.second + shift });
+    if (v.phrases)
+    {
+        t.phrases.clear();
+        for (auto p : *v.phrases)
+        {
+            p.startSec += shift;
+            if (p.endSec > 0) p.endSec += shift;
+            t.phrases.push_back (p);
+        }
+    }
 }
 
 LoadedTrack::Ptr TrackLoader::withVersion (const LoadedTrack& b, const TrackVersion& v)
@@ -56,6 +66,7 @@ LoadedTrack::Ptr TrackLoader::withVersion (const LoadedTrack& b, const TrackVers
     t->serial = b.serial;
     t->cueKey = b.cueKey;
     t->cueShift = b.cueShift;
+    t->phrases = b.phrases;
     applyVersion (*t, v);
     return t;
 }
@@ -145,6 +156,13 @@ LoadedTrack::Ptr TrackLoader::build (const TrackInfo& info, TrackAudio::Ptr audi
                 t->skips.push_back ({ k.first + shift, k.second + shift });
         }
     std::sort (t->memoryCues.begin(), t->memoryCues.end(), [] (auto& a, auto& b) { return a.startSec < b.startSec; });
+
+    for (auto p : anlz.phrases)
+    {
+        p.startSec += shift;
+        if (p.endSec > 0) p.endSec += shift;
+        t->phrases.push_back (p);
+    }
 
     t->anlzWave = anlz.waveforms;
     if (anlz.waveforms.numDetailEntries() > 0)

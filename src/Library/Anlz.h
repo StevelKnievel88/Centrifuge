@@ -26,6 +26,7 @@ struct AnlzData
     bool foundAny = false;
     std::vector<Beat> beats;
     std::vector<CuePoint> cues;
+    std::vector<Phrase> phrases;    // PSSI (song structure), times from the beat grid
     AnlzWaveforms waveforms;
     juce::String pathTag;       // PPTH: the audio file path rekordbox analysed
 };

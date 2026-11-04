@@ -74,6 +74,7 @@ private:
     void startPreview (const TrackInfo& info, bool fromPc, double fraction);
     void trackAction (const std::vector<TrackInfo>& tracks, const juce::String& action);
     void countPlays();
+    juce::int64 libraryIdFor (const TrackInfo& t, bool addIfMissing);
     juce::Rectangle<int> phaseArea;
     PhaseMeter phaseMeter { engine };
     PrepView prepView { engine, editor };
@@ -84,6 +85,7 @@ private:
     std::array<double, 2> playedSeconds { 0.0, 0.0 };
     std::array<bool, 2> playCounted { false, false };
     juce::uint32 lastTick = 0;
+    std::array<juce::int64, AudioEngine::totalDecks> marksSig {};
     std::shared_ptr<const LibrarySource> centrifugeSource (int view);
 
     struct SettingsHolder { AppSettings s; SettingsHolder() { s.load(); } } settingsHolder;

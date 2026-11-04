@@ -12,8 +12,9 @@ class AudioEngine : private juce::AudioIODeviceCallback,
 {
 public:
     static constexpr int maxDecks = 2;          // the two performance decks
-    static constexpr int previewDeck = 2;       // a third deck for PREP and browser previews (not synced)
-    static constexpr int totalDecks = 3;
+    static constexpr int prepDeck = 2;          // the PREP page's deck (not synced, plays on the preview output)
+    static constexpr int previewDeck = 3;       // browser previews (its own deck, so a preview never replaces PREP's track)
+    static constexpr int totalDecks = 4;
 
     AudioEngine();
     ~AudioEngine() override;

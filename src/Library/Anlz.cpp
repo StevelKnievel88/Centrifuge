@@ -138,6 +138,63 @@ namespace
     }
 }
 
+namespace
+{
+    /** PSSI: rekordbox's phrase analysis. Since rekordbox 6 the body is XOR-masked; phrases refer to beats. */
+    struct RawPhrases { int mood = 0, endBeat = 0; std::vector<std::pair<int, int>> beatKind; };
+
+    RawPhrases parsePssi (const BE& b, size_t tag, size_t lenTag)
+    {
+        RawPhrases r;
+        if (lenTag < 32 || ! b.has (tag, lenTag)) return r;
+        const int entryBytes = (int) b.u32 (tag + 12);
+        const int entries = (int) b.u16 (tag + 16);
+        if (entryBytes != 24 || 32 + (size_t) entries * 24 > lenTag) return r;
+
+        std::vector<uint8_t> body (b.d + tag + 18, b.d + tag + lenTag);
+        auto u16 = [&body] (size_t i) { return (int) ((body[i] << 8) | body[i + 1]); };
+        int mood = u16 (0);
+        if (mood < 1 || mood > 3)
+        {
+            static const uint8_t key[19] = { 0xCB, 0xE1, 0xEE, 0xFA, 0xE5, 0xEE, 0xAD, 0xEE, 0xE9, 0xD2,
+                                             0xE9, 0xEB, 0xE1, 0xE9, 0xF3, 0xE8, 0xE9, 0xF4, 0xE1 };
+            for (size_t i = 0; i < body.size(); ++i) body[i] ^= (uint8_t) (key[i % 19] + entries);
+            mood = u16 (0);
+            if (mood < 1 || mood > 3) return r;
+        }
+        r.mood = mood;
+        r.endBeat = u16 (8);
+        for (int k = 0; k < entries; ++k)
+        {
+            const size_t e = 14 + (size_t) k * 24;
+            r.beatKind.push_back ({ u16 (e + 2), u16 (e + 4) });
+        }
+        return r;
+    }
+
+    juce::String phraseName (int mood, int kind)
+    {
+        if (mood == 1)
+            switch (kind) { case 1: return "Intro"; case 2: return "Up"; case 3: return "Down"; case 5: return "Chorus"; case 6: return "Outro"; default: return "Phrase"; }
+        if (mood == 2)
+        {
+            if (kind == 1) return "Intro";
+            if (kind >= 2 && kind <= 7) return "Verse " + juce::String (kind - 1);
+            if (kind == 8) return "Bridge";
+            if (kind == 9) return "Chorus";
+            if (kind == 10) return "Outro";
+            return "Phrase";
+        }
+        if (kind == 1) return "Intro";
+        if (kind >= 2 && kind <= 4) return "Verse 1";
+        if (kind >= 5 && kind <= 7) return "Verse 2";
+        if (kind == 8) return "Bridge";
+        if (kind == 9) return "Chorus";
+        if (kind == 10) return "Outro";
+        return "Phrase";
+    }
+}
+
 bool parseAnlzFile (const juce::MemoryBlock& data, AnlzData& out)
 {
     BE b { static_cast<const uint8_t*> (data.getData()), data.getSize() };
@@ -148,6 +205,7 @@ bool parseAnlzFile (const juce::MemoryBlock& data, AnlzData& out)
 
     std::vector<CuePoint> extendedCues, legacyCues;
     AnlzData scratch;
+    RawPhrases rawPhrases;
 
     while (p + 12 <= b.n)
     {
@@ -196,6 +254,10 @@ bool parseAnlzFile (const juce::MemoryBlock& data, AnlzData& out)
         {
             copyEntries (b, p, lenHeader, lenTag, 1, out.waveforms.detailMono);
         }
+        else if (b.fourcc (p, "PSSI"))
+        {
+            rawPhrases = parsePssi (b, p, lenTag);
+        }
         else if (b.fourcc (p, "PPTH"))
         {
             const auto lenPath = b.u32 (p + 12);
@@ -203,6 +265,23 @@ bool parseAnlzFile (const juce::MemoryBlock& data, AnlzData& out)
         }
 
         p += lenTag;
+    }
+
+    // Phrases need the beat grid (from this file or one read before it)
+    if (rawPhrases.mood != 0 && ! out.beats.empty())
+    {
+        auto timeOfBeat = [&out] (int beat) { return out.beats[(size_t) juce::jlimit (0, (int) out.beats.size() - 1, beat - 1)].timeSec; };
+        out.phrases.clear();
+        for (auto [beat, kind] : rawPhrases.beatKind)
+        {
+            Phrase ph;
+            ph.startSec = timeOfBeat (beat);
+            ph.name = phraseName (rawPhrases.mood, kind);
+            ph.colour = defaultPhraseColour (ph.name);
+            out.phrases.push_back (ph);
+        }
+        if (! out.phrases.empty() && rawPhrases.endBeat > 0)
+            out.phrases.back().endSec = rawPhrases.endBeat <= (int) out.beats.size() ? timeOfBeat (rawPhrases.endBeat) : -1.0;
     }
 
     // Extended (nxs2) cue lists carry everything the legacy ones do plus colours and comments.

@@ -10,9 +10,8 @@ Centrifuge - quick start
 
 First run
 ---------
-- Centrifuge finds your rekordbox 6/7 collection automatically
-  (%APPDATA%\Pioneer\rekordbox\master.db) and any rekordbox USB stick you plug in.
-  Your rekordbox library is only ever read, never changed.
+- Centrifuge finds any rekordbox USB stick you plug in (only ever read).
+  Add your own music with Browser > IMPORT > Add a folder / Add audio files.
 - Audio: Centrifuge picks the XDJ-XZ's ASIO driver if it can see it. Check
   SETTINGS > AUDIO OUTPUT: Deck 1 and Deck 2 should each go to the XDJ-XZ
   channel they play on, so the unit's own mixer, EQs and FX work as normal.
@@ -80,8 +79,22 @@ Hot cues, locators and skips
     Active  the loop switches on by itself when the playhead reaches it
     Cycle   active, but plays the loop N times (2-32; its flag shows "4x"
             and counts down) and then carries on - it resets next time
-  Hot loops and loop modes are kept in the Centrifuge version only; the
-  rekordbox copy gets a plain loop.
+  USB sticks and rekordbox XML get a plain loop (rekordbox has no loop
+  modes).
+- Tempo: drag the +0.00% readout up (faster) or down (slower) - hold shift
+  for fine steps - and double-click it to reset. Click the range under it
+  to step through 6% / 10% / 25% / 50% / WIDE.
+- Play, pause and cue start and stop with a 2 ms fade, so no clicks.
+- Loop locators: the line down from the head shows the mode - orange =
+  active, red = cycle, otherwise the locator's own colour.
+- Overviews show hot cues as triangles pointing up from the bottom (in the
+  hot cue's colour), locators pointing down from the top, and phrases as a
+  coloured strip along the bottom.
+- Phrases (song sections) show as named, coloured bars along the bottom of
+  the waveforms. Tracks analysed by rekordbox bring rekordbox's phrases;
+  change them on the PREP page (PHRASES tab) - any name, any colour.
+- If the same track is loaded on two decks (or PREP), an edit on one shows
+  on the other straight away, and in the browser's preview.
 - Click the coloured deck number to change a deck's colour (default,
   rekordbox colours or any colour). The phrase meter, deck badges and
   waveforms follow it.
@@ -100,47 +113,52 @@ PREP page (F5)
 - One track on its own, for getting it ready: big zoomable waveform (drag
   to scrub, wheel to zoom), overview (click to go anywhere), the beat grid
   editor, hot cues A-H, loops, locators, skips and beat jumps.
-- On the right: every locator, loop locator and skip in one list, in the
-  order they come in the track. Click to go there; right-click to rename,
-  recolour, change a loop's mode or delete.
+- On the right, three tabs:
+    LOCATORS  every locator, loop locator and skip, in track order. Click
+              the loop icon to step normal > active > cycle.
+    HOT CUES  A-H with their names.
+    PHRASES   the track's sections. + ADD PHRASE AT PLAYHEAD (Intro, Verse,
+              Build, Drop, Breakdown, Chorus, Bridge, Outro or your own
+              name); right-click to rename, recolour, move or delete.
+  Click any entry to go there; right-click for more.
+- The phrase meter in the top bar shows just PREP while you're on PREP.
 - Load a track: double-click it while on PREP, drag it onto PREP, or
   right-click it in the browser > Load into PREP.
-- PREP (and browser previews) play on a third, separate deck. Choose its
-  output in Settings > PREP / previews play on (Automatic = the first
-  output pair the decks aren't using, e.g. headphones). Loading a preview
-  replaces the track on PREP.
+- PREP and browser previews each have their own deck (a preview never
+  replaces the track on PREP). Both play on the output chosen in
+  Settings > PREP / previews play on (Automatic = the first output pair
+  the decks aren't using, e.g. headphones).
 
 Browser
 -------
-- PREVIEW column: a small waveform of each track - click it to play from
-  there on the PREP / preview output; click the square to stop.
+- PREVIEW column: a shrunk overview of each track (3-band waveform, hot
+  cues, locators, skips and phrases) - click it to play from there on the
+  preview output; click the square to stop.
 - Drag a track onto deck 1 or 2 (or the top / bottom half of the waveforms)
   to load it.
 - RATING (click the stars) and PLAYS columns. A play is counted once a
   track has played for 30 seconds on deck 1 or 2.
-- Right-click a track: load to deck 1 / 2 / PREP, remove from the Centrifuge
-  collection, remove from the rekordbox copy (rekordbox itself is never
-  changed), reset play count. Ratings and plays are kept in Centrifuge's
-  library (import or add the track first).
+- Right-click a track: load to deck 1 / 2 / PREP, remove from Centrifuge's
+  library (your music files and rekordbox are never touched), reset play
+  count. Ratings and plays are kept in Centrifuge's library (a track
+  from rekordbox joins it once you edit it or play it).
 - Settings > Key notation: Standard (Am, F#) or Camelot (8A, 2B).
 
-Libraries: rekordbox copy and Centrifuge
-----------------------------------------
-- Browser > IMPORT copies your rekordbox collection (or a USB stick) into
-  Centrifuge's own library: tracks, playlists, beat grids, hot cues, memory
-  cues, their colours and names. rekordbox's files are only ever read.
-- Every track then has two versions: the REKORDBOX copy (only what rekordbox
-  can hold) and the CENTRIFUGE version (also locators beyond rekordbox's limit,
-  skips, ...). The browser's REKORDBOX / CENTRIFUGE buttons switch the view;
-  the R/C column marks tracks whose two versions differ.
-- Each deck has R and C buttons: edits (cues, colours, names, locators, skips,
-  beat grid) go to whichever are lit - both lit = both libraries. The deck
-  plays the Centrifuge version while C is lit, otherwise the rekordbox copy.
-- Importing again updates tracks you haven't edited. Tracks you have edited,
-  whose rekordbox data has also changed, are listed so you can choose.
+Library
+-------
+- One library. The browser shows Centrifuge's library (the music you've
+  added) and any rekordbox USB stick you plug in (only ever read). A track
+  from a stick joins Centrifuge's library the first time you edit, rate or
+  play it - cues, colours, names, locators, loops, skips, phrases and the
+  beat grid are all saved there.
+- (Your rekordbox PC collection, and the rekordbox-copy feature - a second,
+  rekordbox-only version of every track with R / C buttons - are switched
+  off for now and will come back later.)
 - GRID on a deck opens the beat grid editor: nudge, anchor a beat to the
   playhead, set the downbeat, BPM up/down/set, halve/double, tap, undo, reset.
 - Right-click a hot cue or locator to rename it or change its colour.
+- Settings > WAVEFORMS > Stems in the waveform: Overlaid, or Separate (a
+  row each: drums, bass, inst, vocals).
 
 Music that isn't in rekordbox
 -----------------------------
@@ -151,10 +169,8 @@ Music that isn't in rekordbox
   (a key in the file's tags is used instead). Takes about a second a track.
 - A folder becomes a playlist; a folder with sub-folders becomes a playlist
   folder. Adding the same folder again picks up new files and refreshes it.
-- These tracks have R and C versions like any other, export to USB sticks and
-  rekordbox XML, and can be fixed in the GRID editor if a downbeat is wrong.
-- If you later import the same track from rekordbox, rekordbox's analysis
-  replaces Centrifuge's (unless you've edited it - then you're asked).
+- These tracks export to USB sticks and rekordbox XML like any other, and
+  can be fixed in the GRID editor if a downbeat is wrong.
 - Settings > Tempo range: where the analysis looks for the BPM (88-175 suits
   most dance music; choose 70-140 for slower music).
 

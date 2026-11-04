@@ -30,7 +30,7 @@ static std::vector<ActionDef> buildActions()
         add (p + "jog.vinyl",   "Vinyl mode on/off",     D + " - Jog", B, d, true);
 
         add (p + "pitch",       "Tempo slider",          D + " - Tempo", C, d);
-        add (p + "pitchrange",  "Tempo range (6/10/16/Wide)", D + " - Tempo", B, d);
+        add (p + "pitchrange",  "Tempo range (6/10/25/50 %/Wide)", D + " - Tempo", B, d);
         add (p + "tempo.reset", "Tempo reset",           D + " - Tempo", B, d);
         add (p + "bend.up",     "Pitch bend +",          D + " - Tempo", B, d);
         add (p + "bend.down",   "Pitch bend -",          D + " - Tempo", B, d);

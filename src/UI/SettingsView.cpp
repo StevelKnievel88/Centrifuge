@@ -3,6 +3,7 @@
 #include "Theme.h"
 #include "ColourPicker.h"
 #include "../Library/RekordboxMasterDb.h"
+#include "../App/Features.h"
 
 namespace orbit
 {
@@ -23,14 +24,17 @@ public:
         sumToMaster.setButtonText ("Mix both decks onto outputs 1/2 (only when not using the XDJ-XZ mixer)");
         engine.getDeviceManager().addChangeListener (this);
 
-        addSection ("REKORDBOX LIBRARY");
-        add (&dbPath, 28, "master.db");
-        add (&dbButtons, 30, {});
-        dbButtons.addAndMakeVisible (browseDb);
-        dbButtons.addAndMakeVisible (reloadDb);
-        dbButtons.onResize = [this] { auto r = dbButtons.getLocalBounds(); browseDb.setBounds (r.removeFromLeft (110)); r.removeFromLeft (8); reloadDb.setBounds (r.removeFromLeft (150)); };
-        add (&dbKey, 28, "Database key");
-        add (&usbFolder, 28, "Extra export folder");
+        addSection ("LIBRARY");
+        if (Features::rekordboxCollection)
+        {
+            add (&dbPath, 28, "rekordbox master.db");
+            add (&dbButtons, 30, {});
+            dbButtons.addAndMakeVisible (browseDb);
+            dbButtons.addAndMakeVisible (reloadDb);
+            dbButtons.onResize = [this] { auto r = dbButtons.getLocalBounds(); browseDb.setBounds (r.removeFromLeft (110)); r.removeFromLeft (8); reloadDb.setBounds (r.removeFromLeft (150)); };
+            add (&dbKey, 28, "Database key");
+        }
+        add (&usbFolder, 28, "Extra USB export folder");
         add (&analysisRange, 28, "Tempo range (added music)");
         add (&keyNotation, 28, "Key notation");
         keyNotation.addItemList ({ "Standard (Fm, Ab, ...)", "Camelot (4A, 4B, ...)" }, 1);
@@ -85,6 +89,10 @@ public:
                 safe->onChanged();
             });
         };
+        add (&stemLayout, 28, "Stems in the waveform");
+        stemLayout.addItemList ({ "Overlaid (one waveform)", "Separate (a row each: drums, bass, inst, vocals)" }, 1);
+        stemLayout.setSelectedId (settings.stemsSeparate ? 2 : 1, juce::dontSendNotification);
+        stemLayout.onChange = [this] { settings.stemsSeparate = stemLayout.getSelectedId() == 2; onChanged(); };
         // Stem layer order (back to front) and opacity of each stem
         const char* posNames[] = { "Back", "2nd", "3rd", "Front" };
         for (int i = 0; i < 4; ++i)
@@ -378,7 +386,7 @@ private:
     std::array<juce::Slider, 4> stemOpacity;
     PairRow overviewRow;
     juce::TextButton colourButton;
-    juce::ComboBox deck1Out, deck2Out, previewOut, fps, analysisRange, keyNotation;
+    juce::ComboBox deck1Out, deck2Out, previewOut, fps, analysisRange, keyNotation, stemLayout;
     juce::ToggleButton sumToMaster, leds, stemsOnLoad, stemsGpu, foldSkips, quantize;
     juce::TextEditor dbPath, dbKey, usbFolder, modelPath, cachePath;
     Resizer dbButtons;

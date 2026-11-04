@@ -15,6 +15,8 @@ struct TrackVersion
     std::array<std::optional<CuePoint>, 8> hot;
     std::vector<CuePoint> memory;                       // rekordbox memory cues = Centrifuge locators
     std::vector<std::pair<double, double>> skips;       // Centrifuge only
+    // Phrases you've edited (Centrifuge only). Unset = show rekordbox's own phrase analysis, if the track has one.
+    std::optional<std::vector<Phrase>> phrases;
 
     // What each library can hold.
     static constexpr int centrifugeMaxLocators = 32;

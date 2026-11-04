@@ -19,10 +19,18 @@ public:
         startTimerHz (30);
     }
 
+    /** On the PREP page the meter shows just PREP's deck. */
+    void setPrepOnly (bool b) { if (b != prepOnly) { prepOnly = b; repaint(); } }
+
     void paint (juce::Graphics& g) override
     {
         auto r = getLocalBounds().toFloat();
         const float rowH = juce::jmax (4.0f, (r.getHeight() - 4.0f) / 2.0f);
+        if (prepOnly)
+        {
+            paintRow (g, AudioEngine::prepDeck, r.withSizeKeepingCentre (r.getWidth(), rowH * 1.4f));
+            return;
+        }
         paintRow (g, 0, r.removeFromTop (rowH));
         r.removeFromTop (4.0f);
         paintRow (g, 1, r.removeFromTop (rowH));
@@ -32,7 +40,7 @@ private:
     void timerCallback() override
     {
         bool changed = false;
-        for (int d = 0; d < 2; ++d)
+        for (int d = 0; d < 3; ++d)
         {
             const double b = beatPosition (d);
             const int cur = b < 0.0 ? -1 : (int) std::floor (b);
@@ -58,13 +66,14 @@ private:
 
     void paintRow (juce::Graphics& g, int d, juce::Rectangle<float> r)
     {
-        const auto col = Theme::deckColour (d);
-        auto badge = r.removeFromLeft (r.getHeight() + 2.0f).withSizeKeepingCentre (r.getHeight(), r.getHeight());
+        const bool prep = d >= 2;
+        const auto col = prep ? Theme::accent : Theme::deckColour (d);
+        auto badge = r.removeFromLeft (prep ? r.getHeight() * 2.6f : r.getHeight() + 2.0f).withSizeKeepingCentre (prep ? r.getHeight() * 2.4f : r.getHeight(), r.getHeight());
         g.setColour (col);
         g.fillRect (badge);
         g.setColour (psyched::Colours::onSolid);
-        g.setFont (psyched::Fonts::mono (juce::jmax (7.0f, r.getHeight() - 1.0f), true));
-        g.drawText (juce::String (d + 1), badge, juce::Justification::centred);
+        g.setFont (psyched::Fonts::mono (juce::jmax (7.0f, r.getHeight() - (prep ? 4.0f : 1.0f)), true));
+        g.drawText (prep ? juce::String ("PREP") : juce::String (d + 1), badge, juce::Justification::centred);
         r.removeFromLeft (4.0f);
 
         const double b = beatPosition (d);
@@ -99,7 +108,8 @@ private:
     }
 
     AudioEngine& engine;
-    std::array<int, 2> last { -2, -2 }, lastFlash { -1, -1 };
+    std::array<int, 3> last { -2, -2, -2 }, lastFlash { -1, -1, -1 };
+    bool prepOnly = false;
 };
 
 } // namespace orbit

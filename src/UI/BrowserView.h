@@ -1,4 +1,5 @@
 #pragma once
+#include "TrackMarks.h"
 #include "../Library/LibraryManager.h"
 #include "../Stems/StemManager.h"
 #include "../Audio/WaveformData.h"
@@ -38,6 +39,10 @@ public:
     void setPreviewState (const juce::String& filePath, double fraction, bool playing);
     /** Short waveform for the preview column, from a loaded track (key = file path). */
     void notePreviewWaveform (const juce::String& filePath, const WaveformData& w);
+    /** Hot cues, locators, skips and phrases for a track's preview (e.g. straight after an edit on a deck). */
+    void notePreviewMarks (const juce::String& filePath, const TrackMarks& marks);
+    /** The library version of a track, for its preview marks (empty when it isn't in the library). */
+    std::function<std::optional<TrackVersion> (const TrackInfo&)> versionFor;
 
     /** Track menu actions: "load.0", "load.1", "load.2" (PREP), "remove.rb", "remove.cf", "plays.reset"; and ratings. */
     std::function<void (const std::vector<TrackInfo>&, const juce::String& action)> onTrackAction;
@@ -115,7 +120,13 @@ private:
     juce::String previewPath;
     double previewFraction = 0.0;
     bool previewPlaying = false;
-    std::map<juce::String, std::vector<uint8_t>> previewWaves;   // by file path; empty vector = being loaded / none
+    struct PreviewData
+    {
+        std::vector<uint8_t> low, mid, high;   // empty = being loaded / no analysis
+        TrackMarks marks;
+        bool haveMarks = false;
+    };
+    std::map<juce::String, PreviewData> previewWaves;   // by file path
     juce::ThreadPool previewPool { 1 };
     void requestPreviewWave (const TrackInfo& t);
     int sortColumn = 0;

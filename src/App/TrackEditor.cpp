@@ -237,6 +237,23 @@ void TrackEditor::poll()
         save (s, s.r, s.c);
         if (resync) swapDeck (d, s.rb);
         else s.last = now;
+        syncOthers (d);
+    }
+}
+
+void TrackEditor::syncOthers (int deck)
+{
+    const auto& s = sessions[(size_t) deck];
+    if (s.track == nullptr) return;
+    for (int o = 0; o < (int) sessions.size(); ++o)
+    {
+        auto& so = sessions[(size_t) o];
+        if (o == deck || so.track == nullptr || so.track->cueKey != s.track->cueKey) continue;
+        if (engine.deck (o).state().trackSerial.load() != so.serial) continue;
+        so.rb = s.rb;
+        so.cf = s.cf;
+        so.libId = s.libId;
+        swapDeck (o, playing (so));
     }
 }
 
@@ -284,6 +301,7 @@ void TrackEditor::gridAction (int deck, const juce::String& action)
         s.cf.beats = cf;
         save (s, true, true);
         swapDeck (deck, playing (s));
+        syncOthers (deck);
         return;
     }
 
@@ -339,6 +357,7 @@ void TrackEditor::gridAction (int deck, const juce::String& action)
     if (s.c) s.cf.beats = op (s.cf.beats.empty() ? TrackLoader::versionOf (*s.track).beats : s.cf.beats);
     save (s, s.r, s.c);
     swapDeck (deck, playing (s));
+    syncOthers (deck);
 }
 
 void TrackEditor::renameCue (int deck, bool hotCue, int index, const juce::String& name)
@@ -364,6 +383,68 @@ void TrackEditor::renameCue (int deck, bool hotCue, int index, const juce::Strin
     if (s.c) apply (s.cf);
     save (s, s.r, s.c);
     swapDeck (deck, playing (s));
+    syncOthers (deck);
+}
+
+const std::vector<Phrase>& TrackEditor::phrases (int deck) const
+{
+    static const std::vector<Phrase> none;
+    const auto& s = sessions[(size_t) deck];
+    return s.track != nullptr ? s.track->phrases : none;
+}
+
+void TrackEditor::editPhrases (int deck, const std::function<void (std::vector<Phrase>&)>& fn)
+{
+    auto& s = sessions[(size_t) deck];
+    if (s.track == nullptr) return;
+    const double shift = s.track->cueShift;
+    std::vector<Phrase> list;
+    for (auto p : s.track->phrases) { p.startSec -= shift; if (p.endSec > 0) p.endSec -= shift; list.push_back (p); }
+    fn (list);
+    std::sort (list.begin(), list.end(), [] (auto& a, auto& b) { return a.startSec < b.startSec; });
+    if (s.r) s.rb.phrases = list;
+    if (s.c) s.cf.phrases = list;
+    save (s, s.r, s.c);
+    auto v = playing (s);
+    if (! v.phrases) v.phrases = list;
+    swapDeck (deck, v);
+    syncOthers (deck);
+}
+
+void TrackEditor::addPhrase (int deck, double atSec, const juce::String& name, juce::Colour colour)
+{
+    const double shift = hasTrack (deck) ? sessions[(size_t) deck].track->cueShift : 0.0;
+    editPhrases (deck, [=] (std::vector<Phrase>& list)
+    {
+        Phrase p;
+        p.startSec = atSec - shift;
+        p.name = name;
+        p.colour = colour;
+        // replaces a phrase that starts at the same place
+        list.erase (std::remove_if (list.begin(), list.end(), [&] (auto& x) { return std::abs (x.startSec - p.startSec) < 0.01; }), list.end());
+        list.push_back (p);
+    });
+}
+
+void TrackEditor::setPhrase (int deck, int index, const Phrase& p)
+{
+    const double shift = hasTrack (deck) ? sessions[(size_t) deck].track->cueShift : 0.0;
+    editPhrases (deck, [=] (std::vector<Phrase>& list)
+    {
+        if (index < 0 || index >= (int) list.size()) return;
+        auto q = p;
+        q.startSec -= shift;
+        if (q.endSec > 0) q.endSec -= shift;
+        list[(size_t) index] = q;
+    });
+}
+
+void TrackEditor::deletePhrase (int deck, int index)
+{
+    editPhrases (deck, [=] (std::vector<Phrase>& list)
+    {
+        if (index >= 0 && index < (int) list.size()) list.erase (list.begin() + index);
+    });
 }
 
 juce::String TrackEditor::cueName (int deck, bool hotCue, int index) const

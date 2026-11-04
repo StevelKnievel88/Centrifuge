@@ -33,6 +33,13 @@ public:
     void gridAction (int deck, const juce::String& action);
     double currentBpm (int deck) const;
 
+    /** Phrases shown for the deck's track (deck time). Editing them saves your own phrase list (Centrifuge),
+        starting from rekordbox's phrase analysis if you haven't edited them before. */
+    const std::vector<Phrase>& phrases (int deck) const;
+    void addPhrase (int deck, double atSec, const juce::String& name, juce::Colour colour);
+    void setPhrase (int deck, int index, const Phrase& p);   // p in deck time
+    void deletePhrase (int deck, int index);
+
     void renameCue (int deck, bool hotCue, int index, const juce::String& name);
     juce::String cueName (int deck, bool hotCue, int index) const;
 
@@ -66,11 +73,13 @@ private:
     void ensureInLibrary (Session& s);
     void save (Session& s, bool rb, bool cf);
     void swapDeck (int deck, const TrackVersion& v);
+    void editPhrases (int deck, const std::function<void (std::vector<Phrase>&)>& fn);
+    void syncOthers (int deck);   // the same track on another deck takes the edit straight away
     const TrackVersion& playing (const Session& s) const { return s.c ? s.cf : s.rb; }
 
     AudioEngine& engine;
     CentrifugeLibrary& library;
-    std::array<Session, 3> sessions;   // decks 1, 2 and PREP
+    std::array<Session, AudioEngine::totalDecks> sessions;   // decks 1, 2, PREP and the browser preview
 };
 
 } // namespace orbit

@@ -1,4 +1,5 @@
 #include "BrowserView.h"
+#include "../App/Features.h"
 #include "Theme.h"
 #include "../Library/Anlz.h"
 #include "../Audio/MusicalKey.h"
@@ -122,7 +123,7 @@ BrowserView::BrowserView (LibraryManager& lib, StemManager& stems) : library (li
     hdr.addColumn ("Genre", 7, 120, 60, 400);
     hdr.addColumn ("Stems", 8, 56, 40, 80);
     hdr.addColumn ("Cues", 9, 46, 36, 70);
-    hdr.addColumn ("R/C", 10, 46, 36, 70);
+    if (Features::rekordboxCopy) hdr.addColumn ("R/C", 10, 46, 36, 70);
     hdr.addColumn ("Rating", 12, 76, 60, 100);
     hdr.addColumn ("Plays", 13, 48, 40, 80);
     hdr.setStretchToFitActive (true);
@@ -230,10 +231,15 @@ void BrowserView::resized()
     top.removeFromLeft (6);
     exportButton.setBounds (top.removeFromLeft (76));
     top.removeFromLeft (12);
-    viewR.setBounds (top.removeFromLeft (92));
-    top.removeFromLeft (2);
-    viewC.setBounds (top.removeFromLeft (98));
-    top.removeFromLeft (12);
+    viewR.setVisible (Features::rekordboxCopy);
+    viewC.setVisible (Features::rekordboxCopy);
+    if (Features::rekordboxCopy)
+    {
+        viewR.setBounds (top.removeFromLeft (92));
+        top.removeFromLeft (2);
+        viewC.setBounds (top.removeFromLeft (98));
+        top.removeFromLeft (12);
+    }
     load2.setBounds (top.removeFromRight (70));
     top.removeFromRight (6);
     load1.setBounds (top.removeFromRight (70));
@@ -247,6 +253,9 @@ void BrowserView::refreshSources()
 {
     auto openness = tree.getOpennessState (true);
     sources = library.getSources();
+    if (! Features::rekordboxCollection)
+        sources.erase (std::remove_if (sources.begin(), sources.end(),
+                                       [] (auto& s) { return s->kind == LibrarySource::Kind::pcCollection; }), sources.end());
     if (centrifugeSource)
         if (auto c = centrifugeSource (libView))
             sources.insert (sources.begin(), c);
@@ -447,25 +456,40 @@ void BrowserView::paintCell (juce::Graphics& g, int row, int col, int w, int h, 
             }
             auto it = previewWaves.find (path);
             if (it == previewWaves.end()) { requestPreviewWave (t); it = previewWaves.find (path); }
-            const auto& wv = it->second;
-            if (wv.empty())
+            const auto& pd = it->second;
+            if (pd.low.empty())
             {
                 g.setColour (Theme::line);
                 g.fillRect (area.withSizeKeepingCentre (area.getWidth(), 1.0f));
             }
             else
             {
-                const auto col = active ? Theme::output : Theme::textDim;
-                const int n = (int) wv.size();
+                // A shrunk overview: 3-band colours from the bottom up, like the deck overviews
+                const int n = (int) pd.low.size();
                 const float px = area.getWidth() / (float) n;
+                const float wh = area.getHeight() - (pd.marks.phrases.empty() ? 0.0f : 3.0f);
                 for (int i = 0; i < n; ++i)
                 {
-                    const float hh = juce::jmax (1.0f, area.getHeight() * (float) wv[(size_t) i] / 255.0f);
-                    const bool played = active && (float) i / (float) n < (float) previewFraction;
-                    g.setColour (played ? col : col.withAlpha (0.55f));
-                    g.fillRect (area.getX() + (float) i * px, area.getCentreY() - hh * 0.5f, juce::jmax (1.0f, px - 0.5f), hh);
+                    const float lo = pd.low[(size_t) i] / 255.0f, mi = pd.mid[(size_t) i] / 255.0f, hi = pd.high[(size_t) i] / 255.0f;
+                    const float x = area.getX() + (float) i * px, w1 = juce::jmax (1.0f, px - 0.3f);
+                    const float hOuter = juce::jmax (lo, mi) * wh, hHigh = hi * wh;
+                    const float base = area.getY() + wh;
+                    g.setColour (lo > mi ? WaveColours::low : WaveColours::mid);
+                    g.fillRect (x, base - hOuter, w1, hOuter);
+                    g.setColour (WaveColours::lowAndMid);
+                    const float hBoth = juce::jmin (lo, mi) * wh;
+                    g.fillRect (x, base - hBoth, w1, hBoth);
+                    g.setColour (WaveColours::high);
+                    g.fillRect (x, base - hHigh, w1, hHigh);
+                }
+                if (active)
+                {
+                    g.setColour (juce::Colours::black.withAlpha (0.45f));
+                    g.fillRect (area.withWidth (area.getWidth() * (float) previewFraction));
                 }
             }
+            if (pd.haveMarks)
+                paintOverviewMarks (g, area, pd.marks, true);
             if (active)
             {
                 g.setColour (juce::Colours::white);
@@ -561,8 +585,8 @@ void BrowserView::showTrackMenu (int)
     if (anyLibrary)
     {
         m.addSeparator();
-        m.addItem (10, "Remove from the Centrifuge collection");
-        m.addItem (11, "Remove from the rekordbox copy");
+        m.addItem (10, Features::rekordboxCopy ? "Remove from the Centrifuge collection" : "Remove from Centrifuge's library");
+        if (Features::rekordboxCopy) m.addItem (11, "Remove from the rekordbox copy");
         m.addItem (12, "Reset play count");
     }
     juce::Component::SafePointer<BrowserView> safe (this);
@@ -588,20 +612,32 @@ void BrowserView::setPreviewState (const juce::String& path, double fraction, bo
 
 void BrowserView::notePreviewWaveform (const juce::String& path, const WaveformData& w)
 {
-    constexpr int points = 100;
-    std::vector<uint8_t> v (points, 0);
+    constexpr int points = 160;
     const int n = w.size();
     if (n <= 0) return;
+    auto& pd = previewWaves[path];
+    pd.low.assign (points, 0); pd.mid.assign (points, 0); pd.high.assign (points, 0);
     for (int i = 0; i < n; ++i)
     {
-        const int b = juce::jmin (points - 1, i * points / n);
-        int hgt = 0;
+        const size_t b = (size_t) juce::jmin (points - 1, i * points / n);
         if (w.style == WaveformData::Style::threeBand)
-            hgt = juce::jmax ((int) w.low[(size_t) i], (int) w.mid[(size_t) i], (int) w.high[(size_t) i]);
-        else hgt = w.height[(size_t) i];
-        v[(size_t) b] = (uint8_t) juce::jmax ((int) v[(size_t) b], hgt);
+        {
+            pd.low[b] = juce::jmax (pd.low[b], w.low[(size_t) i]);
+            pd.mid[b] = juce::jmax (pd.mid[b], w.mid[(size_t) i]);
+            pd.high[b] = juce::jmax (pd.high[b], w.high[(size_t) i]);
+        }
+        else
+            pd.mid[b] = juce::jmax (pd.mid[b], w.height[(size_t) i]);
     }
-    previewWaves[path] = std::move (v);
+    table.repaint();
+}
+
+void BrowserView::notePreviewMarks (const juce::String& path, const TrackMarks& marks)
+{
+    auto& pd = previewWaves[path];
+    if (pd.haveMarks && pd.marks == marks) return;
+    pd.marks = marks;
+    pd.haveMarks = true;
     table.repaint();
 }
 
@@ -609,16 +645,26 @@ void BrowserView::requestPreviewWave (const TrackInfo& t)
 {
     const auto path = t.file.getFullPathName();
     previewWaves[path] = {};   // placeholder while loading (and when there's no analysis yet)
-    if (! t.anlzBase.existsAsFile()) return;
+    std::optional<TrackVersion> version;
+    if (versionFor) version = versionFor (t);
+    if (! t.anlzBase.existsAsFile() && ! version) return;
     const auto anlz = t.anlzBase;
+    const double length = t.durationSec;
     juce::Component::SafePointer<BrowserView> safe (this);
-    previewPool.addJob ([safe, anlz, path]
+    previewPool.addJob ([safe, anlz, path, version, length]
     {
-        const auto data = loadAnlz (anlz);
-        if (data.waveforms.numDetailEntries() <= 0) return;
-        auto w = WaveformData::fromAnlz (data.waveforms, WaveformData::Style::threeBand);
-        if (w == nullptr) return;
-        juce::MessageManager::callAsync ([safe, w, path] { if (safe != nullptr) safe->notePreviewWaveform (path, *w); });
+        const auto data = anlz.existsAsFile() ? loadAnlz (anlz) : AnlzData();
+        WaveformData::Ptr w;
+        if (data.waveforms.numDetailEntries() > 0) w = WaveformData::fromAnlz (data.waveforms, WaveformData::Style::threeBand);
+        auto marks = version ? TrackMarks::fromVersion (*version, length, data.phrases)
+                             : TrackMarks::fromVersion (TrackVersion::fromRekordbox (data.beats, data.cues), length, data.phrases);
+        juce::MessageManager::callAsync ([safe, w, path, marks]
+        {
+            if (safe == nullptr) return;
+            if (w != nullptr) safe->notePreviewWaveform (path, *w);
+            auto& pd = safe->previewWaves[path];
+            if (! pd.haveMarks) { pd.marks = marks; pd.haveMarks = true; safe->table.repaint(); }
+        });
     });
 }
 

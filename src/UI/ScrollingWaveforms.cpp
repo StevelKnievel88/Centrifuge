@@ -1,5 +1,6 @@
 #include "ScrollingWaveforms.h"
 #include "ColourPicker.h"
+#include "TrackMarks.h"
 #include "Theme.h"
 
 namespace orbit
@@ -264,6 +265,17 @@ void ScrollingWaveforms::paintDeck (juce::Graphics& g, int d, juce::Rectangle<in
     paintLane (g, d, 0, topLane);
     paintLane (g, d, 1, bottomLane);
 
+    // Phrase bars along the bottom of the deck's waveforms
+    if (auto& tr = decks[(size_t) d].track; tr != nullptr && ! tr->phrases.empty() && bottomLane.getHeight() > 30)
+    {
+        const auto& dv = decks[(size_t) d];
+        const double pps = (double) r.getWidth() / visibleSeconds;
+        const float px0 = playheadX (r);
+        auto strip = bottomLane.toFloat().removeFromBottom (12.0f);
+        paintPhraseStrip (g, strip, tr->phrases, tr->audio != nullptr ? tr->audio->lengthSeconds() : tr->info.durationSec,
+                          [&] (double sec) { return px0 + (float) ((dv.fold.toDisplay (sec) - dv.shownPos) * pps); });
+    }
+
     // Divider with a small grip
     g.setColour (Theme::panel);
     g.fillRect (div);
@@ -391,20 +403,29 @@ void ScrollingWaveforms::paintLane (juce::Graphics& g, int d, int lane, juce::Re
                 tc.draw (g, wave, t, px, 0.3f);
             }
 
-        // Four stems overlaid, each as bright as its knob is up (a muted stem stays as a faint ghost).
+        // Four stems, each as bright as its knob is up (a muted stem stays as a faint ghost): overlaid,
+        // or each in its own row (drums, bass, inst, vocals from the top) when Settings asks for that.
         auto o = opts;
         o.entriesPerSecond = sw->entriesPerSecond;
+        if (stemsSeparate) o.shape = StripOptions::full;
         for (int s : stemOrder)
         {
+            auto area = wave;
+            if (stemsSeparate)
+            {
+                const int rowH = wave.getHeight() / 4;
+                area = juce::Rectangle<int> (wave.getX(), wave.getY() + s * rowH, wave.getWidth(), s == 3 ? wave.getHeight() - 3 * rowH : rowH);
+                if (s > 0) { g.setColour (Theme::line.withAlpha (0.5f)); g.fillRect (area.getX(), area.getY(), area.getWidth(), 1); }
+            }
             auto& tc = dv.stemTiles[(size_t) lane][(size_t) s];
             const auto col = Theme::stemColour (s);
-            tc.configure (sw.get(), styleKeyFor (s, cfg.shape, {}, fold.version), sw->entriesPerSecond, sw->lengthSeconds() - skipped,
-                          pps, wave.getHeight(), scale,
+            tc.configure (sw.get(), styleKeyFor (s, stemsSeparate ? 7 : cfg.shape, {}, fold.version), sw->entriesPerSecond, sw->lengthSeconds() - skipped,
+                          pps, area.getHeight(), scale,
                           [sw, s, col, o] (double first, double epp, int w, int h)
                           { return renderStemStrip (*sw, s, col, sw->computed.load(), first, epp, w, h, o); });
             tc.setValidEntries (valid);
             const float gain = st.stemGain[(size_t) s].load();
-            tc.draw (g, wave, t, px, (gain <= 0.001f ? 0.12f : 0.3f + 0.7f * gain) * stemOpacity[(size_t) juce::jlimit (0, 3, s)]);
+            tc.draw (g, area, t, px, (gain <= 0.001f ? 0.12f : 0.3f + 0.7f * gain) * (stemsSeparate ? 1.0f : stemOpacity[(size_t) juce::jlimit (0, 3, s)]));
         }
     }
     else
@@ -553,8 +574,11 @@ void ScrollingWaveforms::paintOverlays (juce::Graphics& g, int d, juce::Rectangl
             g.setColour (c.withAlpha (st.autoLoopLocator.load() == i ? 0.22f : 0.10f));
             g.fillRect (juce::Rectangle<float>::leftTopRightBottom (x, (float) wave.getY(), juce::jmax (x + 1.0f, xOf (le)), (float) wave.getBottom()));
         }
-        g.setColour (c.withAlpha (0.8f));
-        g.fillRect (x - 0.5f, (float) wave.getY(), 1.0f, (float) wave.getHeight());
+        // The line down from the head tells the loop modes apart: active = orange, cycle = red, others as they were
+        const auto lineCol = isLoop && mode == 1 ? juce::Colour (activeLoopLine) : isLoop && mode == 2 ? juce::Colour (cycleLoopLine) : c.withAlpha (0.8f);
+        const float lineW = isLoop && mode != 0 ? 2.0f : 1.0f;
+        g.setColour (lineCol);
+        g.fillRect (x - lineW * 0.5f, (float) wave.getY(), lineW, (float) wave.getHeight());
         if (withFlags)
         {
             const float h = (float) markerBand - 3.0f;
@@ -595,8 +619,8 @@ void ScrollingWaveforms::paintOverlays (juce::Graphics& g, int d, juce::Rectangl
         const double e = st.locEnd[(size_t) i].load();
         if (e > s && visible (e))
         {
-            g.setColour (c.withAlpha (0.5f));
-            g.fillRect (xOf (e) - 0.5f, (float) wave.getY(), 1.0f, (float) wave.getHeight());
+            g.setColour (lineCol.withMultipliedAlpha (0.6f));
+            g.fillRect (xOf (e) - lineW * 0.5f, (float) wave.getY(), lineW, (float) wave.getHeight());
         }
     }
 

@@ -106,13 +106,16 @@ namespace
         return m / 255.0f;
     }
 
-    juce::Colour tinted (juce::Colour tint, juce::Colour source)
+    /** Single-colour waveform shaded by frequency content: darker where the sound is mostly bass, paler (towards
+        white) where it is mostly highs - the single-colour version of what the RGB waveform does with hue. */
+    juce::Colour shaded (juce::Colour tint, float low, float mid, float high)
     {
-        // Keep the brightness variation of the source (e.g. rekordbox's blue waveform) in the chosen colour.
-        const float b = source.getPerceivedBrightness();
-        auto c = tint.withMultipliedBrightness (0.65f + 0.55f * b);
-        return b > 0.75f ? c.interpolatedWith (juce::Colours::white, (b - 0.75f) * 1.6f) : c;
+        const float sum = low + mid + high + 1.0e-4f;
+        const float lowShare = low / sum, highShare = (high + 0.5f * mid) / sum;
+        auto c = tint.withMultipliedBrightness (juce::jlimit (0.3f, 1.0f, 1.15f - 0.85f * lowShare));
+        return c.interpolatedWith (juce::Colours::white, juce::jlimit (0.0f, 0.75f, (highShare - 0.25f) * 1.1f));
     }
+
 }
 
 juce::Image renderWaveformStrip (const WaveformData& w, double firstEntry, double epp, int width, int height, const StripOptions& o)
@@ -127,7 +130,6 @@ juce::Image renderWaveformStrip (const WaveformData& w, double firstEntry, doubl
     const bool single = ! o.tint.isTransparent();
 
     const auto cLow = px (WaveColours::low), cMid = px (WaveColours::mid), cBoth = px (WaveColours::lowAndMid), cHigh = px (WaveColours::high);
-    const auto tintBody = px (o.tint), tintCore = px (o.tint.brighter (0.5f));
 
     for (int x = 0; x < width; ++x)
     {
@@ -141,12 +143,14 @@ juce::Image renderWaveformStrip (const WaveformData& w, double firstEntry, doubl
             if (single)
             {
                 const float hh = juce::jmax (lo, mi, hi) * geo.maxH, core = hi * geo.maxH;
+                const auto col = shaded (o.tint, lo, mi, hi);
+                const auto body = px (col), coreCol = px (col.interpolatedWith (juce::Colours::white, 0.3f));
                 const auto rr = geo.rows (hh);
-            for (int y = rr.getStart(); y < rr.getEnd(); ++y)
+                for (int y = rr.getStart(); y < rr.getEnd(); ++y)
                 {
                     const float d = geo.dist (y);
                     if (d >= hh) continue;
-                    *reinterpret_cast<juce::PixelARGB*> (bd.getPixelPointer (x, y)) = d < core ? tintCore : tintBody;
+                    *reinterpret_cast<juce::PixelARGB*> (bd.getPixelPointer (x, y)) = d < core ? coreCol : body;
                 }
                 continue;
             }
@@ -176,7 +180,8 @@ juce::Image renderWaveformStrip (const WaveformData& w, double firstEntry, doubl
                     if (w.height[(size_t) i] >= best) { best = w.height[(size_t) i]; col = w.colour[(size_t) i]; }
             }
             auto colour = juce::Colour (col);
-            if (single) colour = tinted (o.tint, colour);
+            // rekordbox's RGB waveform: red = lows, green = mids, blue = highs
+            if (single) colour = shaded (o.tint, colour.getFloatRed(), colour.getFloatGreen(), colour.getFloatBlue());
             const auto pc = px (colour), pcCore = px (colour.brighter (0.35f));
             const auto rr = geo.rows (hh);
             for (int y = rr.getStart(); y < rr.getEnd(); ++y)

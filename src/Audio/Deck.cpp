@@ -149,10 +149,10 @@ void Deck::jumpTo (double sec, bool quantized)
     if (quantized) sec = quantizeTime (sec);
 
     // Render a short tail from the old position so the cut can be cross-faded.
-    if (playing || scratching)
+    if ((playing || scratching || audibleLast) && fadeTailLen == 0)
     {
         const double savedPos = pos;
-        readResampled (fadeTailL.data(), fadeTailR.data(), fadeLen, (srcRate / deviceRate) * juce::jmax (0.25, tempoRatio));
+        readResampled (fadeTailL.data(), fadeTailR.data(), fadeLen, audibleLast ? lastStep : (srcRate / deviceRate) * juce::jmax (0.25, tempoRatio));
         pos = savedPos;
         fadeTailLen = fadeLen;
     }
@@ -185,6 +185,7 @@ void Deck::loadTrack (LoadedTrack* t)
     endAutoLoop();
     stretchActive = false;
     fadeTailLen = 0;
+    audibleLast = false;
     bendRate = 0.0;
     keyShift = 0;
     stemMuted.fill (false);
@@ -1009,6 +1010,8 @@ void Deck::process (float* outL, float* outR, int n)
     {
         juce::FloatVectorOperations::clear (outL, n);
         juce::FloatVectorOperations::clear (outR, n);
+        audibleLast = false;
+        fadeTailLen = 0;
         publish();
         return;
     }
@@ -1092,7 +1095,31 @@ void Deck::process (float* outL, float* outR, int n)
         }
     }
 
-    // Cross-fade out of the previous position after a jump
+    const bool audibleNow = std::abs (speed) >= 1.0e-6;
+
+    // Stopping (pause, cue release, end of a hot cue preview): fade the old sound out over ~2 ms instead of cutting it
+    if (audibleLast && ! audibleNow && fadeTailLen == 0)
+    {
+        const double savedPos = pos;
+        readResampled (fadeTailL.data(), fadeTailR.data(), fadeLen, lastStep);
+        pos = savedPos;
+        fadeTailLen = fadeLen;
+    }
+    // Starting from silence: fade in over ~2 ms
+    if (! audibleLast && audibleNow && fadeTailLen == 0)
+    {
+        const int len = juce::jmin (fadeLen, n);
+        for (int i = 0; i < len; ++i)
+        {
+            const float w = (float) i / (float) len;
+            outL[i] *= w;
+            outR[i] *= w;
+        }
+    }
+    audibleLast = audibleNow;
+    if (audibleNow) lastStep = baseStep * speed;
+
+    // Cross-fade out of the previous position after a jump (or to silence after a stop)
     if (fadeTailLen > 0)
     {
         const int len = juce::jmin (fadeTailLen, n);

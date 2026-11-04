@@ -80,6 +80,7 @@ void AppSettings::load()
     boolean ("prepEditR", prepEditR);
     boolean ("prepEditC", prepEditC);
     boolean ("camelotKeys", camelotKeys);
+    boolean ("stemsSeparate", stemsSeparate);
     if (auto* dc = v["deckColours"].getArray())
         for (int i = 0; i < juce::jmin (2, dc->size()); ++i)
             deckColours[(size_t) i] = (juce::uint32) (juce::int64) (*dc)[i];
@@ -167,6 +168,7 @@ void AppSettings::save() const
     o->setProperty ("prepEditR", prepEditR);
     o->setProperty ("prepEditC", prepEditC);
     o->setProperty ("camelotKeys", camelotKeys);
+    o->setProperty ("stemsSeparate", stemsSeparate);
     o->setProperty ("deckColours", juce::Array<juce::var> { (juce::int64) deckColours[0], (juce::int64) deckColours[1] });
 
     o->setProperty ("laneStyle", juce::Array<juce::var> { laneStyle[0][0], laneStyle[0][1], laneStyle[1][0], laneStyle[1][1] });

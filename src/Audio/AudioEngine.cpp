@@ -42,7 +42,8 @@ AudioEngine::AudioEngine()
         decks[(size_t) i] = std::make_unique<Deck> (i);
         deckOutputs[(size_t) i] = i * 2;
     }
-    decks[(size_t) previewDeck] = std::make_unique<Deck> (previewDeck);
+    for (int i = maxDecks; i < totalDecks; ++i)
+        decks[(size_t) i] = std::make_unique<Deck> (i);
     deviceManager.addChangeListener (this);
 }
 
@@ -337,18 +338,16 @@ void AudioEngine::render (float* const* outputs, int numOutputs, int numSamples)
                     }
             }
             previewInUse = ch;
-            auto& pd = *decks[(size_t) previewDeck];
-            if (pd.hasTrack())
+            for (int x = maxDecks; x < totalDecks; ++x)   // PREP, then browser previews
             {
-                pd.process (scratchL.data(), scratchR.data(), n);
-                if (ch + 1 < numOutputs && outputs[ch] != nullptr && outputs[ch + 1] != nullptr)
+                auto& pd = *decks[(size_t) x];
+                pd.process (scratchL.data(), scratchR.data(), n);   // (also keeps its state published when empty)
+                if (pd.hasTrack() && ch + 1 < numOutputs && outputs[ch] != nullptr && outputs[ch + 1] != nullptr)
                 {
                     juce::FloatVectorOperations::add (outputs[ch] + start, scratchL.data(), n);
                     juce::FloatVectorOperations::add (outputs[ch + 1] + start, scratchR.data(), n);
                 }
             }
-            else
-                pd.process (scratchL.data(), scratchR.data(), n);   // keeps its state published
         }
 
 

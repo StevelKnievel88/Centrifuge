@@ -34,6 +34,7 @@ public:
     }
     std::function<void (int deck)> onTrackDropped;
     int dropDeck = -1;
+    bool stemsSeparate = false;
 
     enum LaneStyle { stems = 0, threeBand = 1, rgb = 2, singleColour = 3 };
     struct LaneConfig { int style = threeBand; int shape = StripOptions::full; };
@@ -53,6 +54,8 @@ public:
     }
     void setFoldSkips (bool f) { foldSkips = f; needsRedraw = true; }
     bool getFoldSkips() const { return foldSkips; }
+    /** Stems each in their own row (true) instead of overlaid. */
+    void setStemsSeparate (bool b) { if (b != stemsSeparate) { stemsSeparate = b; forceRedraw(); } }
     void setStemsHidden (bool h) { stemsHidden = h; needsRedraw = true; }
     bool getStemsHidden() const { return stemsHidden; }
     void setPlayheadPosition (float fraction) { playhead = juce::jlimit (0.1f, 0.9f, fraction); needsRedraw = true; }

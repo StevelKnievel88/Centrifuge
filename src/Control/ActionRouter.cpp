@@ -6,7 +6,7 @@ namespace orbit
 
 namespace
 {
-    constexpr double pitchRanges[] = { 0.06, 0.10, 0.16, 1.00 };
+    constexpr double pitchRanges[] = { 0.06, 0.10, 0.25, 0.50, 1.00 };   // click the range to step through them
 
     double parseBeats (const juce::String& s)
     {
@@ -189,7 +189,7 @@ void ActionRouter::perform (const ActionDef& a, const ActionValue& v)
     {
         if (v.down)
         {
-            const int idx = (rangeIndex[(size_t) d].load() + 1) % 4;
+            const int idx = (rangeIndex[(size_t) d].load() + 1) % (int) std::size (pitchRanges);
             rangeIndex[(size_t) d] = idx;
             deck.post (C::setPitchRange, pitchRanges[idx]);
         }

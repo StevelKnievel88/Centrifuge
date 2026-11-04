@@ -87,6 +87,8 @@ private:
     TrackEditor* editor = nullptr;
     bool gridMode = false;
     bool dropHover = false;
+    bool tempoDrag = false;
+    double tempoDragStart = 1.0;
 };
 
 } // namespace orbit

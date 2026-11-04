@@ -14,7 +14,7 @@ class PrepView : public juce::Component,
                  private juce::Timer
 {
 public:
-    static constexpr int deckIndex = AudioEngine::previewDeck;
+    static constexpr int deckIndex = AudioEngine::prepDeck;
 
     PrepView (AudioEngine& engine, TrackEditor& editor);
 
@@ -36,7 +36,7 @@ public:
 
 private:
     struct Region { juce::Rectangle<float> r; juce::String action; int kind; };   // kind: 0 button, 1 overview, 2 zoom wave, 3 pad, 4 list row, 5 bpm
-    struct ListEntry { double time; int kind; int index; };                        // kind 0 locator, 1 skip
+    struct ListEntry { double time; int kind; int index; };                        // kind 0 locator, 1 skip, 2 hot cue, 3 phrase
 
     void timerCallback() override;
     void action (const juce::String& id, bool down);
@@ -48,6 +48,9 @@ private:
     std::vector<ListEntry> listEntries() const;
     void showEntryMenu (const ListEntry& e, juce::Rectangle<float> area);
     void showPadMenu (int pad, juce::Rectangle<float> area);
+    void showPhraseMenu (int index, juce::Rectangle<float> area);
+    void showPhraseAddMenu();
+    void askText (const juce::String& title, const juce::String& current, std::function<void (juce::String)> done);
     void chip (juce::Graphics&, juce::Rectangle<float>, const juce::String&, bool lit, juce::Colour, const juce::String& action);
 
     AudioEngine& engine;
@@ -65,6 +68,8 @@ private:
     double visibleSeconds = 8.0;
     double loopBeats = 4.0;
     int listScroll = 0;
+    int listTab = 0;          // 0 locators / loops / skips, 1 hot cues, 2 phrases
+    int phraseSelected = -1;
     juce::String heldAction;
     bool scrubbing = false, dropHover = false;
     double scrubStartTime = 0.0;

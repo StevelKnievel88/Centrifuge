@@ -59,6 +59,21 @@ juce::var TrackVersion::toVar() const
     juce::Array<juce::var> s;
     for (auto& k : skips) s.add (juce::Array<juce::var> { r3 (k.first), r3 (k.second) });
     o->setProperty ("skip", s);
+
+    if (phrases)
+    {
+        juce::Array<juce::var> ph;
+        for (auto& p : *phrases)
+        {
+            auto* po = new juce::DynamicObject();
+            po->setProperty ("s", r3 (p.startSec));
+            if (p.endSec > p.startSec) po->setProperty ("e", r3 (p.endSec));
+            po->setProperty ("n", p.name);
+            po->setProperty ("c", p.colour.toString());
+            ph.add (juce::var (po));
+        }
+        o->setProperty ("phr", ph);
+    }
     return juce::var (o);
 }
 
@@ -77,6 +92,21 @@ TrackVersion TrackVersion::fromVar (const juce::var& v)
         for (auto& k : *s)
             if (auto* p = k.getArray(); p != nullptr && p->size() == 2)
                 t.skips.push_back ({ (double) (*p)[0], (double) (*p)[1] });
+    if (auto* ph = v["phr"].getArray())
+    {
+        std::vector<Phrase> list;
+        for (auto& p : *ph)
+        {
+            Phrase x;
+            x.startSec = (double) p.getProperty ("s", 0.0);
+            x.endSec = p.hasProperty ("e") ? (double) p["e"] : -1.0;
+            x.name = p.getProperty ("n", {}).toString();
+            x.colour = p.hasProperty ("c") ? juce::Colour::fromString (p["c"].toString()) : defaultPhraseColour (x.name);
+            list.push_back (x);
+        }
+        std::sort (list.begin(), list.end(), [] (auto& a, auto& b) { return a.startSec < b.startSec; });
+        t.phrases = list;
+    }
     std::sort (t.memory.begin(), t.memory.end(), [] (auto& a, auto& b) { return a.startSec < b.startSec; });
     return t;
 }

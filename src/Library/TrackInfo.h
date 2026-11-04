@@ -23,6 +23,31 @@ struct CuePoint
     bool isLoop() const noexcept { return endSec > startSec; }
 };
 
+/** A phrase (song section) shown as a coloured bar under the waveform: from rekordbox's phrase analysis,
+    or your own (any name, any colour). Each runs until the next one starts; the last one until endSec
+    (or the end of the track). */
+struct Phrase
+{
+    double startSec = 0.0;
+    double endSec = -1.0;
+    juce::String name;
+    juce::Colour colour;
+};
+
+/** Colour for a phrase name (rekordbox's sections; anything else gets a neutral colour). */
+inline juce::Colour defaultPhraseColour (const juce::String& name)
+{
+    const auto n = name.toLowerCase();
+    if (n.startsWith ("intro"))  return juce::Colour (0xffe0565b);
+    if (n.startsWith ("up"))     return juce::Colour (0xffff9f40);
+    if (n.startsWith ("down"))   return juce::Colour (0xff4f7dff);
+    if (n.startsWith ("chorus")) return juce::Colour (0xff3cd36a);
+    if (n.startsWith ("verse"))  return juce::Colour (0xff36b5e6);
+    if (n.startsWith ("bridge")) return juce::Colour (0xffffd339);
+    if (n.startsWith ("outro"))  return juce::Colour (0xff9a6cff);
+    return juce::Colour (0xff8f88a8);
+}
+
 struct Beat
 {
     double timeSec = 0.0;

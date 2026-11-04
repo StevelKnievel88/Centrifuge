@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "Features.h"
 #include "../Audio/MusicalKey.h"
 #include "../Library/RekordboxMasterDb.h"
 
@@ -56,15 +57,21 @@ MainComponent::MainComponent()
     };
 
     // Library editing
-    for (int d = 0; d < 2; ++d)
-        editor.setEditTargets (d, settings.editR[(size_t) d], settings.editC[(size_t) d]);
-    editor.setEditTargets (AudioEngine::previewDeck, settings.prepEditR, settings.prepEditC);
-    editor.onTargetsChanged = [this] (int d, bool r, bool c)
+    if (Features::rekordboxCopy)
     {
-        if (d < 2) { settings.editR[(size_t) d] = r; settings.editC[(size_t) d] = c; }
-        else { settings.prepEditR = r; settings.prepEditC = c; }
-        settings.save();
-    };
+        for (int d = 0; d < 2; ++d)
+            editor.setEditTargets (d, settings.editR[(size_t) d], settings.editC[(size_t) d]);
+        editor.setEditTargets (AudioEngine::prepDeck, settings.prepEditR, settings.prepEditC);
+        editor.onTargetsChanged = [this] (int d, bool r, bool c)
+        {
+            if (d < 2) { settings.editR[(size_t) d] = r; settings.editC[(size_t) d] = c; }
+            else if (d == AudioEngine::prepDeck) { settings.prepEditR = r; settings.prepEditC = c; }
+            settings.save();
+        };
+    }
+    else
+        for (int d = 0; d < AudioEngine::totalDecks; ++d)
+            editor.setEditTargets (d, false, true);   // one library: edits go to Centrifuge's version only
     editor.onMessage = [this] (const juce::String& m) { flash (m); };
     for (auto* dp : { &deck1, &deck2 })
     {
@@ -81,16 +88,16 @@ MainComponent::MainComponent()
         dp->onTrackDropped = [this] (int d) { loadDragged (d); };
     }
     waves.onTrackDropped = [this] (int d) { loadDragged (d); };
-    prepView.onTrackDropped = [this] { loadDragged (AudioEngine::previewDeck); };
+    prepView.onTrackDropped = [this] { loadDragged (AudioEngine::prepDeck); };
     prepView.onRenameCue = [this] (int d, bool hot, int i, juce::String cur) { askRename (d, hot, i, cur); };
     prepView.onSetBpm = [this] (int d) { askBpm (d); };
+    browser.versionFor = [this] (const TrackInfo& t) { return editor.versionToLoad (0, t); };
     browser.onPreview = [this] (const TrackInfo& t, bool pc, double f) { startPreview (t, pc, f); };
     browser.onPreviewStop = [this] { engine.deck (AudioEngine::previewDeck).post (Deck::Cmd::pause); };
     browser.onTrackAction = [this] (const std::vector<TrackInfo>& t, const juce::String& a) { trackAction (t, a); };
     browser.onSetRating = [this] (const TrackInfo& t, int stars)
     {
-        if (t.libraryId != 0) centrifugeLibrary.setRating (t.libraryId, stars);
-        else flash ("Ratings are kept in Centrifuge's library - import the track first");
+        if (const auto id = libraryIdFor (t, true); id != 0) centrifugeLibrary.setRating (id, stars);
     };
     waves.cueName = [this] (int d, bool hot, int i) { return editor.cueName (d, hot, i); };
     waves.onRenameCue = [this] (int d, bool hot, int i, juce::String cur) { askRename (d, hot, i, cur); };
@@ -107,7 +114,7 @@ MainComponent::MainComponent()
     browser.onLoadToDeck = [this] (int deck, const TrackInfo& t, bool pc) { loadToDeck (deck, t, pc); };
     browser.chooseDeckForDoubleClick = [this]
     {
-        if (page == 4) return (int) AudioEngine::previewDeck;   // PREP page: load into PREP
+        if (page == 4) return (int) AudioEngine::prepDeck;   // PREP page: load into PREP
         // Load onto the deck that isn't playing (deck 1 if both are free)
         const bool p0 = engine.deck (0).state().playing.load(), p1 = engine.deck (1).state().playing.load();
         if (p0 && ! p1) return 1;
@@ -193,6 +200,7 @@ void MainComponent::applySettings()
     }
     waves.setSingleColour (juce::Colour (settings.singleColour));
     waves.setStemLayers (settings.stemLayerOrder, settings.stemOpacity);
+    waves.setStemsSeparate (settings.stemsSeparate);
     waves.setFoldSkips (settings.foldSkips);
     waves.setPlayheadPosition (settings.playheadPosition);
     for (auto* dp : { &deck1, &deck2 })
@@ -248,6 +256,7 @@ void MainComponent::handleAppAction (const juce::String& id, int deck, const Act
 {
     if (deck >= 0 && deck < 2)
     {
+        if (! Features::rekordboxCopy && id.startsWith ("edit.")) return;
         if (id == "edit.r")        editor.setEditTargets (deck, ! editor.editsRekordbox (deck), editor.editsCentrifuge (deck));
         else if (id == "edit.c")   editor.setEditTargets (deck, editor.editsRekordbox (deck), ! editor.editsCentrifuge (deck));
         else if (id == "grid.mode") (deck == 0 ? deck1 : deck2).toggleGridMode();
@@ -284,6 +293,7 @@ void MainComponent::showPage (int p)
     waves.setVisible (p == 0);
     browser.setVisible ((p == 0 && settings.showBrowser) || p == 4);
     prepView.setVisible (p == 4);
+    phaseMeter.setPrepOnly (p == 4);
     mapping.setVisible (p == 1);
     stemsView.setVisible (p == 2);
     settingsView.setVisible (p == 3);
@@ -296,7 +306,18 @@ void MainComponent::timerCallback()
     editor.poll();
     countPlays();
 
-    // The preview column follows the PREP / preview deck
+    // Cue / locator / phrase edits show in the browser's preview straight away
+    for (int d = 0; d < AudioEngine::totalDecks; ++d)
+    {
+        const auto& dst = engine.deck (d).state();
+        const juce::int64 sig = ((juce::int64) dst.trackSerial.load() << 32) ^ ((juce::int64) dst.cueEdits.load() << 12) ^ (juce::int64) dst.trackDataVersion.load();
+        if (sig == marksSig[(size_t) d]) continue;
+        marksSig[(size_t) d] = sig;
+        if (auto t = engine.deck (d).getLoadedTrack())
+            browser.notePreviewMarks (t->info.file.getFullPathName(), TrackMarks::fromDeck (dst, t->phrases));
+    }
+
+    // The preview column follows the preview deck
     {
         const auto& pst = engine.deck (AudioEngine::previewDeck).state();
         auto pt = engine.deck (AudioEngine::previewDeck).getLoadedTrack();
@@ -493,20 +514,24 @@ void MainComponent::showImportMenu (juce::Component& anchor)
 {
     if (importing.load()) { flash ("An import is already running"); return; }
     juce::PopupMenu m;
-    m.addSectionHeader ("Copy into Centrifuge's library (rekordbox's files are only read)");
-    auto sources = browser.getRekordboxSources();
-    int id = 1;
-    for (auto& s : sources)
-    {
-        const bool ok = s->error.isEmpty() && ! s->tracks.empty();
-        m.addItem (id++, "Import " + s->name + "  (" + juce::String ((int) s->tracks.size()) + " tracks, with playlists)", ok);
-    }
+    std::vector<std::shared_ptr<const LibrarySource>> sources;
     auto cur = browser.getCurrentSource();
     const auto selected = browser.getSelectedSourceIndices();
-    const bool canSelected = cur != nullptr && cur->kind != LibrarySource::Kind::centrifuge && ! selected.empty();
-    m.addSeparator();
-    m.addItem (1000, "Import the selected tracks only  (" + juce::String ((int) selected.size()) + ")", canSelected);
-    m.addSectionHeader ("Add music that isn't in rekordbox (Centrifuge analyses it)");
+    if (Features::rekordboxCopy)
+    {
+        m.addSectionHeader ("Copy into Centrifuge's library (rekordbox's files are only read)");
+        sources = browser.getRekordboxSources();
+        int id = 1;
+        for (auto& s : sources)
+        {
+            const bool ok = s->error.isEmpty() && ! s->tracks.empty();
+            m.addItem (id++, "Import " + s->name + "  (" + juce::String ((int) s->tracks.size()) + " tracks, with playlists)", ok);
+        }
+        const bool canSelected = cur != nullptr && cur->kind != LibrarySource::Kind::centrifuge && ! selected.empty();
+        m.addSeparator();
+        m.addItem (1000, "Import the selected tracks only  (" + juce::String ((int) selected.size()) + ")", canSelected);
+    }
+    m.addSectionHeader (Features::rekordboxCopy ? "Add music that isn't in rekordbox (Centrifuge analyses it)" : "Add music (Centrifuge analyses it)");
     m.addItem (2000, "Add a folder...  (becomes a playlist, sub-folders too)");
     m.addItem (2001, "Add audio files...");
 
@@ -670,7 +695,7 @@ void MainComponent::trackAction (const std::vector<TrackInfo>& tracks, const juc
     {
         const int d = action.getTrailingIntValue();
         loadToDeck (d, tracks.front(), pc);
-        if (d == AudioEngine::previewDeck) showPage (4);
+        if (d == AudioEngine::prepDeck) showPage (4);
         return;
     }
     int n = 0;
@@ -678,13 +703,14 @@ void MainComponent::trackAction (const std::vector<TrackInfo>& tracks, const juc
     {
         if (t.libraryId == 0) continue;
         ++n;
-        if (action == "remove.cf")        centrifugeLibrary.removeFromView (t.libraryId, 1);
+        if (action == "remove.cf" && ! Features::rekordboxCopy) centrifugeLibrary.deleteTrack (t.libraryId);
+        else if (action == "remove.cf")   centrifugeLibrary.removeFromView (t.libraryId, 1);
         else if (action == "remove.rb")   centrifugeLibrary.removeFromView (t.libraryId, 0);
         else if (action == "plays.reset") centrifugeLibrary.resetPlays (t.libraryId);
     }
     if (n == 0) { flash ("Only tracks in Centrifuge's library can be removed or reset"); return; }
     const auto what = juce::String (n) + (n == 1 ? " track" : " tracks");
-    if (action == "remove.cf")        flash ("Removed " + what + " from the Centrifuge collection");
+    if (action == "remove.cf")        flash ("Removed " + what + " from Centrifuge's library (your music files are untouched)");
     else if (action == "remove.rb")   flash ("Removed " + what + " from the rekordbox copy (rekordbox itself is unchanged)");
     else if (action == "plays.reset") flash ("Play count reset for " + what);
 }
@@ -706,14 +732,19 @@ void MainComponent::countPlays()
         playCounted[(size_t) d] = true;
         auto t = engine.deck (d).getLoadedTrack();
         if (t == nullptr) continue;
-        juce::int64 id = t->info.libraryId;
-        if (id == 0)
-        {
-            const auto key = t->info.libraryKey.isNotEmpty() ? t->info.libraryKey : CentrifugeLibrary::keyForFile (t->info.file, st.lengthSec.load());
-            if (auto found = centrifugeLibrary.find (key)) id = found->id;
-        }
-        if (id != 0) centrifugeLibrary.addPlay (id);
+        auto info = t->info;
+        if (info.durationSec <= 0.0) info.durationSec = st.lengthSec.load();
+        if (const auto id = libraryIdFor (info, true); id != 0) centrifugeLibrary.addPlay (id);
     }
+}
+
+juce::int64 MainComponent::libraryIdFor (const TrackInfo& t, bool addIfMissing)
+{
+    // Tracks from a USB stick join Centrifuge's library the first time they're rated, played or edited.
+    if (t.libraryId != 0) return t.libraryId;
+    if (auto found = centrifugeLibrary.find (CueStore::keyFor (t, t.durationSec))) return found->id;
+    if (! addIfMissing || t.file == juce::File()) return 0;
+    return centrifugeLibrary.addTrack (t, CentrifugeLibrary::readRekordboxVersion (t));
 }
 
 bool MainComponent::keyPressed (const juce::KeyPress& k)

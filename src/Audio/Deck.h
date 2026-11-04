@@ -27,6 +27,7 @@ struct LoadedTrack : public juce::ReferenceCountedObject
     // memoryCues / hotCues above hold the locators and hot cues as loaded (Centrifuge's own edits if any,
     // otherwise rekordbox's). Skips are Centrifuge-only. The deck holds the live, editable copies.
     std::vector<std::pair<double, double>> skips;
+    std::vector<Phrase> phrases;         // shown under the waveform (rekordbox's analysis, or your own edit)
     juce::String cueKey;                 // identifies the track in Centrifuge's cue store
     double cueShift = 0.0;               // MP3 offset applied to all cue times (removed again when saving)
 
@@ -291,6 +292,8 @@ private:
     // Click suppression after jumps
     std::vector<float> fadeTailL, fadeTailR;
     int fadeTailLen = 0;
+    bool audibleLast = false;    // the last block made sound (for the 2 ms fades on stop / start)
+    double lastStep = 1.0;       // source frames per output frame in the last block
 
     Published pub;
 

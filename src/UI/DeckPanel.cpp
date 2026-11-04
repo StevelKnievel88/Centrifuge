@@ -1,4 +1,6 @@
 #include "DeckPanel.h"
+#include "TrackMarks.h"
+#include "../App/Features.h"
 #include "Theme.h"
 #include "../Audio/MusicalKey.h"
 #include "../Control/Actions.h"
@@ -190,6 +192,15 @@ void DeckPanel::paint (juce::Graphics& g)
         // (The phase meter for both decks is in the top bar.)
 
         // Edit targets: R = rekordbox copy, C = Centrifuge version (both lit = edit both); GRID opens the grid editor
+        if (! Features::rekordboxCopy)
+        {
+            const auto p = juce::String ("d") + juce::String (deck + 1) + ".";
+            r.removeFromLeft (10.0f);
+            auto gc = r.removeFromLeft (44.0f).reduced (1.0f, 3.0f);
+            chip (g, gc, "GRID", gridMode, Theme::warn);
+            regions.push_back ({ gc, p + "grid.mode", 0 });
+        }
+        else
         {
             const auto p = juce::String ("d") + juce::String (deck + 1) + ".";
             r.removeFromLeft (10.0f);
@@ -218,11 +229,16 @@ void DeckPanel::paint (juce::Graphics& g)
         auto tempo = right.removeFromRight (100.0f);
         g.setColour (Theme::text);
         g.setFont (Theme::font (14.0f, true));
-        g.drawText ((pct >= 0 ? "+" : "") + juce::String (pct, 2) + "%", tempo.removeFromTop (16.0f), juce::Justification::centredRight);
+        auto pctArea = tempo.removeFromTop (16.0f);
+        g.drawText ((pct >= 0 ? "+" : "") + juce::String (pct, 2) + "%", pctArea, juce::Justification::centredRight);
+        regions.push_back ({ pctArea, "tempo.drag", 6 });   // drag up / down to change the tempo, double-click resets
         g.setColour (Theme::textDim);
         g.setFont (Theme::font (10.5f));
         const int range = router.getPitchRangePercent (deck);
-        g.drawText (range >= 100 ? juce::String ("WIDE") : "\xc2\xb1" + juce::String (range) + "%", tempo, juce::Justification::centredRight);
+        const auto rangeText = range >= 100 ? juce::String ("WIDE") : "\xc2\xb1" + juce::String (range) + "%";
+        g.drawText (rangeText, tempo, juce::Justification::centredRight);
+        const float rw = psyched::Fonts::label().getStringWidthFloat (rangeText) + 12.0f;
+        regions.push_back ({ tempo.withLeft (tempo.getRight() - rw), "d" + juce::String (deck + 1) + ".pitchrange", 0 });   // click: 6 / 10 / 25 / 50 % / wide
 
         right.removeFromRight (8.0f);
         const auto p = juce::String ("d") + juce::String (deck + 1) + ".";
@@ -280,37 +296,15 @@ void DeckPanel::paint (juce::Graphics& g)
                                                                             juce::jmax (xOf (st.loopInSec.load()) + 2.0f, xOf (st.loopOutSec.load())), r.getBottom()));
                 }
 
-                // Skipped sections
+                // Skipped sections shaded; then every mark (shared with PREP and the browser preview)
                 for (int i = 0; i < juce::jmin (st.numSkips.load(), Deck::maxSkips); ++i)
                 {
                     const float x0 = xOf (st.skipFrom[(size_t) i].load()), x1 = xOf (st.skipTo[(size_t) i].load());
                     if (x1 <= x0) continue;
                     g.setColour (juce::Colours::black.withAlpha (st.skipsOn.load() ? 0.62f : 0.35f));
                     g.fillRect (juce::Rectangle<float>::leftTopRightBottom (x0, r.getY(), x1, r.getBottom()));
-                    g.setColour (juce::Colour (0xff38d9ff).withAlpha (st.skipsOn.load() ? 0.9f : 0.4f));
-                    g.fillRect (x0 - 0.5f, r.getY(), 1.0f, r.getHeight());
-                    juce::Path p;
-                    p.addTriangle (x0, r.getY(), x0, r.getY() + 6.0f, x0 + 5.0f, r.getY() + 3.0f);
-                    p.addTriangle (x0 + 4.0f, r.getY(), x0 + 4.0f, r.getY() + 6.0f, x0 + 9.0f, r.getY() + 3.0f);
-                    g.fillPath (p);
                 }
-
-                // Locators
-                for (int i = 0; i < juce::jmin (st.numLocators.load(), Deck::maxLocators); ++i)
-                {
-                    g.setColour (juce::Colour (st.locColour[(size_t) i].load()));
-                    const float x = xOf (st.locStart[(size_t) i].load());
-                    juce::Path tri;
-                    tri.addTriangle (x - 3.5f, r.getY(), x + 3.5f, r.getY(), x, r.getY() + 5.0f);
-                    g.fillPath (tri);
-                }
-                for (size_t i = 0; i < 8; ++i)
-                {
-                    const double hs = st.hotStart[i].load();
-                    if (hs < 0.0) continue;
-                    g.setColour (juce::Colour (st.hotColour[i].load()));
-                    g.fillRect (xOf (hs) - 0.5f, r.getBottom() - 6.0f, 2.0f, 6.0f);
-                }
+                paintOverviewMarks (g, r, TrackMarks::fromDeck (st, track->phrases));
 
                 g.setColour (Theme::accent);
                 g.fillRect (xOf (st.cuePointSec.load()) - 0.5f, r.getY(), 1.0f, r.getHeight());
@@ -578,6 +572,19 @@ void DeckPanel::mouseDown (const juce::MouseEvent& e)
         showDeckColourMenu (r->r);
         return;
     }
+    if (r->kind == 6)
+    {
+        if (e.getNumberOfClicks() >= 2)
+        {
+            engine.deck (deck).post (Deck::Cmd::tempoReset);
+            tempoDrag = false;
+            return;
+        }
+        const auto& st = engine.deck (deck).state();
+        tempoDrag = true;
+        tempoDragStart = st.tempoRatio.load();
+        return;
+    }
     if (r->action.endsWith ("grid.mode"))
     {
         toggleGridMode();
@@ -598,6 +605,16 @@ void DeckPanel::mouseDown (const juce::MouseEvent& e)
 
 void DeckPanel::mouseDrag (const juce::MouseEvent& e)
 {
+    if (tempoDrag)
+    {
+        // Up = faster, down = slower: 0.01 % per pixel (shift for 0.002 %), within the pitch range
+        const auto& st = engine.deck (deck).state();
+        const double perPx = e.mods.isShiftDown() ? 0.00002 : 0.0001;
+        const double ratio = tempoDragStart - e.getDistanceFromDragStartY() * perPx;
+        const double range = juce::jmax (0.01, st.pitchRange.load());
+        engine.deck (deck).post (Deck::Cmd::setPitchFader, juce::jlimit (-1.0, 1.0, (ratio - 1.0) / range));
+        return;
+    }
     if (dragStem >= 0 && e.getDistanceFromDragStart() > 3)
     {
         for (auto& r : regions)
@@ -619,6 +636,7 @@ void DeckPanel::mouseDrag (const juce::MouseEvent& e)
 
 void DeckPanel::mouseUp (const juce::MouseEvent& e)
 {
+    tempoDrag = false;
     if (dragStem >= 0)
     {
         if (e.getDistanceFromDragStart() <= 3)

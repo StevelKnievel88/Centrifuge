@@ -24,6 +24,7 @@ struct AppSettings
     double mp3OffsetMs = 0.0;
     std::array<juce::uint32, 2> deckColours { 0xff2ee6d6, 0xffff3fa0 };
     bool camelotKeys = false;          // show keys in Camelot notation
+    bool stemsSeparate = false;        // stems each in their own row in the waveform (not overlaid)
     int analysisRange = 1;             // tempo range for analysing music added from files: 0 = 70-140, 1 = 88-175, 2 = 100-200, 3 = 120-240
     std::pair<double, double> analysisBpmRange() const
     {
