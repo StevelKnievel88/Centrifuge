@@ -96,6 +96,18 @@ def sanity(mix_path, est_dir):
         sys.exit("stems don't add up to the mix")
 
 
+def similar(ref_dir, est_dir, name, min_corr):
+    """The same stem from two different separators should broadly agree (e.g. RoFormer vs htdemucs_ft vocals)."""
+    r, _ = sf.read(f"{ref_dir}/{name}.wav", dtype="float64", always_2d=True)
+    e, _ = sf.read(f"{est_dir}/{name}.wav", dtype="float64", always_2d=True)
+    n = min(len(r), len(e))
+    r, e = r[:n].ravel(), e[:n].ravel()
+    corr = float(np.corrcoef(r, e)[0, 1])
+    print(f"{name}: rms ref {np.sqrt(np.mean(r ** 2)):.4f}, ours {np.sqrt(np.mean(e ** 2)):.4f}, correlation {corr:.3f}")
+    if not corr > float(min_corr):
+        sys.exit(f"{name} doesn't look like the reference separation")
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1]
     if cmd == "make-test":
@@ -104,5 +116,7 @@ if __name__ == "__main__":
         separate(sys.argv[2], sys.argv[3], *(sys.argv[4:5]))
     elif cmd == "compare":
         compare(sys.argv[2], sys.argv[3])
+    elif cmd == "similar":
+        similar(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
     elif cmd == "sanity":
         sanity(sys.argv[2], sys.argv[3])

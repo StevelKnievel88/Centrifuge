@@ -153,6 +153,18 @@ jobs:
           done
           tools/run_logged.sh python tools/stem_reference.py compare ref_ft orbit_high
 
+      # Best on real singing: RoFormer vocals should broadly agree with htdemucs_ft's (and say how much memory it takes)
+      - name: Best quality on a real vocal
+        run: |
+          export PYTHONPATH=$PWD/tools/stubs LD_LIBRARY_PATH=$PWD/ort/lib
+          tools/run_logged.sh pip install librosa
+          python -c "import librosa, soundfile as sf; y, _ = librosa.load(librosa.example('fishin'), sr=44100, mono=False, offset=10, duration=20); sf.write('vocal.wav', y.T, 44100, subtype='FLOAT')"
+          tools/run_logged.sh python tools/stem_reference.py separate vocal.wav ref_vocal htdemucs_ft
+          /usr/bin/time -v xvfb-run -a ./build/Centrifuge_artefacts/Release/Centrifuge --separate vocal.wav --out best_vocal --model model/htdemucs.onnx --cpu --quality best 2> best-time.txt
+          grep -E "Maximum resident|Elapsed" best-time.txt
+          tools/run_logged.sh python tools/stem_reference.py sanity vocal.wav best_vocal
+          tools/run_logged.sh python tools/stem_reference.py similar ref_vocal best_vocal vocals 0.8
+
       # The USB export must read back in Centrifuge and in two independent rekordbox readers
       - name: Check USB and rekordbox XML export
         run: |
