@@ -82,6 +82,19 @@ static std::vector<ActionDef> buildActions()
             add (p + "stemctl." + juce::String (letter) + ".mute",   "Stem control " + juce::String (letter) + " mute (matrix)",   D + " - Stem controls", B, d, true);
         }
 
+        add (p + "edit.r",    "Edit the rekordbox copy (R) on / off",   D + " - Library editing", B, d);
+        add (p + "edit.c",    "Edit the Centrifuge version (C) on / off", D + " - Library editing", B, d);
+        add (p + "grid.mode", "Beat grid editor on / off",              D + " - Library editing", B, d);
+        const std::pair<const char*, const char*> gridActions[] = {
+            { "shift.back10", "Grid: move 10 ms earlier" }, { "shift.back1", "Grid: move 1 ms earlier" },
+            { "shift.fwd1", "Grid: move 1 ms later" }, { "shift.fwd10", "Grid: move 10 ms later" },
+            { "anchor", "Grid: put the nearest beat on the playhead" }, { "downbeat", "Grid: nearest beat is beat 1" },
+            { "bpm.up", "Grid: BPM +0.1" }, { "bpm.down", "Grid: BPM -0.1" }, { "bpm.upfine", "Grid: BPM +0.01" },
+            { "bpm.downfine", "Grid: BPM -0.01" }, { "halve", "Grid: halve BPM" }, { "double", "Grid: double BPM" },
+            { "tap", "Grid: tap tempo" }, { "undo", "Grid: undo" }, { "reset", "Grid: reset to rekordbox's grid" } };
+        for (auto& [id, label] : gridActions)
+            add (p + "grid." + id, label, D + " - Library editing", B, d);
+
         add (p + "key.up",    "Key +1 semitone",  D + " - Key", B, d);
         add (p + "key.down",  "Key -1 semitone",  D + " - Key", B, d);
         add (p + "key.reset", "Key reset",        D + " - Key", B, d);

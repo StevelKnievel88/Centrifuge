@@ -162,6 +162,16 @@ void ActionRouter::perform (const ActionDef& a, const ActionValue& v)
             juce::MessageManager::callAsync ([fn, d, v] { fn ("deck.load", d, v); });
         }
     }
+    else if (name.startsWith ("edit.") || name.startsWith ("grid."))
+    {
+        // Library editing is handled by the app (message thread)
+        if (v.down && onAppAction)
+        {
+            auto fn = onAppAction;
+            auto id = name;
+            juce::MessageManager::callAsync ([fn, d, id, v] { fn (id, d, v); });
+        }
+    }
     else if (name == "jog.touch")   button (C::jogTouch);
     else if (name == "jog.turn" || name == "jog.side") deck.post (C::jogTurn, v.delta);
     else if (name == "jog.vinyl")

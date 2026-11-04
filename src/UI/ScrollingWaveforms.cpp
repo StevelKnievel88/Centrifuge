@@ -110,6 +110,13 @@ void ScrollingWaveforms::onVBlank (double t)
             dv.uiSkipFrom = -1.0;
             needsRedraw = true;
         }
+        // Same track, new grid / cues (edited, or switched between the rekordbox and Centrifuge versions)
+        if (const int ver = st.trackDataVersion.load(); ver != dv.dataVersion)
+        {
+            dv.dataVersion = ver;
+            if (serial != 0) dv.track = deck.getLoadedTrack();
+            needsRedraw = true;
+        }
 
         // Stems arrived (or changed): start building their waveform in the background.
         auto stems = deck.getStemsForUi();
@@ -546,6 +553,13 @@ void ScrollingWaveforms::paintOverlays (juce::Graphics& g, int d, juce::Rectangl
             g.setColour (c);
             g.fillPath (p);
             markers.push_back ({ juce::Rectangle<float> (x - 7.0f, flagTop - 1.0f, 14.0f, (float) markerBand), d, markerLocator, i });
+            if (cueName)
+                if (auto name = cueName (d, false, i); name.isNotEmpty())
+                {
+                    g.setFont (Theme::font (10.0f, true));
+                    g.setColour (c.brighter (0.4f));
+                    g.drawText (name, juce::Rectangle<float> (x + 7.0f, flagTop - 1.0f, 120.0f, (float) markerBand - 2.0f), juce::Justification::centredLeft, true);
+                }
         }
         const double e = st.locEnd[(size_t) i].load();
         if (e > s && visible (e))
@@ -573,6 +587,12 @@ void ScrollingWaveforms::paintOverlays (juce::Graphics& g, int d, juce::Rectangl
             g.setColour (juce::Colours::black);
             g.drawText (juce::String::charToString ((juce::juce_wchar) ('A' + i)), flag, juce::Justification::centred);
             markers.push_back ({ flag.expanded (1.0f), d, markerHot, i });
+            if (cueName)
+                if (auto name = cueName (d, true, i); name.isNotEmpty())
+                {
+                    g.setColour (col.brighter (0.3f));
+                    g.drawText (name, juce::Rectangle<float> (x + 16.0f, flagTop, 120.0f, (float) markerBand - 2.0f), juce::Justification::centredLeft, true);
+                }
         }
     }
 
@@ -639,6 +659,7 @@ void ScrollingWaveforms::showMarkerMenu (const Marker& m)
     {
         addCueColourItems (menu, 100, current);
         menu.addSeparator();
+        menu.addItem (4, "Rename...");
     }
     menu.addItem (1, m.kind == markerSkip ? "Delete skip" : "Delete   (shift + click)");
 
@@ -656,6 +677,9 @@ void ScrollingWaveforms::showMarkerMenu (const Marker& m)
         if (result == 1) deleteMarker (marker);
         else if (result == 2) deck.post (Deck::Cmd::skipsToggle);
         else if (result == 3) { foldSkips = ! foldSkips; needsRedraw = true; if (onFoldChanged) onFoldChanged (foldSkips); }
+        else if (result == 4 && onRenameCue)
+            onRenameCue (marker.deck, marker.kind == markerHot, marker.index,
+                         cueName ? cueName (marker.deck, marker.kind == markerHot, marker.index) : juce::String());
         else if (result >= 100 && result < 116) setColour (juce::Colour (rekordboxCueColours()[(size_t) (result - 100)].argb));
         else if (result == 116) ColourPickerBubble::show (screen, current, setColour);
     });

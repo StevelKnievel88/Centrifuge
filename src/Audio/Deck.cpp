@@ -289,6 +289,27 @@ void Deck::apply (const Command& c)
             loadTrack (static_cast<LoadedTrack*> (c.ptr));
             break;
 
+        case Cmd::swapTrackData:
+        {
+            auto* t = static_cast<LoadedTrack*> (c.ptr);
+            if (t == nullptr || track == nullptr || t->audio != track->audio) break;
+            track = t;
+            hot = t->hotCues;
+            hotSet = t->hotCueSet;
+            numLocs = 0;
+            for (auto& m : t->memoryCues)
+                if (numLocs < maxLocators)
+                    locs[(size_t) numLocs++] = { m.startSec, m.isLoop() ? m.endSec : -1.0, (m.colour.isTransparent() ? juce::Colour (0xffe62828) : m.colour).getARGB() };
+            std::sort (locs.begin(), locs.begin() + numLocs, [] (const Loc& a, const Loc& b) { return a.start < b.start; });
+            numSkipsLocal = 0;
+            for (auto& k : t->skips)
+                if (numSkipsLocal < maxSkips && k.second > k.first)
+                    skips[(size_t) numSkipsLocal++] = { k.first, k.second };
+            sortSkips();
+            ++dataVersion;
+            break;
+        }
+
         case Cmd::attachStems:
             if (track != nullptr && track->serial == c.serial)
                 stems = static_cast<StemAudio*> (c.ptr);
@@ -1079,6 +1100,7 @@ void Deck::publish()
     pub.skipsOn = skipsOn;
     pub.skipPendingFrom = skipPending;
     pub.cueEdits = editCount;
+    pub.trackDataVersion = dataVersion;
 }
 
 } // namespace orbit

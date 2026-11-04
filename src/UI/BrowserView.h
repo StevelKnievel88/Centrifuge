@@ -22,6 +22,16 @@ public:
     std::function<void (int, const TrackInfo&, bool)> onLoadToDeck;
     std::function<int()> chooseDeckForDoubleClick;
 
+    /** Centrifuge's library as a source: view 0 = rekordbox copy, 1 = Centrifuge version. */
+    std::function<std::shared_ptr<const LibrarySource> (int view)> centrifugeSource;
+    std::function<void (juce::Component& anchor)> onImport, onExport;
+    int getLibraryView() const { return libView; }
+    /** The rekordbox sources (PC collection, USB sticks) currently known. */
+    std::vector<std::shared_ptr<const LibrarySource>> getRekordboxSources() const;
+    bool isShowingCentrifugeLibrary() const { return currentSource != nullptr && currentSource->kind == LibrarySource::Kind::centrifuge; }
+    std::shared_ptr<const LibrarySource> getCurrentSource() const { return currentSource; }
+    std::vector<int> getSelectedSourceIndices() const;
+
     // Hardware browsing
     void scroll (int delta);
     void enter();
@@ -65,6 +75,9 @@ private:
     juce::TableListBox table { "tracks", this };
     juce::TextEditor search;
     juce::TextButton load1 { "LOAD 1" }, load2 { "LOAD 2" };
+    juce::TextButton importButton { "IMPORT" }, exportButton { "EXPORT" }, viewR { "REKORDBOX" }, viewC { "CENTRIFUGE" };
+    int libView = 1;
+    void setLibraryView (int v);
     juce::Label countLabel;
     bool treeFocused = false;
     int sortColumn = 0;

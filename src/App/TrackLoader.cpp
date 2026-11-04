@@ -18,7 +18,69 @@ TrackLoader::~TrackLoader()
     pool.removeAllJobs (true, 10000);
 }
 
-LoadedTrack::Ptr TrackLoader::build (const TrackInfo& info, TrackAudio::Ptr audio, bool fromPc, const Options& o)
+void TrackLoader::applyVersion (LoadedTrack& t, const TrackVersion& v)
+{
+    const double shift = t.cueShift;
+    auto beats = v.beats;
+    for (auto& b : beats) b.timeSec += shift;
+    const double length = t.audio != nullptr ? t.audio->lengthSeconds() : t.info.durationSec;
+    t.grid = BeatGrid (std::move (beats), t.info.bpm, length);
+
+    auto shifted = [shift] (CuePoint c)
+    {
+        c.startSec += shift;
+        if (c.endSec > 0) c.endSec += shift;
+        return c;
+    };
+    for (size_t i = 0; i < 8; ++i)
+    {
+        t.hotCueSet[i] = v.hot[i].has_value();
+        t.hotCues[i] = v.hot[i] ? shifted (*v.hot[i]) : CuePoint();
+    }
+    t.memoryCues.clear();
+    for (auto& m : v.memory) t.memoryCues.push_back (shifted (m));
+    std::sort (t.memoryCues.begin(), t.memoryCues.end(), [] (auto& a, auto& b) { return a.startSec < b.startSec; });
+    t.skips.clear();
+    for (auto& k : v.skips) t.skips.push_back ({ k.first + shift, k.second + shift });
+}
+
+LoadedTrack::Ptr TrackLoader::withVersion (const LoadedTrack& b, const TrackVersion& v)
+{
+    LoadedTrack::Ptr t = new LoadedTrack();
+    t->info = b.info;
+    t->audio = b.audio;
+    t->waveform = b.waveform;
+    t->detail = b.detail;
+    t->anlzWave = b.anlzWave;
+    t->styled = b.styled;
+    t->serial = b.serial;
+    t->cueKey = b.cueKey;
+    t->cueShift = b.cueShift;
+    applyVersion (*t, v);
+    return t;
+}
+
+TrackVersion TrackLoader::versionOf (const LoadedTrack& t)
+{
+    TrackVersion v;
+    const double shift = t.cueShift;
+    v.beats = t.grid.getBeats();
+    for (auto& b : v.beats) b.timeSec -= shift;
+    auto unshifted = [shift] (CuePoint c)
+    {
+        c.startSec -= shift;
+        if (c.endSec > 0) c.endSec -= shift;
+        return c;
+    };
+    for (size_t i = 0; i < 8; ++i)
+        if (t.hotCueSet[i]) v.hot[i] = unshifted (t.hotCues[i]);
+    for (auto& m : t.memoryCues) v.memory.push_back (unshifted (m));
+    for (auto& k : t.skips) v.skips.push_back ({ k.first - shift, k.second - shift });
+    return v;
+}
+
+LoadedTrack::Ptr TrackLoader::build (const TrackInfo& info, TrackAudio::Ptr audio, bool fromPc, const Options& o,
+                                     const std::optional<TrackVersion>& version)
 {
     LoadedTrack::Ptr t = new LoadedTrack();
     t->info = info;
@@ -54,7 +116,7 @@ LoadedTrack::Ptr TrackLoader::build (const TrackInfo& info, TrackAudio::Ptr audi
     // Centrifuge's own edits replace rekordbox's cues (rekordbox's data is never changed).
     t->cueShift = shift;
     t->cueKey = CueStore::keyFor (info, length);
-    if (o.cueStore != nullptr)
+    if (o.cueStore != nullptr && ! version.has_value())
         if (auto e = o.cueStore->get (t->cueKey))
         {
             if (e->hotCues)
@@ -92,10 +154,13 @@ LoadedTrack::Ptr TrackLoader::build (const TrackInfo& info, TrackAudio::Ptr audi
     if (audio != nullptr)
         t->detail = WaveformDetail::fromAudio (*audio);
 
+    if (version.has_value())
+        applyVersion (*t, *version);
+
     return t;
 }
 
-void TrackLoader::load (int deck, const TrackInfo& info, bool fromPc)
+void TrackLoader::load (int deck, const TrackInfo& info, bool fromPc, std::optional<TrackVersion> version)
 {
     if (deck < 0 || deck >= AudioEngine::maxDecks) return;
 
@@ -110,7 +175,7 @@ void TrackLoader::load (int deck, const TrackInfo& info, bool fromPc)
         opts = options;
     }
 
-    pool.addJob ([this, deck, info, fromPc, serial, opts]
+    pool.addJob ([this, deck, info, fromPc, serial, opts, version]
     {
         cancel[(size_t) deck] = false;
         juce::String error;
@@ -129,7 +194,7 @@ void TrackLoader::load (int deck, const TrackInfo& info, bool fromPc)
             return;
         }
 
-        auto track = build (info, audio, fromPc, opts);
+        auto track = build (info, audio, fromPc, opts, version);
         track->serial = serial;
 
         juce::MessageManager::callAsync ([this, deck, track, serial]

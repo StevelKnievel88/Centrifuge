@@ -12,7 +12,16 @@ MainComponent::MainComponent()
                  [this] { return browser.getCurrentListName(); },
                  [this] { return router.getStemMatrix(); },
                  [this] (std::array<int, 4> m) { settings.stemMatrix = m; router.setStemMatrix (m); settings.save(); }),
-      settingsView (settings, engine, [this] { applySettings(); }, [this] { library.reloadPcLibrary(); })
+      settingsView (settings, engine, [this] { applySettings(); }, [this] { library.reloadPcLibrary(); }),
+      exportView (centrifugeLibrary, fileLoader,
+                  { [this] { return browser.getVisibleTracks(); }, [this] { return browser.getSelectedTracks(); },
+                    [this] { return browser.getCurrentListName(); },
+                    [this]
+                    {
+                        for (auto& s : library.getSources())
+                            if (s->kind == LibrarySource::Kind::usbExport) return s->root;
+                        return juce::File();
+                    } })
 {
     juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
     setOpaque (true);
@@ -28,7 +37,29 @@ MainComponent::MainComponent()
 
     router.onAppAction = [this] (const juce::String& id, int deck, const ActionValue& v) { handleAppAction (id, deck, v); };
 
-    loader.onLoaded = [this] (int deck, LoadedTrack::Ptr) { (deck == 0 ? deck1 : deck2).setLoadingText ({}); waves.forceRedraw(); };
+    loader.onLoaded = [this] (int deck, LoadedTrack::Ptr t)
+    {
+        (deck == 0 ? deck1 : deck2).setLoadingText ({});
+        editor.trackLoaded (deck, t);
+        waves.forceRedraw();
+    };
+
+    // Library editing
+    for (int d = 0; d < 2; ++d)
+        editor.setEditTargets (d, settings.editR[(size_t) d], settings.editC[(size_t) d]);
+    editor.onTargetsChanged = [this] (int d, bool r, bool c) { settings.editR[(size_t) d] = r; settings.editC[(size_t) d] = c; settings.save(); };
+    editor.onMessage = [this] (const juce::String& m) { flash (m); };
+    for (auto* dp : { &deck1, &deck2 })
+    {
+        dp->setEditor (&editor);
+        dp->onRenameCue = [this] (int d, bool hot, int i, juce::String cur) { askRename (d, hot, i, cur); };
+        dp->onSetBpm = [this] (int d) { askBpm (d); };
+    }
+    waves.cueName = [this] (int d, bool hot, int i) { return editor.cueName (d, hot, i); };
+    waves.onRenameCue = [this] (int d, bool hot, int i, juce::String cur) { askRename (d, hot, i, cur); };
+    browser.centrifugeSource = [this] (int view) { return centrifugeSource (view); };
+    browser.onImport = [this] (juce::Component& c) { showImportMenu (c); };
+    browser.onExport = [this] (juce::Component& c) { showExportMenu (c); };
     loader.onError = [this] (int deck, const juce::String& err) { (deck == 0 ? deck1 : deck2).setLoadingText (err); };
 
     browser.onLoadToDeck = [this] (int deck, const TrackInfo& t, bool pc) { loadToDeck (deck, t, pc); };
@@ -60,6 +91,8 @@ MainComponent::MainComponent()
     }
 
     addChildComponent (about);
+    addChildComponent (exportView);
+    addChildComponent (conflictsView);
 
     applySettings();
     showPage (0);
@@ -83,7 +116,7 @@ MainComponent::~MainComponent()
 {
     settings.audioDeviceState = engine.saveDeviceState();
     settings.save();
-    saveCueEdits();
+    editor.poll();
     midi.saveToFile (AppSettings::mappingFile());
     juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
 }
@@ -145,11 +178,21 @@ void MainComponent::loadToDeck (int deck, const TrackInfo& info, bool fromPc)
         return;
     }
     (deck == 0 ? deck1 : deck2).setLoadingText ("Loading " + info.displayArtistTitle() + " ...");
-    loader.load (deck, info, fromPc);
+    loader.load (deck, info, fromPc, editor.versionToLoad (deck, info));
 }
 
 void MainComponent::handleAppAction (const juce::String& id, int deck, const ActionValue& v)
 {
+    if (deck >= 0 && deck < 2)
+    {
+        if (id == "edit.r")        editor.setEditTargets (deck, ! editor.editsRekordbox (deck), editor.editsCentrifuge (deck));
+        else if (id == "edit.c")   editor.setEditTargets (deck, editor.editsRekordbox (deck), ! editor.editsCentrifuge (deck));
+        else if (id == "grid.mode") (deck == 0 ? deck1 : deck2).toggleGridMode();
+        else if (id.startsWith ("grid.")) editor.gridAction (deck, id.fromFirstOccurrenceOf ("grid.", false, false));
+        (deck == 0 ? deck1 : deck2).repaint();
+        if (id.startsWith ("edit.") || id.startsWith ("grid.")) return;
+    }
+
     if (id == "deck.load")           browser.loadSelected (deck);
     else if (id == "browse.scroll")  browser.scroll ((int) std::round (v.delta));
     else if (id == "browse.enter")   { if (v.down) browser.enter(); }
@@ -183,66 +226,19 @@ void MainComponent::showPage (int p)
     resized();
 }
 
-void MainComponent::saveCueEdits()
-{
-    // Hot cue / locator / skip edits made on a deck are saved to Centrifuge's own cue file.
-    for (int d = 0; d < 2; ++d)
-    {
-        const auto& st = engine.deck (d).state();
-        const int serial = st.trackSerial.load(), edits = st.cueEdits.load();
-        auto& ct = cueTracking[(size_t) d];
-        if (serial != ct.serial) { ct.serial = serial; ct.edits = edits; continue; }
-        if (serial == 0 || edits == ct.edits) continue;
-        ct.edits = edits;
-
-        auto t = engine.deck (d).getLoadedTrack();
-        if (t == nullptr || t->serial != serial || t->cueKey.isEmpty()) continue;
-        const double shift = t->cueShift;
-
-        CueStore::Entry e;
-        std::array<std::optional<CuePoint>, 8> hot;
-        for (int i = 0; i < 8; ++i)
-        {
-            const double hs = st.hotStart[(size_t) i].load();
-            if (hs < 0.0) continue;
-            CuePoint c;
-            c.type = CuePoint::Type::hot;
-            c.hotIndex = i;
-            c.startSec = hs - shift;
-            const double he = st.hotEnd[(size_t) i].load();
-            c.endSec = he > hs ? he - shift : -1.0;
-            c.colour = juce::Colour (st.hotColour[(size_t) i].load());
-            if (t->hotCueSet[(size_t) i] && std::abs (t->hotCues[(size_t) i].startSec - hs) < 1.0e-6)
-                c.comment = t->hotCues[(size_t) i].comment;
-            hot[(size_t) i] = c;
-        }
-        e.hotCues = hot;
-
-        std::vector<CuePoint> locs;
-        for (int i = 0; i < juce::jmin (st.numLocators.load(), Deck::maxLocators); ++i)
-        {
-            CuePoint c;
-            c.type = CuePoint::Type::memory;
-            c.startSec = st.locStart[(size_t) i].load() - shift;
-            const double le = st.locEnd[(size_t) i].load();
-            c.endSec = le > 0.0 ? le - shift : -1.0;
-            c.colour = juce::Colour (st.locColour[(size_t) i].load());
-            locs.push_back (c);
-        }
-        e.locators = locs;
-
-        for (int i = 0; i < juce::jmin (st.numSkips.load(), Deck::maxSkips); ++i)
-            e.skips.push_back ({ st.skipFrom[(size_t) i].load() - shift, st.skipTo[(size_t) i].load() - shift });
-
-        cueStore.put (t->cueKey, e);
-    }
-    cueStore.flush();
-}
-
 void MainComponent::timerCallback()
 {
     engine.getReleasePool().collect();
-    saveCueEdits();
+    editor.poll();
+
+    // Library changed (import, edits): refresh the browser, at most every couple of seconds
+    if (const int lc = centrifugeLibrary.getChangeCount(); lc != seenLibraryChanges
+        && juce::Time::getMillisecondCounter() - lastLibraryRefresh > 2000)
+    {
+        seenLibraryChanges = lc;
+        lastLibraryRefresh = juce::Time::getMillisecondCounter();
+        browser.refreshSources();
+    }
 
     const auto newMidi = midi.getXdjStatus();
     const bool newXdj = midi.isXdjConnected();
@@ -252,6 +248,8 @@ void MainComponent::timerCallback()
     juce::String newStem = st.activity.isNotEmpty() ? st.activity + "  " + juce::String (juce::roundToInt (st.progress * 100.0)) + "%"
                                                     : (st.backend.isNotEmpty() ? "Stems: " + st.backend : juce::String ("Stems: ready"));
 
+    if (importing.load() || juce::Time::getMillisecondCounter() < flashUntil + 500)
+        repaint (topBar);
     if (newMidi != midiStatus || newXdj != xdjConnected || newAudio != audioStatus || std::abs (newCpu - cpu) > 0.005 || newStem != stemStatus)
     {
         midiStatus = newMidi;
@@ -302,14 +300,25 @@ void MainComponent::paint (juce::Graphics& g)
     pill ("Audio CPU " + juce::String (juce::roundToInt (cpu * 100.0)) + "%", cpu < 0.5 ? Theme::good : (cpu < 0.8 ? Theme::warn : Theme::bad), 128.0f);
     pill (audioStatus, audioStatus.startsWith ("No") ? Theme::bad : Theme::good, juce::jmin (330.0f, Theme::font (12.5f).getStringWidthFloat (audioStatus) + 40.0f));
     pill (xdjConnected ? juce::String ("XDJ-XZ connected") : juce::String ("XDJ-XZ not found"), xdjConnected ? Theme::good : Theme::bad, 150.0f);
-    if (page == 0)
-        pill (stemStatus, Theme::accent, juce::jmin (300.0f, Theme::font (12.5f).getStringWidthFloat (stemStatus) + 40.0f));
+    juce::String extra = stemStatus;
+    juce::Colour extraColour = Theme::accent;
+    if (importing.load())
+        extra = "Importing " + importName + "  " + juce::String (juce::roundToInt (importProgress.load() * 100.0f)) + "%";
+    else if (juce::Time::getMillisecondCounter() < flashUntil)
+    {
+        extra = flashText;
+        extraColour = Theme::warn;
+    }
+    if (page == 0 || extra != stemStatus)
+        pill (extra, extraColour, juce::jmin (page == 0 ? 520.0f : 700.0f, Theme::font (12.5f).getStringWidthFloat (extra) + 40.0f));
 }
 
 void MainComponent::resized()
 {
     if (splash != nullptr) splash->setBounds (getLocalBounds());
     about.setBounds (getLocalBounds());
+    exportView.setBounds (getLocalBounds());
+    conflictsView.setBounds (getLocalBounds());
     auto r = getLocalBounds();
     topBar = r.removeFromTop (44);
 
@@ -378,6 +387,117 @@ void MainComponent::mouseUp (const juce::MouseEvent&)
 {
     if (dragging != 0) settings.save();
     dragging = 0;
+}
+
+//==============================================================================
+std::shared_ptr<const LibrarySource> MainComponent::centrifugeSource (int view)
+{
+    view = juce::jlimit (0, 1, view);
+    const int lc = centrifugeLibrary.getChangeCount();
+    if (sourceCache[(size_t) view] == nullptr || sourceCacheVersion[(size_t) view] != lc)
+    {
+        sourceCache[(size_t) view] = centrifugeLibrary.makeSource (view);
+        sourceCacheVersion[(size_t) view] = lc;
+    }
+    return sourceCache[(size_t) view];
+}
+
+void MainComponent::flash (const juce::String& text)
+{
+    flashText = text;
+    flashUntil = juce::Time::getMillisecondCounter() + 5000;
+    repaint (topBar);
+}
+
+void MainComponent::showImportMenu (juce::Component& anchor)
+{
+    if (importing.load()) { flash ("An import is already running"); return; }
+    juce::PopupMenu m;
+    m.addSectionHeader ("Copy into Centrifuge's library (rekordbox's files are only read)");
+    auto sources = browser.getRekordboxSources();
+    int id = 1;
+    for (auto& s : sources)
+    {
+        const bool ok = s->error.isEmpty() && ! s->tracks.empty();
+        m.addItem (id++, "Import " + s->name + "  (" + juce::String ((int) s->tracks.size()) + " tracks, with playlists)", ok);
+    }
+    auto cur = browser.getCurrentSource();
+    const auto selected = browser.getSelectedSourceIndices();
+    const bool canSelected = cur != nullptr && cur->kind != LibrarySource::Kind::centrifuge && ! selected.empty();
+    m.addSeparator();
+    m.addItem (1000, "Import the selected tracks only  (" + juce::String ((int) selected.size()) + ")", canSelected);
+
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&anchor),
+                     [this, sources, cur, selected] (int r)
+    {
+        if (r >= 1 && r <= (int) sources.size()) runImport (sources[(size_t) r - 1], {});
+        else if (r == 1000 && cur != nullptr) runImport (cur, selected);
+    });
+}
+
+void MainComponent::runImport (std::shared_ptr<const LibrarySource> source, std::vector<int> only)
+{
+    importing = true;
+    importProgress = 0.0f;
+    importName = source->name;
+    juce::Component::SafePointer<MainComponent> safe (this);
+    importPool.addJob ([this, safe, source, only]
+    {
+        auto res = centrifugeLibrary.import (*source, only.empty() ? nullptr : &only, &cueStore,
+                                             [this] (float p) { importProgress = p; return true; });
+        juce::MessageManager::callAsync ([safe, res, name = source->name]
+        {
+            if (safe == nullptr) return;
+            safe->importing = false;
+            safe->browser.refreshSources();
+            juce::String summary = "Imported " + name + ": " + juce::String (res.added) + " new, " + juce::String (res.updated) + " updated, "
+                                 + juce::String (res.unchanged) + " unchanged";
+            if (res.error.isNotEmpty()) summary = "Import failed: " + res.error;
+            if (! res.conflicts.empty())
+                safe->conflictsView.show (res.conflicts, summary + ", " + juce::String ((int) res.conflicts.size()) + " need you to choose.");
+            else
+                safe->flash (summary);
+        });
+    });
+}
+
+void MainComponent::showExportMenu (juce::Component& anchor)
+{
+    juce::PopupMenu m;
+    m.addItem (1, "Export to a USB stick (rekordbox-compatible)...");
+    m.addItem (2, "Export a rekordbox XML file (to import into rekordbox)...");
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&anchor), [this] (int r)
+    {
+        if (r == 1 || r == 2) exportView.open (r == 1);
+    });
+}
+
+void MainComponent::askRename (int deck, bool hotCue, int index, const juce::String& current)
+{
+    auto* w = new juce::AlertWindow (hotCue ? "Name hot cue " + juce::String::charToString ((juce::juce_wchar) ('A' + index)) : juce::String ("Name locator"),
+                                     "Saved to the library versions that are switched on (R / C).", juce::MessageBoxIconType::NoIcon);
+    w->addTextEditor ("name", current);
+    w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, deck, hotCue, index] (int r)
+    {
+        if (r == 1) editor.renameCue (deck, hotCue, index, w->getTextEditorContents ("name").trim());
+    }), true);
+}
+
+void MainComponent::askBpm (int deck)
+{
+    auto* w = new juce::AlertWindow ("Set BPM - deck " + juce::String (deck + 1),
+                                     "Makes a constant grid at this tempo, keeping the beat nearest the playhead where it is.",
+                                     juce::MessageBoxIconType::NoIcon);
+    w->addTextEditor ("bpm", juce::String (editor.currentBpm (deck), 2));
+    w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, deck] (int r)
+    {
+        const double bpm = w->getTextEditorContents ("bpm").getDoubleValue();
+        if (r == 1 && bpm >= 20.0 && bpm <= 400.0) editor.gridAction (deck, "bpm=" + juce::String (bpm, 2));
+    }), true);
 }
 
 bool MainComponent::keyPressed (const juce::KeyPress& k)

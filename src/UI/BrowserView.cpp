@@ -59,7 +59,11 @@ public:
         }
         auto r = juce::Rectangle<float> (0, 0, (float) w, (float) h).reduced (4.0f, 0.0f);
         auto icon = r.removeFromLeft (16.0f).withSizeKeepingCentre (12.0f, 12.0f);
-        if (isSourceRoot)
+        if (isSourceRoot && src->kind == LibrarySource::Kind::centrifuge)
+        {
+            CentrifugeRotor::paintRotor (g, icon.expanded (3.0f), 0.4f, 0.0f, 1.0f, 0.0f, 0.0f);
+        }
+        else if (isSourceRoot)
         {
             g.setColour (src->kind == LibrarySource::Kind::usbExport ? Theme::warn : Theme::deckColour (0));
             g.fillRoundedRectangle (icon, 2.0f);
@@ -81,6 +85,9 @@ public:
         juce::String label = name;
         if (node != nullptr && node->isSmart) label += "  (smart)";
         if (isSourceRoot && src->error.isNotEmpty()) label += "  -  " + src->error;
+        if (isSourceRoot && src->kind == LibrarySource::Kind::centrifuge)
+            label += src->tracks.empty() ? juce::String ("  (empty - press IMPORT)")
+                                         : (src->libraryView == 0 ? juce::String ("  -  rekordbox copy") : juce::String ("  -  Centrifuge"));
         g.drawText (label, r, juce::Justification::centredLeft, true);
     }
 
@@ -109,6 +116,8 @@ BrowserView::BrowserView (LibraryManager& lib, StemManager& stems) : library (li
     hdr.addColumn ("Time", 6, 60, 50, 90);
     hdr.addColumn ("Genre", 7, 120, 60, 400);
     hdr.addColumn ("Stems", 8, 56, 40, 80);
+    hdr.addColumn ("Cues", 9, 46, 36, 70);
+    hdr.addColumn ("R/C", 10, 46, 36, 70);
     hdr.setStretchToFitActive (true);
     table.setRowHeight (24);
     table.setMultipleSelectionEnabled (true);
@@ -127,6 +136,21 @@ BrowserView::BrowserView (LibraryManager& lib, StemManager& stems) : library (li
     }
     load1.onClick = [this] { loadSelected (0); };
     load2.onClick = [this] { loadSelected (1); };
+
+    for (auto* b : { &importButton, &exportButton, &viewR, &viewC })
+    {
+        addAndMakeVisible (*b);
+        b->setColour (juce::TextButton::buttonColourId, Theme::panelHi);
+    }
+    importButton.setTooltip ("Copy rekordbox's collection or a USB stick into Centrifuge's library (rekordbox is only read)");
+    exportButton.setTooltip ("Write a rekordbox-compatible USB stick or a rekordbox XML file");
+    viewR.setTooltip ("Show the library's rekordbox copy");
+    viewC.setTooltip ("Show the library's Centrifuge version");
+    importButton.onClick = [this] { if (onImport) onImport (importButton); };
+    exportButton.onClick = [this] { if (onExport) onExport (exportButton); };
+    viewR.onClick = [this] { setLibraryView (0); };
+    viewC.onClick = [this] { setLibraryView (1); };
+    viewC.setToggleState (true, juce::dontSendNotification);
 
     addAndMakeVisible (countLabel);
     countLabel.setFont (Theme::font (12.5f));
@@ -159,12 +183,20 @@ void BrowserView::resized()
     tree.setBounds (r.removeFromLeft (juce::jlimit (200, 320, getWidth() / 5)));
     r.removeFromLeft (1);
     auto top = r.removeFromTop (34).reduced (6, 4);
+    importButton.setBounds (top.removeFromLeft (76));
+    top.removeFromLeft (6);
+    exportButton.setBounds (top.removeFromLeft (76));
+    top.removeFromLeft (12);
+    viewR.setBounds (top.removeFromLeft (92));
+    top.removeFromLeft (2);
+    viewC.setBounds (top.removeFromLeft (98));
+    top.removeFromLeft (12);
     load2.setBounds (top.removeFromRight (70));
     top.removeFromRight (6);
     load1.setBounds (top.removeFromRight (70));
     top.removeFromRight (10);
-    countLabel.setBounds (top.removeFromRight (140));
-    search.setBounds (top.removeFromLeft (juce::jmin (360, top.getWidth())));
+    countLabel.setBounds (top.removeFromRight (100));
+    search.setBounds (top.removeFromLeft (juce::jmin (300, top.getWidth())));
     table.setBounds (r);
 }
 
@@ -172,11 +204,15 @@ void BrowserView::refreshSources()
 {
     auto openness = tree.getOpennessState (true);
     sources = library.getSources();
+    if (centrifugeSource)
+        if (auto c = centrifugeSource (libView))
+            sources.insert (sources.begin(), c);
 
     rootItem->clearSubItems();
     for (auto& s : sources)
     {
-        const auto key = (s->kind == LibrarySource::Kind::pcCollection ? juce::String ("pc:") : juce::String ("usb:")) + s->root.getFullPathName();
+        const auto key = s->kind == LibrarySource::Kind::centrifuge ? juce::String ("centrifuge")
+                       : (s->kind == LibrarySource::Kind::pcCollection ? juce::String ("pc:") : juce::String ("usb:")) + s->root.getFullPathName();
         auto* item = new Item (*this, s, nullptr, s->name, key, false, true);
         rootItem->addSubItem (item);
     }
@@ -258,6 +294,8 @@ void BrowserView::applyFilter()
                 case 5: c = x.key.compareNatural (y.key); break;
                 case 6: c = x.durationSec < y.durationSec ? -1 : (x.durationSec > y.durationSec ? 1 : 0); break;
                 case 7: c = x.genre.compareNatural (y.genre); break;
+                case 9: c = x.numCues - y.numCues; break;
+                case 10: c = (int) x.versionsDiffer - (int) y.versionsDiffer; break;
                 default: break;
             }
             return sortForwards ? c < 0 : c > 0;
@@ -331,6 +369,22 @@ void BrowserView::paintCell (juce::Graphics& g, int row, int col, int w, int h, 
             }
             return;
         }
+        case 9:
+            if (t.libraryId > 0) { s = juce::String (t.numCues) + (t.hasSkips ? "+" : ""); g.setColour (Theme::textDim); }
+            just = juce::Justification::centred;
+            break;
+        case 10:
+            if (t.libraryId > 0 && t.versionsDiffer)
+            {
+                // The rekordbox copy and the Centrifuge version are different
+                auto b = juce::Rectangle<float> ((float) w * 0.5f - 15.0f, (float) h * 0.5f - 8.0f, 30.0f, 16.0f);
+                g.setColour (Theme::accent.withAlpha (0.25f));
+                g.fillRoundedRectangle (b, 3.0f);
+                g.setColour (Theme::accent);
+                g.setFont (Theme::font (11.0f, true));
+                g.drawText ("R/C", b, juce::Justification::centred);
+            }
+            return;
         default: break;
     }
     g.drawText (s, juce::Rectangle<int> (6, 0, w - 12, h), just, true);
@@ -424,6 +478,28 @@ void BrowserView::loadSelected (int deck)
     if (row < 0 || row >= (int) rows.size() || currentSource == nullptr) return;
     if (onLoadToDeck)
         onLoadToDeck (deck, currentSource->tracks[(size_t) rows[(size_t) row]], currentSource->kind == LibrarySource::Kind::pcCollection);
+}
+
+void BrowserView::setLibraryView (int v)
+{
+    libView = v;
+    viewR.setToggleState (v == 0, juce::dontSendNotification);
+    viewC.setToggleState (v == 1, juce::dontSendNotification);
+    refreshSources();
+}
+
+std::vector<std::shared_ptr<const LibrarySource>> BrowserView::getRekordboxSources() const
+{
+    return library.getSources();
+}
+
+std::vector<int> BrowserView::getSelectedSourceIndices() const
+{
+    std::vector<int> r;
+    auto sel = table.getSelectedRows();
+    for (int i = 0; i < sel.size(); ++i)
+        if (sel[i] >= 0 && sel[i] < (int) rows.size()) r.push_back (rows[(size_t) sel[i]]);
+    return r;
 }
 
 std::vector<TrackInfo> BrowserView::getVisibleTracks() const

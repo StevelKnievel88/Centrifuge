@@ -1,4 +1,5 @@
 #include "RekordboxMasterDb.h"
+#include "RekordboxColours.h"
 #include "sqlite3mc.h"
 #include <map>
 #include <unordered_map>
@@ -206,14 +207,17 @@ std::unique_ptr<LibrarySource> loadRekordboxMasterDb (const juce::File& dbFile, 
 
     // --- Cues --------------------------------------------------------------
     {
-        struct RawCue { juce::String content; int in, out, kind; juce::String comment; };
+        struct RawCue { juce::String content; int in, out, kind; juce::String comment; int colour, colourIndex; };
         std::vector<RawCue> raw;
         int maxKind = 0;
         bool hasFour = false;
-        db.query ("SELECT ContentID, InMsec, OutMsec, Kind, Comment FROM djmdCue c WHERE" + notDeleted (db, "djmdCue", "c"),
+        // Cue colours: djmdCue.Color is the hot cue colour code, ColorTableIndex the memory cue colour (when present).
+        const juce::String colourCols = juce::String (db.hasColumn ("djmdCue", "Color") ? ", c.Color" : ", -1")
+                                      + (db.hasColumn ("djmdCue", "ColorTableIndex") ? ", c.ColorTableIndex" : ", -1");
+        db.query ("SELECT ContentID, InMsec, OutMsec, Kind, Comment" + colourCols + " FROM djmdCue c WHERE" + notDeleted (db, "djmdCue", "c"),
                   [&] (sqlite3_stmt* st)
                   {
-                      RawCue c { text (st, 0), integer (st, 1), integer (st, 2), integer (st, 3), text (st, 4) };
+                      RawCue c { text (st, 0), integer (st, 1), integer (st, 2), integer (st, 3), text (st, 4), integer (st, 5), integer (st, 6) };
                       maxKind = std::max (maxKind, c.kind);
                       hasFour = hasFour || c.kind == 4;
                       raw.push_back (c);
@@ -232,6 +236,10 @@ std::unique_ptr<LibrarySource> loadRekordboxMasterDb (const juce::File& dbFile, 
             if (c.out > c.in) cue.endSec = c.out / 1000.0;
             cue.comment = c.comment;
             cue.colour = cue.type == CuePoint::Type::hot ? juce::Colour (0xff28e214) : juce::Colour (0xffe8102a);
+            if (cue.type == CuePoint::Type::hot && c.colour > 0 && c.colour <= 62)
+                cue.colour = rekordboxHotCueColour (c.colour);
+            else if (cue.type == CuePoint::Type::memory && c.colourIndex > 0 && c.colourIndex <= 8)
+                cue.colour = rekordboxMemoryColour (c.colourIndex);
             src->tracks[(size_t) it->second].dbCues.push_back (cue);
         }
     }

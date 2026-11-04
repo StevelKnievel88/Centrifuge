@@ -3,6 +3,7 @@
 #include "CentrifugeRotor.h"
 #include "ColourPicker.h"
 #include "../Control/ActionRouter.h"
+#include "../App/TrackEditor.h"
 
 namespace orbit
 {
@@ -21,6 +22,11 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
 
     void setLoadingText (const juce::String& s) { loadingText = s; repaint(); }
+
+    void setEditor (TrackEditor* e) { editor = e; }
+    void toggleGridMode() { gridMode = ! gridMode; repaint(); }
+    std::function<void (int deck, bool hotCue, int index, juce::String currentName)> onRenameCue;
+    std::function<void (int deck)> onSetBpm;
 
     /** Overview waveform: style 1 = 3-band, 2 = RGB, 3 = single colour; half = bars from the bottom only. */
     void setOverviewStyle (int style, bool half, juce::Colour single)
@@ -43,7 +49,7 @@ private:
     ActionRouter& router;
 
     LoadedTrack::Ptr track;
-    int serial = -1;
+    int serial = -1, dataVersion = -1;
     juce::Image overview;
     int overviewWidth = 0;
     juce::String loadingText;
@@ -58,6 +64,8 @@ private:
     bool overviewHalf = false;
     juce::Colour singleColour { 0xff3d9bff };
     void showPadMenu (int pad, juce::Rectangle<float> area);
+    TrackEditor* editor = nullptr;
+    bool gridMode = false;
 };
 
 } // namespace orbit

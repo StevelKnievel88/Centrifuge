@@ -97,6 +97,27 @@ jobs:
           tools/run_logged.sh xvfb-run -a ./build/Centrifuge_artefacts/Release/Centrifuge --separate test.wav --out orbit --model model/htdemucs.onnx --cpu
           tools/run_logged.sh python tools/stem_reference.py compare ref orbit
 
+      # The USB export must read back in Centrifuge and in two independent rekordbox readers
+      - name: Check USB and rekordbox XML export
+        run: |
+          git clone --depth 1 https://github.com/Holzhaus/rekordcrate.git rekordcrate
+          git clone --depth 1 https://github.com/dylanljones/pyrekordbox.git pyrekordbox-src
+          cp -r rekordcrate/data/complete_export/demo_tracks testusb
+          export LD_LIBRARY_PATH=$PWD/ort/lib
+          tools/run_logged.sh xvfb-run -a ./build/Centrifuge_artefacts/Release/Centrifuge --export-test testusb --fake-audio --out exported
+          tools/run_logged.sh pip install construct bidict
+          PYREKORDBOX_SRC=$PWD/pyrekordbox-src tools/run_logged.sh python tools/check_export.py exported
+          cd rekordcrate
+          tools_log=../tools/run_logged.sh
+          $tools_log cargo build --release --features cli
+          $tools_log ./target/release/rekordcrate dump-pdb ../exported/stick/PIONEER/rekordbox/export.pdb > ../pdb.txt
+          grep -q "Demo Track 1" ../pdb.txt || (echo "::error::rekordcrate didn't find the exported tracks" && exit 1)
+          $tools_log ./target/release/rekordcrate list-playlists ../exported/stick/PIONEER/rekordbox/export.pdb
+          for f in ../exported/stick/PIONEER/USBANLZ/*/*/ANLZ0000.*; do
+            $tools_log ./target/release/rekordcrate dump-anlz "$f" > /dev/null
+          done
+          echo "rekordcrate read the exported database and analysis files"
+
   # ---------------------------------------------------------------------------
   # Windows build (the app you run)
   # ---------------------------------------------------------------------------

@@ -15,6 +15,7 @@ class AboutView : public juce::Component
 public:
     AboutView()
     {
+        setComponentID ("about");
         addAndMakeVisible (rotor);
         rotor.setProgress (1.0f);
         rotor.setInterceptsMouseClicks (false, false);

@@ -64,6 +64,11 @@ void DeckPanel::timerCallback()
         repaint();
         return;
     }
+    if (const int ver = st.trackDataVersion.load(); ver != dataVersion)
+    {
+        dataVersion = ver;
+        if (s != 0) track = engine.deck (deck).getLoadedTrack();
+    }
 
     // Repaint only when something visible changed.
     juce::uint64 h = 1469598103934665603ull;
@@ -77,6 +82,9 @@ void DeckPanel::timerCallback()
     mix (st.keyShift.load()); mix (st.keyLock.load());
     mix (st.numLocators.load()); mix (st.numSkips.load()); mix (st.skipsOn.load()); mix (st.skipPendingFrom.load()); mix (st.cueEdits.load());
     for (size_t i = 0; i < 8; ++i) mix ((double) st.hotColour[i].load());
+    mix (st.trackDataVersion.load());
+    if (editor != nullptr) { mix (editor->editsRekordbox (deck)); mix (editor->editsCentrifuge (deck)); mix (editor->versionsDiffer (deck)); }
+    mix (gridMode);
     rotor.setBounds (rotorArea.toNearestInt());
     rotor.setSpinning (st.stemsReady.load() && st.stemsProgress.load() < 0.999f);
     rotor.setProgress (st.stemsReady.load() ? st.stemsProgress.load() : 0.0f);
@@ -188,6 +196,29 @@ void DeckPanel::paint (juce::Graphics& g)
             g.fillRoundedRectangle (b, 2.0f);
         }
 
+        // Edit targets: R = rekordbox copy, C = Centrifuge version (both lit = edit both); GRID opens the grid editor
+        {
+            const auto p = juce::String ("d") + juce::String (deck + 1) + ".";
+            r.removeFromLeft (10.0f);
+            const bool er = editor != nullptr && editor->editsRekordbox (deck), ec = editor != nullptr && editor->editsCentrifuge (deck);
+            auto rc = r.removeFromLeft (24.0f).reduced (1.0f, 3.0f);
+            chip (g, rc, "R", er, juce::Colour (0xff4fa3ff));
+            regions.push_back ({ rc, p + "edit.r", 0 });
+            auto cc = r.removeFromLeft (24.0f).reduced (1.0f, 3.0f);
+            chip (g, cc, "C", ec, Theme::accent);
+            regions.push_back ({ cc, p + "edit.c", 0 });
+            if (editor != nullptr && editor->versionsDiffer (deck))
+            {
+                g.setColour (Theme::accent);
+                g.setFont (Theme::font (10.0f, true));
+                g.drawText ("R/C DIFFER", r.removeFromLeft (64.0f), juce::Justification::centred);
+            }
+            r.removeFromLeft (4.0f);
+            auto gc = r.removeFromLeft (44.0f).reduced (1.0f, 3.0f);
+            chip (g, gc, "GRID", gridMode, Theme::warn);
+            regions.push_back ({ gc, p + "grid.mode", 0 });
+        }
+
         // Tempo + range
         auto right = r.removeFromRight (300.0f);
         const double pct = (st.tempoRatio.load() - 1.0) * 100.0;
@@ -296,6 +327,37 @@ void DeckPanel::paint (juce::Graphics& g)
         }
     }
 
+    // --- Beat grid editor (replaces the pads while GRID is on) -------------------
+    if (gridMode)
+    {
+        auto r = rowPads;
+        const auto p = juce::String ("d") + juce::String (deck + 1) + ".grid.";
+        struct B { const char* label; const char* action; float w; };
+        const B buttons[] = { { "<10ms", "shift.back10", 1.0f }, { "<1ms", "shift.back1", 1.0f }, { "1ms>", "shift.fwd1", 1.0f },
+                              { "10ms>", "shift.fwd10", 1.0f }, { "ANCHOR", "anchor", 1.2f }, { "DOWNBEAT", "downbeat", 1.4f },
+                              { "-0.1", "bpm.down", 0.9f }, { "-.01", "bpm.downfine", 0.9f }, { "BPM", "", 1.6f },
+                              { "+.01", "bpm.upfine", 0.9f }, { "+0.1", "bpm.up", 0.9f }, { "/2", "halve", 0.7f },
+                              { "x2", "double", 0.7f }, { "TAP", "tap", 0.9f }, { "UNDO", "undo", 1.0f }, { "RESET", "reset", 1.0f } };
+        float total = 0.0f;
+        for (auto& b : buttons) total += b.w;
+        const float gap = 3.0f, unit = (r.getWidth() - gap * 15.0f) / total;
+        float x = r.getX();
+        for (auto& b : buttons)
+        {
+            auto br = juce::Rectangle<float> (x, r.getY(), unit * b.w, r.getHeight());
+            x += unit * b.w + gap;
+            if (juce::String (b.action).isEmpty())
+            {
+                const double bpm = editor != nullptr ? editor->currentBpm (deck) : 0.0;
+                chip (g, br, bpm > 0 ? juce::String (bpm, 2) : juce::String ("BPM"), true, Theme::warn.withAlpha (0.8f));
+                regions.push_back ({ br, "setbpm", 4 });
+                continue;
+            }
+            chip (g, br, b.label, false, Theme::warn);
+            regions.push_back ({ br, p + b.action, 0 });
+        }
+    }
+    else
     // --- Hot cue pads ------------------------------------------------------------
     {
         auto r = rowPads;
@@ -311,7 +373,10 @@ void DeckPanel::paint (juce::Graphics& g)
             g.drawRoundedRectangle (pad.reduced (0.5f), 3.0f, 1.0f);
             g.setColour (set ? juce::Colours::black : Theme::textFaint);
             g.setFont (Theme::font (12.0f, true));
-            g.drawText (juce::String::charToString ((juce::juce_wchar) ('A' + i)), pad, juce::Justification::centred);
+            auto label = juce::String::charToString ((juce::juce_wchar) ('A' + i));
+            if (set && editor != nullptr)
+                if (auto name = editor->cueName (deck, true, i); name.isNotEmpty()) label << "  " << name;
+            g.drawText (label, pad.reduced (4.0f, 0.0f), juce::Justification::centred, true);
             regions.push_back ({ pad, "d" + juce::String (deck + 1) + ".hotcue." + juce::String (i + 1), 3 });
         }
     }
@@ -405,6 +470,7 @@ void DeckPanel::showPadMenu (int pad, juce::Rectangle<float> area)
     menu.addSectionHeader ("Hot cue " + juce::String::charToString ((juce::juce_wchar) ('A' + pad)));
     addCueColourItems (menu, 100, current);
     menu.addSeparator();
+    menu.addItem (2, "Rename...");
     menu.addItem (1, "Delete   (shift + click)");
     const auto screen = localAreaToGlobal (area.toNearestInt());
     juce::Component::SafePointer<DeckPanel> safe (this);
@@ -415,6 +481,8 @@ void DeckPanel::showPadMenu (int pad, juce::Rectangle<float> area)
         auto& d = safe->engine.deck (safe->deck);
         auto setColour = [safe, pad] (juce::Colour c) { if (safe != nullptr) safe->engine.deck (safe->deck).post (Deck::Cmd::hotCueColour, (double) c.getARGB(), pad); };
         if (result == 1) d.post (Deck::Cmd::hotCueDelete, 0.0, pad, true);
+        else if (result == 2 && safe->onRenameCue)
+            safe->onRenameCue (safe->deck, true, pad, safe->editor != nullptr ? safe->editor->cueName (safe->deck, true, pad) : juce::String());
         else if (result >= 100 && result < 116) setColour (juce::Colour (rekordboxCueColours()[(size_t) (result - 100)].argb));
         else if (result == 116) ColourPickerBubble::show (screen, current, setColour);
     });
@@ -449,6 +517,16 @@ void DeckPanel::mouseDown (const juce::MouseEvent& e)
     if (r->kind == 2)
     {
         dragStem = r->action.fromFirstOccurrenceOf ("stem.", false, false).getIntValue() - 1;
+        return;
+    }
+    if (r->kind == 4)
+    {
+        if (onSetBpm) onSetBpm (deck);
+        return;
+    }
+    if (r->action.endsWith ("grid.mode"))
+    {
+        toggleGridMode();
         return;
     }
     if (r->kind == 3 && e.mods.isPopupMenu())

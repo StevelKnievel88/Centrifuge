@@ -64,7 +64,35 @@ Hot cues, locators and skips
 - Your edits are saved in %APPDATA%\Centrifuge\cues.json. rekordbox's
   library is never changed.
 
+Libraries: rekordbox copy and Centrifuge
+----------------------------------------
+- Browser > IMPORT copies your rekordbox collection (or a USB stick) into
+  Centrifuge's own library: tracks, playlists, beat grids, hot cues, memory
+  cues, their colours and names. rekordbox's files are only ever read.
+- Every track then has two versions: the REKORDBOX copy (only what rekordbox
+  can hold) and the CENTRIFUGE version (also locators beyond rekordbox's limit,
+  skips, ...). The browser's REKORDBOX / CENTRIFUGE buttons switch the view;
+  the R/C column marks tracks whose two versions differ.
+- Each deck has R and C buttons: edits (cues, colours, names, locators, skips,
+  beat grid) go to whichever are lit - both lit = both libraries. The deck
+  plays the Centrifuge version while C is lit, otherwise the rekordbox copy.
+- Importing again updates tracks you haven't edited. Tracks you have edited,
+  whose rekordbox data has also changed, are listed so you can choose.
+- GRID on a deck opens the beat grid editor: nudge, anchor a beat to the
+  playhead, set the downbeat, BPM up/down/set, halve/double, tap, undo, reset.
+- Right-click a hot cue or locator to rename it or change its colour.
+
+Exporting
+---------
+- Browser > EXPORT > USB stick: writes a rekordbox-compatible stick for the
+  XDJ-XZ (music, analysis files, database), from either version. The
+  Centrifuge version is cut down to what rekordbox can hold. The stick's old
+  rekordbox database is kept as a backup. Test with a spare stick first.
+- Browser > EXPORT > rekordbox XML: a file rekordbox can import, to bring
+  your edits back into rekordbox's own collection if you want to.
+
 Files
 -----
 Settings and mapping:  %APPDATA%\Centrifuge\
+Library:               %APPDATA%\Centrifuge\library.db
 Stem cache:            %LOCALAPPDATA%\Centrifuge\Stems (about 25 MB per track)

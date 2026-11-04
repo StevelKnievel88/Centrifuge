@@ -3,6 +3,8 @@
 #include "Library/RekordboxPdb.h"
 #include "Library/Anlz.h"
 #include "Stems/DemucsSeparator.h"
+#include "Library/CentrifugeLibrary.h"
+#include "Export/Exporters.h"
 
 #if JUCE_WINDOWS
  #include <windows.h>
@@ -115,6 +117,98 @@ static int runCommandLine (const juce::StringArray& args)
         return 0;
     }
 
+    if (args.contains ("--export-test"))
+    {
+        // Imports a rekordbox USB export into a fresh Centrifuge library, edits a track (both versions), then
+        // exports it again as a USB stick and as rekordbox XML, and reads the new stick back.
+        const auto usb = juce::File (argAfter ("--export-test"));
+        const auto out = juce::File (argAfter ("--out"));
+        out.deleteRecursively();
+        out.createDirectory();
+        auto src = loadRekordboxUsbExport (usb);
+        if (src == nullptr || ! src->error.isEmpty()) { std::cerr << "couldn't read " << usb.getFullPathName() << std::endl; return 2; }
+
+        if (args.contains ("--fake-audio"))
+        {
+            // Test exports often come without their music: put 2 s of silence where each file should be.
+            for (auto& t : src->tracks)
+                if (! t.file.existsAsFile() && t.file != juce::File())
+                {
+                    t.file.getParentDirectory().createDirectory();
+                    juce::WavAudioFormat wav;
+                    std::unique_ptr<juce::OutputStream> os (new juce::FileOutputStream (t.file));
+                    if (auto w = wav.createWriterFor (os, juce::AudioFormatWriterOptions{}.withSampleRate (44100).withNumChannels (2).withBitsPerSample (16)))
+                    {
+                        juce::AudioBuffer<float> silence (2, 88200);
+                        silence.clear();
+                        w->writeFromAudioSampleBuffer (silence, 0, silence.getNumSamples());
+                    }
+                }
+        }
+
+        CentrifugeLibrary lib (out.getChildFile ("library.db"));
+        auto res = lib.import (*src, nullptr, nullptr, {});
+        std::cout << "imported " << res.added << " tracks" << std::endl;
+
+        std::vector<ExportItem> items;
+        std::map<juce::int64, int> itemOf;
+        for (auto& t : lib.allTracks())
+        {
+            auto cf = t.cf;
+            // Centrifuge-only additions that must not reach rekordbox's files
+            cf.skips.push_back ({ 10.0, 12.0 });
+            for (int i = 0; i < 12; ++i) { CuePoint c; c.startSec = 1.0 + i; c.colour = juce::Colour (0xff123456); c.comment = "Loc " + juce::String (i); cf.memory.push_back (c); }
+            CuePoint h; h.type = CuePoint::Type::hot; h.hotIndex = 2; h.startSec = 3.5; h.colour = juce::Colour (0xff00e0ff); h.comment = juce::String::fromUTF8 ("D\xc3\xa9j\xc3\xa0 vu");
+            cf.hot[2] = h;
+            lib.saveVersions (t.id, nullptr, &cf);
+            itemOf[t.id] = (int) items.size();
+            items.push_back ({ t.info, cf.limitedForRekordbox(), cf, t.key });
+        }
+        ExportList root;
+        root.folder = true;
+        for (auto& p : lib.allPlaylists())
+        {
+            if (p.parent != 0) continue;
+            ExportList l;
+            l.name = p.name;
+            l.folder = p.folder;
+            for (auto id : p.tracks) l.items.push_back (itemOf[id]);
+            root.children.push_back (l);
+        }
+        ExportList all;
+        all.name = "All exported";
+        for (int i = 0; i < (int) items.size(); ++i) all.items.push_back (i);
+        root.children.push_back (all);
+
+        AudioFileLoader loader;
+        juce::String err, summary;
+        auto stick = out.getChildFile ("stick");
+        stick.createDirectory();
+        if (! exportToUsb (stick, items, root, loader, {}, err, summary)) { std::cerr << "export failed: " << err << std::endl; return 3; }
+        std::cout << summary << std::endl;
+        if (! writeRekordboxXml (out.getChildFile ("rekordbox.xml"), items, root, err)) { std::cerr << err << std::endl; return 4; }
+
+        auto back = loadRekordboxUsbExport (stick);
+        if (back == nullptr || back->error.isNotEmpty() || back->tracks.size() != items.size())
+        {
+            std::cerr << "read-back failed: " << (back != nullptr ? back->error : juce::String()) << std::endl;
+            return 5;
+        }
+        for (auto& t : back->tracks)
+        {
+            auto v = CentrifugeLibrary::readRekordboxVersion (t);
+            int hot = 0;
+            for (auto& c : v.hot) if (c) ++hot;
+            std::cout << "  " << t.displayArtistTitle() << "  bpm " << t.bpm << "  beats " << v.beats.size() << "  hot " << hot
+                      << "  memory " << v.memory.size() << "  file " << (t.file.existsAsFile() ? "ok" : "MISSING") << std::endl;
+            if (v.memory.size() > (size_t) TrackVersion::rekordboxMaxMemoryCues || ! v.hot[2] || v.hot[2]->comment.isEmpty())
+            { std::cerr << "cue round trip failed" << std::endl; return 6; }
+        }
+        std::cout << "playlists: " << back->playlists.children.size() << std::endl;
+        std::cout << "export test passed" << std::endl;
+        return 0;
+    }
+
     if (args.contains ("--render-icon"))
     {
         OrbitLookAndFeel laf;
@@ -168,8 +262,16 @@ private:
 
         if (stage == 0 && usb != nullptr)
         {
-            main.getLoader().load (0, usb->tracks[0], false);
-            main.getLoader().load (1, usb->tracks[1], false);
+            main.importForDemo (usb);   // copy the stick into Centrifuge's library first
+            stage = -1;
+        }
+        else if (stage == -1 && ! main.isImporting())
+        {
+            auto lib = main.librarySource (1);
+            if (lib == nullptr || lib->tracks.size() < 2) return;
+            main.getBrowser().refreshSources();
+            main.getLoader().load (0, lib->tracks[0], false);
+            main.getLoader().load (1, lib->tracks[1], false);
             stage = 1;
             t0 = ticks;
         }
@@ -210,6 +312,8 @@ private:
             d2.post (Deck::Cmd::setPitchFader, 0.4);
             press ("d2.sync");
             press ("d2.play");
+            ActionValue g; g.down = true;
+            main.getRouter().perform ("d2.grid.mode", g);
             stage = 2;
             t0 = ticks;
         }
@@ -267,6 +371,20 @@ private:
         {
             snap ("07_about.png");
             stage = 9;
+            t0 = ticks;
+        }
+        else if (stage == 9 && ticks - t0 > 2)
+        {
+            if (auto* a = main.findChildWithID ("about")) a->setVisible (false);
+            main.openExport (true);
+            stage = 10;
+            t0 = ticks;
+        }
+        else if (stage == 10 && ticks - t0 > 4)
+        {
+            snap ("08_export.png");
+            main.closeExport();
+            stage = 11;
         }
     }
 

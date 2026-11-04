@@ -39,6 +39,9 @@ struct AppSettings
     double visibleSeconds = 10.0;      // width of the scrolling waveform
     int maxFps = 60;
 
+    // Library editing: per deck, edit the rekordbox copy (R) and / or the Centrifuge version (C)
+    std::array<bool, 2> editR { true, true }, editC { true, true };
+
     // Control
     bool quantize = true;              // quantize on for both decks at start-up
     double jogTicksPerRev = 720.0;

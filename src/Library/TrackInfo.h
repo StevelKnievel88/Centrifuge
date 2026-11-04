@@ -59,6 +59,13 @@ struct TrackInfo
 
     std::vector<CuePoint> dbCues; // cues stored in the library database (PC collection)
 
+    // Centrifuge library
+    juce::int64 libraryId = 0;  // non-zero for tracks in Centrifuge's library
+    bool versionsDiffer = false;// the rekordbox copy and the Centrifuge version are different
+    int numCues = 0;            // hot cues + memory cues / locators in the version shown
+    bool hasSkips = false;
+    juce::String libraryKey;    // Centrifuge's key for the track (file name + length)
+
     juce::String displayArtistTitle() const
     {
         return artist.isEmpty() ? title : artist + " - " + title;
@@ -77,13 +84,14 @@ struct PlaylistNode
 
 struct LibrarySource
 {
-    enum class Kind { pcCollection, usbExport, folder };
+    enum class Kind { pcCollection, usbExport, folder, centrifuge };
     Kind kind = Kind::pcCollection;
     juce::String name;               // e.g. "rekordbox" or "USB (E:)"
     juce::File root;                 // master.db location or USB root
     std::vector<TrackInfo> tracks;
     PlaylistNode playlists;          // root folder
     juce::String error;              // non-empty if loading failed
+    int libraryView = 0;             // centrifuge sources: 0 = rekordbox copy, 1 = Centrifuge version
 };
 
 } // namespace orbit

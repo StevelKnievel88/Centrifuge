@@ -3,6 +3,7 @@
 #include "../Audio/AudioFileLoader.h"
 #include "../Stems/StemManager.h"
 #include "../Library/CueStore.h"
+#include "../Library/TrackVersion.h"
 
 namespace orbit
 {
@@ -24,14 +25,23 @@ public:
     };
     void setOptions (const Options& o) { const juce::ScopedLock sl (lock); options = o; }
 
-    void load (int deck, const TrackInfo& info, bool fromPcCollection);
+    /** `version`: the library version to play (grid, cues, skips); empty = rekordbox's data as it is. */
+    void load (int deck, const TrackInfo& info, bool fromPcCollection, std::optional<TrackVersion> version = std::nullopt);
     bool isLoading (int deck) const { return loading[(size_t) deck].load(); }
 
     std::function<void (int deck, LoadedTrack::Ptr)> onLoaded;          // message thread
     std::function<void (int deck, const juce::String& error)> onError;  // message thread
 
     /** Builds a LoadedTrack without audio-thread involvement (also used by the command line tools). */
-    static LoadedTrack::Ptr build (const TrackInfo& info, TrackAudio::Ptr audio, bool fromPcCollection, const Options& o);
+    static LoadedTrack::Ptr build (const TrackInfo& info, TrackAudio::Ptr audio, bool fromPcCollection, const Options& o,
+                                   const std::optional<TrackVersion>& version = std::nullopt);
+
+    /** Replaces a track's grid and cues with a library version (times in rekordbox seconds; the MP3 offset is applied). */
+    static void applyVersion (LoadedTrack& t, const TrackVersion& v);
+    /** A copy of `base` (same audio, waveforms) carrying a different version. */
+    static LoadedTrack::Ptr withVersion (const LoadedTrack& base, const TrackVersion& v);
+    /** The grid and cues a loaded track carries, as a library version. */
+    static TrackVersion versionOf (const LoadedTrack& t);
 
 private:
     AudioEngine& engine;

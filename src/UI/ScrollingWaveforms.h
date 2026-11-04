@@ -42,6 +42,8 @@ public:
     std::function<void (int deck, float share)> onLaneSplitChanged;
     std::function<void (float fraction)> onPlayheadMoved;
     std::function<void (bool fold)> onFoldChanged;
+    std::function<juce::String (int deck, bool hotCue, int index)> cueName;
+    std::function<void (int deck, bool hotCue, int index, juce::String currentName)> onRenameCue;
 
     void paint (juce::Graphics&) override;
     void resized() override { needsRedraw = true; }
@@ -55,7 +57,7 @@ private:
     struct DeckView
     {
         LoadedTrack::Ptr track;
-        int serial = -1;
+        int serial = -1, dataVersion = -1;
         StemAudio::Ptr stems;
         StemWaveform::Ptr stemWave;
         std::array<WaveformTileCache, 2> laneTiles, underTiles;

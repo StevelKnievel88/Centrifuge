@@ -69,7 +69,8 @@ public:
         stemGain, stemMuteToggle, stemSolo, stemReset, eject, shift, keyShiftBy, keyShiftSet,
         quantizeSet, hotCueColour,
         locatorAdd, locatorDelete, locatorDeleteNearest, locatorColour,
-        skipIn, skipOut, skipSet, skipAdd, skipDelete, skipDeleteNearest, skipsToggle, skipsSet
+        skipIn, skipOut, skipSet, skipAdd, skipDelete, skipDeleteNearest, skipsToggle, skipsSet,
+        swapTrackData   // same audio, new grid / cues (ptr = LoadedTrack*); playback carries on
     };
 
     static constexpr int maxLocators = 32;
@@ -149,6 +150,8 @@ public:
         std::atomic<double> skipPendingFrom { -1.0 };
         /** Counts edits to hot cues, locators and skips (so the app knows to save them). */
         std::atomic<int> cueEdits { 0 };
+        /** Increases when the track's grid / cue data is swapped (e.g. switching rekordbox / Centrifuge version). */
+        std::atomic<int> trackDataVersion { 0 };
 
         Published()
         {
@@ -169,6 +172,8 @@ public:
     /** Message thread: the track currently on this deck (for the UI). */
     LoadedTrack::Ptr getLoadedTrack() const;
     void setLoadedTrackForUi (LoadedTrack::Ptr t);
+    /** Same track, new grid / cue data (keeps the stems). */
+    void replaceLoadedTrackForUi (LoadedTrack::Ptr t) { const juce::ScopedLock sl (uiTrackLock); uiTrack = std::move (t); }
     StemAudio::Ptr getStemsForUi() const { const juce::ScopedLock sl (uiTrackLock); return uiStems; }
     void setStemsForUi (StemAudio::Ptr s) { const juce::ScopedLock sl (uiTrackLock); uiStems = std::move (s); }
 
@@ -248,6 +253,7 @@ private:
     bool skipsOn = true;
     double skipPending = -1.0;
     int editCount = 0;
+    int dataVersion = 0;
 
     // Short cross-fade when playback jumps inside a block (loop wrap or skip)
     static constexpr int xfadeLen = 64;

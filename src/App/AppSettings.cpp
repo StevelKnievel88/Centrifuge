@@ -94,6 +94,12 @@ void AppSettings::load()
     boolean ("foldSkips", foldSkips);
     num ("playheadPosition", playheadPosition);
     boolean ("quantize", quantize);
+    if (auto* arr = v["editTargets"].getArray(); arr != nullptr && arr->size() == 4)
+    {
+        editR = { (bool) (*arr)[0], (bool) (*arr)[2] };
+        editC = { (bool) (*arr)[1], (bool) (*arr)[3] };
+        for (int d = 0; d < 2; ++d) if (! editR[(size_t) d] && ! editC[(size_t) d]) editC[(size_t) d] = true;
+    }
     num ("deckPanelHeight", deckPanelHeight);
     if (auto* arr = v["laneSplit"].getArray())
         for (int i = 0; i < juce::jmin (2, arr->size()); ++i) laneSplit[(size_t) i] = juce::jlimit (0.1f, 0.9f, (float) (double) (*arr)[i]);
@@ -147,6 +153,7 @@ void AppSettings::save() const
     o->setProperty ("foldSkips", foldSkips);
     o->setProperty ("playheadPosition", playheadPosition);
     o->setProperty ("quantize", quantize);
+    o->setProperty ("editTargets", juce::Array<juce::var> { editR[0], editC[0], editR[1], editC[1] });
     o->setProperty ("deckPanelHeight", deckPanelHeight);
     o->setProperty ("laneSplit", juce::Array<juce::var> { laneSplit[0], laneSplit[1] });
     o->setProperty ("stemMatrix", juce::Array<juce::var> { stemMatrix[0], stemMatrix[1], stemMatrix[2], stemMatrix[3] });

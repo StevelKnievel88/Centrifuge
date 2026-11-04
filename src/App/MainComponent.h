@@ -13,6 +13,8 @@
 #include "../UI/CentrifugeRotor.h"
 #include "../UI/AboutView.h"
 #include "../Library/CueStore.h"
+#include "../UI/LibraryDialogs.h"
+#include "TrackEditor.h"
 
 namespace orbit
 {
@@ -42,13 +44,24 @@ public:
     void showPage (int page);
     void showAbout() { about.show(); }
     ScrollingWaveforms& getWaves() { return waves; }
+    void importForDemo (std::shared_ptr<const LibrarySource> s) { runImport (s, {}); }
+    bool isImporting() const { return importing.load(); }
+    std::shared_ptr<const LibrarySource> librarySource (int view) { return centrifugeSource (view); }
+    void openExport (bool usb) { exportView.open (usb); }
+    void closeExport() { exportView.setVisible (false); }
 
 private:
     void timerCallback() override;
     void applySettings();
     void handleAppAction (const juce::String& id, int deck, const ActionValue& v);
     void loadToDeck (int deck, const TrackInfo& info, bool fromPc);
-    void saveCueEdits();
+    void showImportMenu (juce::Component& anchor);
+    void showExportMenu (juce::Component& anchor);
+    void runImport (std::shared_ptr<const LibrarySource> source, std::vector<int> onlyTracks);
+    void askRename (int deck, bool hotCue, int index, const juce::String& current);
+    void askBpm (int deck);
+    void flash (const juce::String& text);
+    std::shared_ptr<const LibrarySource> centrifugeSource (int view);
 
     struct SettingsHolder { AppSettings s; SettingsHolder() { s.load(); } } settingsHolder;
     AppSettings& settings = settingsHolder.s;
@@ -62,6 +75,8 @@ private:
     StemManager stems { fileLoader };
     TrackLoader loader { engine, fileLoader, stems };
     LibraryManager library;
+    CentrifugeLibrary centrifugeLibrary { AppSettings::folder().getChildFile ("library.db") };
+    TrackEditor editor { engine, centrifugeLibrary };
 
     DeckPanel deck1 { 0, engine, router }, deck2 { 1, engine, router };
     ScrollingWaveforms waves { engine };
@@ -75,9 +90,18 @@ private:
 
     juce::Rectangle<int> topBar, dividerDecks, dividerBrowser, logoArea;
     AboutView about;
+    ExportView exportView;
+    ConflictsView conflictsView { centrifugeLibrary };
     int appliedQuantize = -1;
-    struct CueTracking { int serial = -1, edits = 0; };
-    std::array<CueTracking, 2> cueTracking;
+    juce::ThreadPool importPool { 1 };
+    std::atomic<bool> importing { false };
+    std::atomic<float> importProgress { 0.0f };
+    juce::String importName, flashText;
+    juce::uint32 flashUntil = 0;
+    int seenLibraryChanges = -1;
+    juce::uint32 lastLibraryRefresh = 0;
+    std::array<std::shared_ptr<const LibrarySource>, 2> sourceCache;
+    std::array<int, 2> sourceCacheVersion { -1, -1 };
     int dragging = 0, dragStartValue = 0;
     std::unique_ptr<CentrifugeSplash> splash;
     juce::String midiStatus, audioStatus, stemStatus;
