@@ -180,6 +180,39 @@ void BrowserView::paint (juce::Graphics& g)
     g.fillRect (0, 0, getWidth(), 2);
 }
 
+bool BrowserView::isInterestedInFileDrag (const juce::StringArray& files)
+{
+    for (auto& f : files)
+    {
+        const juce::File file (f);
+        if (file.isDirectory() || file.hasFileExtension ("mp3;wav;wave;aif;aiff;flac;m4a;aac;mp4;alac")) return true;
+    }
+    return false;
+}
+
+void BrowserView::filesDropped (const juce::StringArray& files, int, int)
+{
+    dragHover = false;
+    repaint();
+    juce::Array<juce::File> items;
+    for (auto& f : files) items.add (juce::File (f));
+    if (onFilesDropped) onFilesDropped (items);
+}
+
+void BrowserView::paintOverChildren (juce::Graphics& g)
+{
+    if (! dragHover) return;
+    auto r = getLocalBounds().toFloat().reduced (2.0f);
+    g.setColour (psyched::Colours::void_.withAlpha (0.75f));
+    g.fillRect (r);
+    g.setColour (psyched::Colours::green);
+    g.drawRect (r, 2.0f);
+    psyched::paintTitle (g, "Drop to add to Centrifuge's library", r.withTrimmedBottom (r.getHeight() * 0.5f - 14.0f), juce::Justification::centredBottom,
+                         psyched::Colours::green, 13.0f);
+    psyched::paintLabel (g, "Folders become playlists. Each track is analysed for tempo, beat grid and key.",
+                         r.withTrimmedTop (r.getHeight() * 0.5f + 8.0f).withHeight (20.0f), juce::Justification::centred, psyched::Colours::ink2);
+}
+
 void BrowserView::resized()
 {
     auto r = getLocalBounds();

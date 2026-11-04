@@ -19,7 +19,14 @@ struct AppSettings
     int bufferSize = 512;
     std::array<int, 2> deckOutputs { 0, 2 };
     int sumToMaster = -1;              // -1 auto, 0 off, 1 on
-    double mp3OffsetMs = 0.0;          // grid/cue correction for MP3s if your decoder differs from rekordbox's
+    double mp3OffsetMs = 0.0;
+    int analysisRange = 1;             // tempo range for analysing music added from files: 0 = 70-140, 1 = 88-175, 2 = 100-200, 3 = 120-240
+    std::pair<double, double> analysisBpmRange() const
+    {
+        static const double r[][2] = { { 70, 140 }, { 88, 175 }, { 100, 200 }, { 120, 240 } };
+        const int i = juce::jlimit (0, 3, analysisRange);
+        return { r[i][0], r[i][1] };
+    }          // grid/cue correction for MP3s if your decoder differs from rekordbox's
 
     // Waveforms
     // Each deck's top [0] and bottom [1] lane: style 0 = stems, 1 = 3-band, 2 = RGB, 3 = single colour;

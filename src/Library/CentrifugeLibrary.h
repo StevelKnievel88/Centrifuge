@@ -79,6 +79,17 @@ public:
     /** Adds one track (used when a track that wasn't imported is edited). Returns its id. */
     juce::int64 addTrack (const TrackInfo& info, const TrackVersion& rekordboxVersion);
 
+    /** Adds a track analysed by Centrifuge (not from rekordbox). Both versions start as `version`.
+        If the track is already in the library, nothing changes. Returns its id and whether it was new. */
+    std::pair<juce::int64, bool> addAnalysedTrack (const TrackInfo& info, const TrackVersion& version, const juce::String& source);
+
+    /** Replaces the playlists that came from one source (e.g. an imported folder) with `root`'s children.
+        Track indices in `root` refer to `ids`. */
+    void setPlaylists (const juce::String& source, const PlaylistNode& root, const std::vector<juce::int64>& ids);
+
+    /** Library key for a file (file name + length in whole seconds), as used for every track. */
+    static juce::String keyForFile (const juce::File& f, double lengthSec);
+
     /** Saves one or both versions of a track (null = leave as it is). */
     void saveVersions (juce::int64 id, const TrackVersion* rb, const TrackVersion* cf);
 

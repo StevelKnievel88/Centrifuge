@@ -29,6 +29,11 @@ public:
         dbButtons.onResize = [this] { auto r = dbButtons.getLocalBounds(); browseDb.setBounds (r.removeFromLeft (110)); r.removeFromLeft (8); reloadDb.setBounds (r.removeFromLeft (150)); };
         add (&dbKey, 28, "Database key");
         add (&usbFolder, 28, "Extra export folder");
+        add (&analysisRange, 28, "Tempo range (added music)");
+        analysisRange.addItemList ({ "70 - 140 BPM", "88 - 175 BPM (house, techno, psytrance, drum & bass)", "100 - 200 BPM", "120 - 240 BPM" }, 1);
+        analysisRange.setSelectedId (juce::jlimit (0, 3, settings.analysisRange) + 1, juce::dontSendNotification);
+        analysisRange.setTooltip ("Music added from files or folders is analysed by Centrifuge: its tempo is looked for in this range");
+        analysisRange.onChange = [this] { settings.analysisRange = analysisRange.getSelectedId() - 1; onChanged(); };
 
         addSection ("WAVEFORMS");
         const char* laneLabels[] = { "Deck 1 top lane", "Deck 1 bottom lane", "Deck 2 top lane", "Deck 2 bottom lane" };
@@ -344,7 +349,7 @@ private:
     std::array<juce::Slider, 4> stemOpacity;
     PairRow overviewRow;
     juce::TextButton colourButton;
-    juce::ComboBox deck1Out, deck2Out, fps;
+    juce::ComboBox deck1Out, deck2Out, fps, analysisRange;
     juce::ToggleButton sumToMaster, leds, stemsOnLoad, stemsGpu, foldSkips, quantize;
     juce::TextEditor dbPath, dbKey, usbFolder, modelPath, cachePath;
     Resizer dbButtons;

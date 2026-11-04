@@ -5,6 +5,9 @@
 #include "Stems/DemucsSeparator.h"
 #include "Library/CentrifugeLibrary.h"
 #include "Export/Exporters.h"
+#include "Audio/TrackAnalyser.h"
+#include "Library/TagReader.h"
+#include "Library/FileImporter.h"
 
 #if JUCE_WINDOWS
  #include <windows.h>
@@ -150,6 +153,52 @@ static int runCommandLine (const juce::StringArray& args)
         auto res = lib.import (*src, nullptr, nullptr, {});
         std::cout << "imported " << res.added << " tracks" << std::endl;
 
+        if (args.contains ("--add-music"))
+        {
+            // Music that isn't in rekordbox: a folder with a sub-folder of generated kick tracks, analysed by Centrifuge.
+            auto music = out.getChildFile ("added").getChildFile ("Club Night");
+            const std::pair<const char*, double> tracksToMake[] = { { "Test Artist - Kick 140.wav", 140.0 }, { "Sub/Other Artist - Kick 128.wav", 128.0 } };
+            for (auto& [name, bpm] : tracksToMake)
+            {
+                auto f = music.getChildFile (name);
+                f.getParentDirectory().createDirectory();
+                const double sr = 44100.0, first = 0.25;
+                juce::AudioBuffer<float> buf (2, (int) (sr * 40.0));
+                buf.clear();
+                for (int k = 0; first + k * 60.0 / bpm < 39.5; ++k)
+                {
+                    const int start = (int) std::lround ((first + k * 60.0 / bpm) * sr);
+                    double ph = 0.0;
+                    for (int i = 0; i < (int) (0.25 * sr) && start + i < buf.getNumSamples(); ++i)
+                    {
+                        const double t = i / sr;
+                        ph += juce::MathConstants<double>::twoPi * (50.0 + 120.0 * std::exp (-t * 40.0)) / sr;
+                        const float v = (float) (std::sin (ph) * std::exp (-t * 9.0) * 0.8);
+                        buf.addSample (0, start + i, v);
+                        buf.addSample (1, start + i, v);
+                    }
+                }
+                juce::WavAudioFormat wav;
+                std::unique_ptr<juce::OutputStream> os (new juce::FileOutputStream (f));
+                if (auto w = wav.createWriterFor (os, juce::AudioFormatWriterOptions{}.withSampleRate (sr).withNumChannels (2).withBitsPerSample (16)))
+                    w->writeFromAudioSampleBuffer (buf, 0, buf.getNumSamples());
+            }
+            AudioFileLoader musicLoader;
+            auto added = FileImporter::run (lib, musicLoader, { music }, {}, {});
+            std::cout << "added " << added.added << " tracks, " << added.playlists << " playlists, " << added.failed << " failed" << std::endl;
+            for (auto& t : lib.allTracks())
+                if (t.source == "files")
+                {
+                    std::cout << "  " << t.info.displayArtistTitle() << "  " << juce::String (t.info.bpm, 2) << " BPM  key " << t.info.key
+                              << "  beats " << t.rb.beats.size() << "  first " << juce::String (t.rb.beats.empty() ? -1.0 : t.rb.beats.front().timeSec, 3) << std::endl;
+                    const double expect = t.info.title.contains ("140") ? 140.0 : 128.0;
+                    if (std::abs (t.info.bpm - expect) > 0.01 || t.rb.beats.empty() || std::abs (t.rb.beats.front().timeSec - 0.25) > 0.01
+                        || t.info.artist.isEmpty())
+                    { std::cerr << "analysis of added music failed" << std::endl; return 7; }
+                }
+            if (added.added != 2 || added.playlists != 2) { std::cerr << "adding music failed" << std::endl; return 7; }
+        }
+
         std::vector<ExportItem> items;
         std::map<juce::int64, int> itemOf;
         for (auto& t : lib.allTracks())
@@ -224,6 +273,33 @@ static int runCommandLine (const juce::StringArray& args)
         return juce::PNGImageFormat().writeImageToStream (img, os) ? 0 : 1;
     }
 
+    if (args.contains ("--analyse"))
+    {
+        // --analyse <audio file> [--min 88 --max 175]: tags and Centrifuge's own BPM / grid / key analysis
+        const juce::File f (argAfter ("--analyse"));
+        const auto tags = AudioTags::read (f);
+        std::cout << "tags: " << tags.artist << " - " << tags.title << " | " << tags.album << " | " << tags.genre
+                  << " | bpm " << tags.bpm << " | key " << tags.key << " | label " << tags.label << std::endl;
+        AudioFileLoader loader;
+        juce::String err;
+        auto audio = loader.load (f, err);
+        if (audio == nullptr) { std::cerr << err << std::endl; return 1; }
+        TrackAnalyser::Options o;
+        if (argAfter ("--min").isNotEmpty()) o.minBpm = argAfter ("--min").getDoubleValue();
+        if (argAfter ("--max").isNotEmpty()) o.maxBpm = argAfter ("--max").getDoubleValue();
+        if (! args.contains ("--no-hint")) o.hintBpm = tags.bpm;
+        const auto t0 = juce::Time::getMillisecondCounterHiRes();
+        auto r = TrackAnalyser::analyse (*audio, o);
+        std::cout << "analysis: " << juce::String (r.bpm, 3) << " BPM, key " << r.key << ", first beat "
+                  << juce::String (r.beats.empty() ? 0.0 : r.beats.front().timeSec, 4) << " s (beat " << (r.beats.empty() ? 0 : r.beats.front().beatInBar)
+                  << " of 4), beats " << r.beats.size() << ", confidence " << juce::String (r.confidence, 2)
+                  << ", " << juce::String ((juce::Time::getMillisecondCounterHiRes() - t0) / 1000.0, 2) << " s" << std::endl;
+        if (args.contains ("--beats"))
+            for (size_t i = 0; i < juce::jmin<size_t> (r.beats.size(), 16); ++i)
+                std::cout << "  " << juce::String (r.beats[i].timeSec, 4) << " " << r.beats[i].beatInBar << std::endl;
+        return 0;
+    }
+
     if (args.contains ("--dump"))
     {
         const auto path = juce::File (argAfter ("--dump"));
@@ -237,6 +313,9 @@ static int runCommandLine (const juce::StringArray& args)
             std::cout << "  " << t.artist << " - " << t.title << "  " << t.bpm << " BPM  key " << t.key
                       << "  beats " << a.beats.size() << "  cues " << a.cues.size()
                       << "  waveform " << a.waveforms.numDetailEntries() << std::endl;
+            if (args.contains ("--beats"))
+                for (size_t i = 0; i < juce::jmin<size_t> (a.beats.size(), 6); ++i)
+                    std::cout << "    " << juce::String (a.beats[i].timeSec, 4) << " " << a.beats[i].beatInBar << " " << a.beats[i].bpm << std::endl;
         }
         return 0;
     }

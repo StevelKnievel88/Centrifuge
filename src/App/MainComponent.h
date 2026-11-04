@@ -15,6 +15,7 @@
 #include "../Library/CueStore.h"
 #include "../UI/LibraryDialogs.h"
 #include "TrackEditor.h"
+#include "../Library/FileImporter.h"
 
 namespace orbit
 {
@@ -58,6 +59,11 @@ private:
     void showImportMenu (juce::Component& anchor);
     void showExportMenu (juce::Component& anchor);
     void runImport (std::shared_ptr<const LibrarySource> source, std::vector<int> onlyTracks);
+  public:
+    /** Adds audio files / folders that aren't in rekordbox (analysed by Centrifuge). */
+    void addMusic (const juce::Array<juce::File>& items);
+  private:
+    void chooseMusic (bool folders);
     void askRename (int deck, bool hotCue, int index, const juce::String& current);
     void askBpm (int deck);
     void flash (const juce::String& text);
@@ -97,6 +103,9 @@ private:
     std::atomic<bool> importing { false };
     std::atomic<float> importProgress { 0.0f };
     juce::String importName, flashText;
+    juce::CriticalSection importNameLock;
+    std::atomic<bool> stopImport { false };
+    std::unique_ptr<juce::FileChooser> musicChooser;
     juce::uint32 flashUntil = 0;
     int seenLibraryChanges = -1;
     juce::uint32 lastLibraryRefresh = 0;

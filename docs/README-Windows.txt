@@ -82,6 +82,22 @@ Libraries: rekordbox copy and Centrifuge
   playhead, set the downbeat, BPM up/down/set, halve/double, tap, undo, reset.
 - Right-click a hot cue or locator to rename it or change its colour.
 
+Music that isn't in rekordbox
+-----------------------------
+- Browser > IMPORT > Add a folder... / Add audio files..., or drag files and
+  folders onto the browser. MP3, WAV, AIFF, FLAC, M4A/AAC.
+- Centrifuge reads the tags (title, artist, album, genre, BPM, key) and
+  analyses each track itself: tempo, beat grid with the bar start, and key
+  (a key in the file's tags is used instead). Takes about a second a track.
+- A folder becomes a playlist; a folder with sub-folders becomes a playlist
+  folder. Adding the same folder again picks up new files and refreshes it.
+- These tracks have R and C versions like any other, export to USB sticks and
+  rekordbox XML, and can be fixed in the GRID editor if a downbeat is wrong.
+- If you later import the same track from rekordbox, rekordbox's analysis
+  replaces Centrifuge's (unless you've edited it - then you're asked).
+- Settings > Tempo range: where the analysis looks for the BPM (88-175 suits
+  most dance music; choose 70-140 for slower music).
+
 Exporting
 ---------
 - Browser > EXPORT > USB stick: writes a rekordbox-compatible stick for the

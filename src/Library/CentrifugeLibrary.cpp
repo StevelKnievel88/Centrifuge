@@ -428,6 +428,58 @@ juce::int64 CentrifugeLibrary::addTrack (const TrackInfo& info, const TrackVersi
     return id;
 }
 
+std::pair<juce::int64, bool> CentrifugeLibrary::addAnalysedTrack (const TrackInfo& info, const TrackVersion& version, const juce::String& source)
+{
+    const auto key = CueStore::keyFor (info, info.durationSec);
+    const juce::ScopedLock sl (lock);
+    if (auto it = byKey.find (key); it != byKey.end()) return { it->second, false };
+    Track t;
+    t.id = tracks.empty() ? 1 : tracks.rbegin()->first + 1;
+    t.key = key;
+    t.info = info;
+    t.info.dbCues.clear();
+    t.source = source;
+    t.rb = t.cf = version;
+    t.importHash = "centrifuge-analysis";   // never matches a rekordbox hash: a later rekordbox import replaces it unless edited
+    t.importedGrid = version.beats;
+    exec ("BEGIN");
+    writeTrack (t);
+    exec ("COMMIT");
+    byKey[key] = t.id;
+    const auto id = t.id;
+    tracks[id] = std::move (t);
+    ++changeCount;
+    return { id, true };
+}
+
+void CentrifugeLibrary::setPlaylists (const juce::String& source, const PlaylistNode& root, const std::vector<juce::int64>& ids)
+{
+    if (db == nullptr) return;
+    exec ("BEGIN");
+    replacePlaylists (source, root, ids, {});
+    {
+        // After everything else at the top level
+        const juce::ScopedLock sl (lock);
+        int offset = 0;
+        for (auto& p : playlists) if (p.parent == 0 && p.source != source) offset = juce::jmax (offset, p.seq + 1);
+        for (auto& p : playlists)
+            if (p.parent == 0 && p.source == source)
+            {
+                p.seq += offset;
+                Stmt (db, "UPDATE playlists SET seq=? WHERE id=?").bind (1, (juce::int64) p.seq).bind (2, p.id).run();
+            }
+    }
+    exec ("COMMIT");
+    ++changeCount;
+}
+
+juce::String CentrifugeLibrary::keyForFile (const juce::File& f, double lengthSec)
+{
+    TrackInfo t;
+    t.file = f;
+    return CueStore::keyFor (t, lengthSec);
+}
+
 void CentrifugeLibrary::saveVersions (juce::int64 id, const TrackVersion* rb, const TrackVersion* cf)
 {
     const juce::ScopedLock sl (lock);

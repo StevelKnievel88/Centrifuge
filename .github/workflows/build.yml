@@ -104,7 +104,7 @@ jobs:
           git clone --depth 1 https://github.com/dylanljones/pyrekordbox.git pyrekordbox-src
           cp -r rekordcrate/data/complete_export/demo_tracks testusb
           export LD_LIBRARY_PATH=$PWD/ort/lib
-          tools/run_logged.sh xvfb-run -a ./build/Centrifuge_artefacts/Release/Centrifuge --export-test testusb --fake-audio --out exported
+          tools/run_logged.sh xvfb-run -a ./build/Centrifuge_artefacts/Release/Centrifuge --export-test testusb --fake-audio --add-music --out exported
           tools/run_logged.sh pip install construct bidict psutil
           PYREKORDBOX_SRC=$PWD/pyrekordbox-src tools/run_logged.sh python tools/check_export.py exported
           cd rekordcrate

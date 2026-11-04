@@ -9,6 +9,7 @@ namespace orbit
 
 /** rekordbox-style browser: sources and playlists on the left, tracks on the right. */
 class BrowserView : public juce::Component,
+                    public juce::FileDragAndDropTarget,
                     private juce::TableListBoxModel,
                     private juce::Timer
 {
@@ -25,6 +26,14 @@ public:
     /** Centrifuge's library as a source: view 0 = rekordbox copy, 1 = Centrifuge version. */
     std::function<std::shared_ptr<const LibrarySource> (int view)> centrifugeSource;
     std::function<void (juce::Component& anchor)> onImport, onExport;
+    /** Audio files / folders dropped on the browser (added to Centrifuge's library). */
+    std::function<void (const juce::Array<juce::File>&)> onFilesDropped;
+
+    bool isInterestedInFileDrag (const juce::StringArray& files) override;
+    void fileDragEnter (const juce::StringArray&, int, int) override { dragHover = true; repaint(); }
+    void fileDragExit (const juce::StringArray&) override { dragHover = false; repaint(); }
+    void filesDropped (const juce::StringArray& files, int, int) override;
+    void paintOverChildren (juce::Graphics&) override;
     int getLibraryView() const { return libView; }
     /** The rekordbox sources (PC collection, USB sticks) currently known. */
     std::vector<std::shared_ptr<const LibrarySource>> getRekordboxSources() const;
@@ -80,6 +89,7 @@ private:
     void setLibraryView (int v);
     juce::Label countLabel;
     bool treeFocused = false;
+    bool dragHover = false;
     int sortColumn = 0;
     bool sortForwards = true;
 };

@@ -59,6 +59,7 @@ MainComponent::MainComponent()
     waves.onRenameCue = [this] (int d, bool hot, int i, juce::String cur) { askRename (d, hot, i, cur); };
     browser.centrifugeSource = [this] (int view) { return centrifugeSource (view); };
     browser.onImport = [this] (juce::Component& c) { showImportMenu (c); };
+    browser.onFilesDropped = [this] (const juce::Array<juce::File>& items) { addMusic (items); };
     browser.onExport = [this] (juce::Component& c) { showExportMenu (c); };
     loader.onError = [this] (int deck, const juce::String& err) { (deck == 0 ? deck1 : deck2).setLoadingText (err); };
 
@@ -115,6 +116,8 @@ void MainComponent::skipSplash()
 
 MainComponent::~MainComponent()
 {
+    stopImport = true;
+    importPool.removeAllJobs (false, 20000);
     settings.audioDeviceState = engine.saveDeviceState();
     settings.save();
     editor.poll();
@@ -296,7 +299,10 @@ void MainComponent::paint (juce::Graphics& g)
     juce::String extra = stemStatus;
     juce::Colour extraColour = Theme::accent;
     if (importing.load())
-        extra = "Importing " + importName + "  " + juce::String (juce::roundToInt (importProgress.load() * 100.0f)) + "%";
+    {
+        const juce::ScopedLock sl (importNameLock);
+        extra = importName + "  " + juce::String (juce::roundToInt (importProgress.load() * 100.0f)) + "%";
+    }
     else if (juce::Time::getMillisecondCounter() < flashUntil)
     {
         extra = flashText;
@@ -419,12 +425,16 @@ void MainComponent::showImportMenu (juce::Component& anchor)
     const bool canSelected = cur != nullptr && cur->kind != LibrarySource::Kind::centrifuge && ! selected.empty();
     m.addSeparator();
     m.addItem (1000, "Import the selected tracks only  (" + juce::String ((int) selected.size()) + ")", canSelected);
+    m.addSectionHeader ("Add music that isn't in rekordbox (Centrifuge analyses it)");
+    m.addItem (2000, "Add a folder...  (becomes a playlist, sub-folders too)");
+    m.addItem (2001, "Add audio files...");
 
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&anchor),
                      [this, sources, cur, selected] (int r)
     {
         if (r >= 1 && r <= (int) sources.size()) runImport (sources[(size_t) r - 1], {});
         else if (r == 1000 && cur != nullptr) runImport (cur, selected);
+        else if (r == 2000 || r == 2001) chooseMusic (r == 2000);
     });
 }
 
@@ -432,12 +442,15 @@ void MainComponent::runImport (std::shared_ptr<const LibrarySource> source, std:
 {
     importing = true;
     importProgress = 0.0f;
-    importName = source->name;
+    {
+        const juce::ScopedLock sl (importNameLock);
+        importName = "Importing " + source->name;
+    }
     juce::Component::SafePointer<MainComponent> safe (this);
     importPool.addJob ([this, safe, source, only]
     {
         auto res = centrifugeLibrary.import (*source, only.empty() ? nullptr : &only, &cueStore,
-                                             [this] (float p) { importProgress = p; return true; });
+                                             [this] (float p) { importProgress = p; return ! stopImport.load(); });
         juce::MessageManager::callAsync ([safe, res, name = source->name]
         {
             if (safe == nullptr) return;
@@ -450,6 +463,59 @@ void MainComponent::runImport (std::shared_ptr<const LibrarySource> source, std:
                 safe->conflictsView.show (res.conflicts, summary + ", " + juce::String ((int) res.conflicts.size()) + " need you to choose.");
             else
                 safe->flash (summary);
+        });
+    });
+}
+
+void MainComponent::chooseMusic (bool folders)
+{
+    musicChooser = std::make_unique<juce::FileChooser> (folders ? "Add a folder of music" : "Add audio files",
+                                                        juce::File::getSpecialLocation (juce::File::userMusicDirectory),
+                                                        folders ? juce::String() : juce::String ("*.mp3;*.wav;*.aif;*.aiff;*.flac;*.m4a;*.aac;*.mp4;*.alac"));
+    const int flags = juce::FileBrowserComponent::openMode
+                    | (folders ? juce::FileBrowserComponent::canSelectDirectories : juce::FileBrowserComponent::canSelectFiles)
+                    | juce::FileBrowserComponent::canSelectMultipleItems;
+    musicChooser->launchAsync (flags, [this] (const juce::FileChooser& fc)
+    {
+        auto items = fc.getResults();
+        if (! items.isEmpty()) addMusic (items);
+    });
+}
+
+void MainComponent::addMusic (const juce::Array<juce::File>& items)
+{
+    if (importing.load()) { flash ("An import is already running"); return; }
+    importing = true;
+    importProgress = 0.0f;
+    {
+        const juce::ScopedLock sl (importNameLock);
+        importName = "Adding music";
+    }
+    FileImporter::Options o;
+    std::tie (o.minBpm, o.maxBpm) = settings.analysisBpmRange();
+    o.mp3OffsetMs = settings.mp3OffsetMs;
+    juce::Component::SafePointer<MainComponent> safe (this);
+    importPool.addJob ([this, safe, items, o]
+    {
+        auto res = FileImporter::run (centrifugeLibrary, fileLoader, items, o, [this] (float p, const juce::String& name)
+        {
+            importProgress = p;
+            const juce::ScopedLock sl (importNameLock);
+            importName = "Analysing " + name;
+            return ! stopImport.load();
+        });
+        juce::MessageManager::callAsync ([safe, res]
+        {
+            if (safe == nullptr) return;
+            safe->importing = false;
+            safe->browser.refreshSources();
+            juce::String summary = "Added " + juce::String (res.added) + " track" + (res.added == 1 ? "" : "s");
+            if (res.alreadyThere > 0) summary << ", " << res.alreadyThere << " already in the library";
+            if (res.playlists > 0) summary << ", " << res.playlists << " playlist" << (res.playlists == 1 ? "" : "s");
+            if (res.failed > 0) summary << ", " << res.failed << " couldn't be read (" << res.errors[0] << ")";
+            else if (res.added == 0 && res.alreadyThere == 0 && ! res.errors.isEmpty()) summary = res.errors[0];
+            if (res.cancelled) summary << " (stopped)";
+            safe->flash (summary);
         });
     });
 }
