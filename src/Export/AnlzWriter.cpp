@@ -186,7 +186,7 @@ juce::MemoryBlock AnlzWriter::cueListTag (const TrackVersion& v, bool hot)
         body.u32 (0x1c);
         body.u32 (0x38);
         body.u32 (hot ? (uint32_t) c.hotIndex + 1 : 0);
-        body.u32 (4);                                           // enabled
+        body.u32 (0);                                           // status (4 = an active loop)
         body.u32 (0x10000);
         body.u16 (i == 0 ? 0xffff : (uint32_t) i - 1);          // order: previous
         body.u16 (i + 1 == cues.size() ? 0xffff : (uint32_t) i + 1);   // order: next
@@ -209,7 +209,8 @@ juce::MemoryBlock AnlzWriter::extendedCueListTag (const TrackVersion& v, bool ho
     for (auto& c : cues)
     {
         const uint32_t lenComment = c.comment.isNotEmpty() ? (uint32_t) (c.comment.length() + 1) * 2 : 0;
-        const uint32_t lenEntry = (48 + lenComment + 3) / 4 * 4 + 8;
+        // 44 bytes of fields, the comment, 4 colour bytes, then 20 more (unknown) bytes rekordbox always writes
+        const uint32_t lenEntry = (68 + lenComment + 3) / 4 * 4;
         body.cc ("PCP2");
         body.u32 (0x10);
         body.u32 (lenEntry);
