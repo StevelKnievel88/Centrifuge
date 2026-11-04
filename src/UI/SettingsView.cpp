@@ -60,6 +60,7 @@ public:
         };
         add (&overviewRow, 28, "Overview (whole track)");
         add (&colourButton, 28, "Single colour");
+        colourButton.getProperties().set ("psyched.swatch", true);
         colourButton.setColour (juce::TextButton::buttonColourId, juce::Colour (settings.singleColour));
         colourButton.setButtonText ("CHOOSE COLOUR");
         colourButton.onClick = [this]
@@ -267,9 +268,7 @@ public:
         {
             if (row.comp == nullptr)
             {
-                g.setColour (Theme::accent);
-                g.setFont (Theme::font (12.5f, true));
-                g.drawText (row.label, row.labelBounds, juce::Justification::centredLeft);
+                psyched::paintTitle (g, row.label, row.labelBounds.toFloat(), juce::Justification::centredLeft, Theme::accent, 11.0f);
                 g.setColour (Theme::line);
                 g.fillRect (row.labelBounds.getX(), row.labelBounds.getBottom(), juce::jmin (816, getWidth()), 1);
             }
@@ -367,7 +366,7 @@ SettingsView::~SettingsView() = default;
 void SettingsView::refreshRouting() { content->refreshRouting(); }
 void SettingsView::refreshValues() { content->refreshValues(); }
 
-void SettingsView::paint (juce::Graphics& g) { g.fillAll (Theme::bg); }
+void SettingsView::paint (juce::Graphics&) {}
 
 void SettingsView::resized()
 {

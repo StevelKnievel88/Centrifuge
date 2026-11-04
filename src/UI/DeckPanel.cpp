@@ -19,13 +19,7 @@ namespace
 
     void chip (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& text, bool lit, juce::Colour litColour)
     {
-        g.setColour (lit ? litColour : Theme::panelHi);
-        g.fillRoundedRectangle (r, 3.0f);
-        g.setColour (lit ? litColour.brighter (0.3f) : Theme::line);
-        g.drawRoundedRectangle (r.reduced (0.5f), 3.0f, 1.0f);
-        g.setColour (lit ? juce::Colours::black : Theme::textDim);
-        g.setFont (Theme::font (11.0f, true));
-        g.drawText (text, r, juce::Justification::centred);
+        psyched::paintChip (g, r, text, litColour, lit ? psyched::ChipState::on : psyched::ChipState::off);
     }
 }
 
@@ -94,11 +88,12 @@ void DeckPanel::timerCallback()
 
 void DeckPanel::paint (juce::Graphics& g)
 {
-    g.fillAll (Theme::panel);
+    const auto col = Theme::deckColour (deck);
+    g.fillAll (Theme::bg);
+    psyched::paintPanel (g, getLocalBounds().toFloat(), col);
     regions.clear();
 
     const auto& st = engine.deck (deck).state();
-    const auto col = Theme::deckColour (deck);
     const bool loaded = track != nullptr;
 
     // --- Info row ------------------------------------------------------------
@@ -106,19 +101,19 @@ void DeckPanel::paint (juce::Graphics& g)
         auto r = rowInfo;
         auto badge = r.removeFromLeft (30.0f).withSizeKeepingCentre (28.0f, 28.0f);
         g.setColour (col);
-        g.fillRoundedRectangle (badge, 4.0f);
-        g.setColour (juce::Colours::black);
-        g.setFont (Theme::font (17.0f, true));
+        g.fillRect (badge);
+        g.setColour (psyched::Colours::onSolid);
+        g.setFont (Theme::display (15.0f, true));
         g.drawText (juce::String (deck + 1), badge, juce::Justification::centred);
         r.removeFromLeft (10.0f);
 
         auto bpmArea = r.removeFromRight (110.0f);
         g.setColour (st.master.load() ? Theme::accent : Theme::text);
-        g.setFont (Theme::font (27.0f, true));
+        g.setFont (Theme::mono (26.0f, true));
         const double bpm = st.bpm.load();
         g.drawText (loaded && bpm > 0 ? juce::String (bpm, 2) : "--.--", bpmArea.removeFromTop (28.0f), juce::Justification::centredRight);
         g.setColour (Theme::textDim);
-        g.setFont (Theme::font (10.5f, true));
+        g.setFont (psyched::Fonts::label());
         g.drawText ("BPM", bpmArea, juce::Justification::topRight);
 
         if (loaded && track->info.key.isNotEmpty())
@@ -141,7 +136,7 @@ void DeckPanel::paint (juce::Graphics& g)
             regions.push_back ({ keyChip, p + "key.reset", 0 });
 
             g.setColour (Theme::panelHi);
-            g.fillRoundedRectangle (keyChip, 3.0f);
+            g.fillRect (keyChip);
             g.setColour (shift != 0 ? Theme::warn : Theme::good);
             g.setFont (Theme::font (13.0f, true));
             auto keyText = router.effectiveKeyText (deck);
@@ -177,7 +172,7 @@ void DeckPanel::paint (juce::Graphics& g)
     {
         auto r = rowStatus;
         const double pos = st.positionSec.load(), len = st.lengthSec.load();
-        g.setFont (Theme::font (19.0f, true));
+        g.setFont (Theme::mono (17.0f, true));
         g.setColour (Theme::text);
         g.drawText (loaded ? formatTime (pos) : "0:00.0", r.removeFromLeft (78.0f), juce::Justification::centredLeft);
         const bool warn = st.endWarning.load() && (juce::Time::getMillisecondCounter() / 400) % 2 == 0;
@@ -193,7 +188,7 @@ void DeckPanel::paint (juce::Graphics& g)
         {
             auto b = r.removeFromLeft (14.0f).withSizeKeepingCentre (10.0f, 10.0f);
             g.setColour (i == beatInBar ? (i == 1 ? Theme::bad : col) : Theme::line);
-            g.fillRoundedRectangle (b, 2.0f);
+            g.fillRect (b);
         }
 
         // Edit targets: R = rekordbox copy, C = Centrifuge version (both lit = edit both); GRID opens the grid editor
@@ -249,7 +244,7 @@ void DeckPanel::paint (juce::Graphics& g)
     {
         auto r = rowOverview;
         g.setColour (Theme::waveBg);
-        g.fillRoundedRectangle (r, 3.0f);
+        g.fillRect (r);
         regions.push_back ({ r, {}, 1 });
 
         if (loaded && track->waveform != nullptr)
@@ -368,9 +363,9 @@ void DeckPanel::paint (juce::Graphics& g)
             const bool set = st.hotStart[(size_t) i].load() >= 0.0;
             const auto c = juce::Colour (st.hotColour[(size_t) i].load());
             g.setColour (set ? c.withAlpha (0.9f) : Theme::panelHi);
-            g.fillRoundedRectangle (pad, 3.0f);
+            g.fillRect (pad);
             g.setColour (set ? c.brighter (0.3f) : Theme::line);
-            g.drawRoundedRectangle (pad.reduced (0.5f), 3.0f, 1.0f);
+            g.drawRect (pad.reduced (0.5f), 1.0f);
             g.setColour (set ? juce::Colours::black : Theme::textFaint);
             g.setFont (Theme::font (12.0f, true));
             auto label = juce::String::charToString ((juce::juce_wchar) ('A' + i));
@@ -445,14 +440,14 @@ void DeckPanel::paint (juce::Graphics& g)
             const float gain = st.stemGain[(size_t) s].load();
             const auto sc = Theme::stemColour (s);
             g.setColour (Theme::panelHi);
-            g.fillRoundedRectangle (b, 3.0f);
+            g.fillRect (b);
             if (ready)
             {
                 g.setColour (sc.withAlpha (gain <= 0.0f ? 0.12f : 0.6f));
-                g.fillRoundedRectangle (b.withTrimmedRight (b.getWidth() * (1.0f - juce::jmax (gain, 0.04f))), 3.0f);
+                g.fillRect (b.withTrimmedRight (b.getWidth() * (1.0f - juce::jmax (gain, 0.04f))));
             }
             g.setColour (ready ? sc.withAlpha (0.8f) : Theme::line);
-            g.drawRoundedRectangle (b.reduced (0.5f), 3.0f, 1.0f);
+            g.drawRect (b.reduced (0.5f), 1.0f);
             g.setColour (ready ? (gain <= 0.0f ? Theme::textFaint : Theme::text) : Theme::textFaint);
             g.setFont (Theme::font (11.0f, true));
             g.drawText (juce::String (stemName (s)).toUpperCase(), b, juce::Justification::centred);

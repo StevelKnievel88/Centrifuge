@@ -16,8 +16,8 @@ StemsView::StemsView (StemManager& s,
     addAndMakeVisible (rotor);
     for (auto* b : { &analyseList, &analyseSelected, &stop, &openCache })
         addAndMakeVisible (*b);
-    analyseList.setColour (juce::TextButton::buttonColourId, Theme::accent.withAlpha (0.85f));
-    analyseList.setColour (juce::TextButton::textColourOffId, juce::Colours::black);
+    analyseList.getProperties().set ("psyched.solid", true);
+    analyseList.setColour (juce::TextButton::buttonOnColourId, Theme::accent);
 
     analyseList.onClick = [this] { stems.addToBatch (getList()); };
     analyseSelected.onClick = [this] { stems.addToBatch (getSelected()); };
@@ -81,12 +81,8 @@ void StemsView::mouseDown (const juce::MouseEvent& e)
 
 void StemsView::paint (juce::Graphics& g)
 {
-    g.fillAll (Theme::bg);
     auto r = getLocalBounds().reduced (24);
-
-    g.setColour (Theme::text);
-    g.setFont (Theme::font (22.0f, true));
-    g.drawText ("Stems", r.removeFromTop (34), juce::Justification::centredLeft);
+    psyched::paintTitle (g, "Stems", r.removeFromTop (34).toFloat(), juce::Justification::centredLeft, Theme::text, 16.0f);
     r.removeFromRight (juce::jmin (260, getWidth() / 4) + 10);
 
     g.setFont (Theme::font (14.0f));
@@ -114,11 +110,11 @@ void StemsView::paint (juce::Graphics& g)
 
     auto bar = r.removeFromTop (14).withWidth (juce::jmin (520, r.getWidth())).toFloat().reduced (0.0f, 3.0f).withTrimmedLeft (150.0f);
     g.setColour (Theme::panelHi);
-    g.fillRoundedRectangle (bar, 3.0f);
+    g.fillRect (bar);
     if (shown.activity.isNotEmpty())
     {
         g.setColour (Theme::accent);
-        g.fillRoundedRectangle (bar.withWidth (bar.getWidth() * (float) shown.progress), 3.0f);
+        g.fillRect (bar.withWidth (bar.getWidth() * (float) shown.progress));
     }
     r.removeFromTop (6);
 
@@ -157,9 +153,9 @@ void StemsView::paint (juce::Graphics& g)
             const bool on = (m[(size_t) c] >> s) & 1;
             auto b = cell (c, s).toFloat();
             g.setColour (on ? Theme::stemColour (s).withAlpha (0.75f) : Theme::panelHi);
-            g.fillRoundedRectangle (b, 4.0f);
+            g.fillRect (b);
             g.setColour (on ? Theme::stemColour (s) : Theme::line);
-            g.drawRoundedRectangle (b.reduced (0.5f), 4.0f, 1.0f);
+            g.drawRect (b.reduced (0.5f), 1.0f);
             if (on)
             {
                 g.setColour (juce::Colours::black);

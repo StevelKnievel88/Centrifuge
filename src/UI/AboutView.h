@@ -46,18 +46,16 @@ public:
     void paint (juce::Graphics& g) override
     {
         g.fillAll (juce::Colours::black.withAlpha (0.72f));
-        g.setColour (Theme::panel);
-        g.fillRoundedRectangle (card.toFloat(), 10.0f);
-        g.setColour (Theme::line);
-        g.drawRoundedRectangle (card.toFloat().reduced (0.5f), 10.0f, 1.0f);
+        juce::DropShadow (juce::Colours::black.withAlpha (0.6f), 40, { 0, 12 }).drawForRectangle (g, card);
+        psyched::paintPanel (g, card.toFloat(), Theme::output);
+        psyched::paintScanlines (g, card.toFloat().reduced (1.0f).withHeight (170.0f), 0.02f);
 
         auto r = card.reduced (28).withTrimmedTop (150);
-        g.setColour (Theme::text);
-        g.setFont (Theme::font (30.0f, true));
-        g.drawText ("Centrifuge", r.removeFromTop (38), juce::Justification::centred);
+        psyched::paintWordmark (g, r.removeFromTop (38).toFloat(), "Centrifuge", 0, psyched::Signature::spin, 26.0f,
+                                juce::Justification::centred);
 
         g.setColour (Theme::accent);
-        g.setFont (Theme::font (16.0f, true));
+        g.setFont (psyched::Fonts::value (13.0f));
         auto v = "Version " + version();
         if (buildInfo().isNotEmpty()) v << "   (" << buildInfo() << ")";
         g.drawText (v, r.removeFromTop (24), juce::Justification::centred);
@@ -76,7 +74,7 @@ public:
         g.drawFittedText ("Built with JUCE, ONNX Runtime (DirectML), SQLite3 Multiple Ciphers and Signalsmith Stretch.\n"
                           "Stem separation: HTDemucs (Meta, MIT licence), exported with demucs.onnx (Sevag Hanssian).\n"
                           "rekordbox file formats: Deep Symmetry (crate-digger), rekordcrate and pyrekordbox.\n"
-                          "Inter typeface. rekordbox is a trademark of AlphaTheta Corporation.",
+                          "Psyched Devices Cockpit skin: Unbounded, Manrope, JetBrains Mono (OFL). rekordbox is a trademark of AlphaTheta Corporation.",
                           r.removeFromTop (78), juce::Justification::centredTop, 5);
 
         g.setColour (Theme::textFaint.withAlpha (0.7f));

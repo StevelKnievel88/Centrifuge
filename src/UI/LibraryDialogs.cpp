@@ -8,13 +8,9 @@ namespace orbit
 void OverlayCard::paint (juce::Graphics& g)
 {
     g.fillAll (juce::Colours::black.withAlpha (0.7f));
-    g.setColour (Theme::panel);
-    g.fillRoundedRectangle (card.toFloat(), 10.0f);
-    g.setColour (Theme::line);
-    g.drawRoundedRectangle (card.toFloat().reduced (0.5f), 10.0f, 1.0f);
-    g.setColour (Theme::text);
-    g.setFont (Theme::font (20.0f, true));
-    g.drawText (title, card.reduced (24, 18).removeFromTop (28), juce::Justification::centredLeft);
+    juce::DropShadow (juce::Colours::black.withAlpha (0.6f), 40, { 0, 12 }).drawForRectangle (g, card);
+    psyched::paintPanel (g, card.toFloat(), accentColour);
+    psyched::paintTitle (g, title, card.reduced (24, 18).removeFromTop (28).toFloat(), juce::Justification::centredLeft, Theme::text, 14.0f);
 }
 
 void OverlayCard::resized()
@@ -28,14 +24,15 @@ ExportView::ExportView (CentrifugeLibrary& l, AudioFileLoader& fl, Sources s)
     : library (l), loader (fl), sources (std::move (s))
 {
     cardHeight = 430;
+    accentColour = Theme::output;
     for (auto* c : std::initializer_list<juce::Component*> { &what, &version, &path, &choose, &go, &cancel })
         addAndMakeVisible (c);
     version.addItem ("rekordbox copy  (as imported from rekordbox, with your R edits)", 1);
     version.addItem ("Centrifuge version, cut down to what rekordbox can hold", 2);
     version.setSelectedId (2, juce::dontSendNotification);
     path.setFont (Theme::font (13.5f));
-    go.setColour (juce::TextButton::buttonColourId, Theme::accent.withAlpha (0.85f));
-    go.setColour (juce::TextButton::textColourOffId, juce::Colours::black);
+    go.getProperties().set ("psyched.solid", true);
+    go.setColour (juce::TextButton::buttonOnColourId, Theme::output);
 
     choose.onClick = [this]
     {
@@ -120,7 +117,7 @@ void ExportView::paint (juce::Graphics& g)
     OverlayCard::paint (g);
     auto r = card.reduced (24, 18);
     r.removeFromTop (44);
-    g.setFont (Theme::font (12.5f, true));
+    g.setFont (psyched::Fonts::label (10.5f));
     g.setColour (Theme::textDim);
     g.drawText ("WHAT", r.removeFromTop (18), juce::Justification::centredLeft);
     r.removeFromTop (50);
@@ -360,7 +357,7 @@ void ConflictsView::paint (juce::Graphics& g)
 void ConflictsView::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool)
 {
     if (row >= (int) conflicts.size()) return;
-    g.setColour (row % 2 ? Theme::panelHi : Theme::panelHi.brighter (0.03f));
+    g.setColour (row % 2 ? Theme::field : Theme::panel);
     g.fillRect (0, 0, w, h);
     g.setColour (Theme::text);
     g.setFont (Theme::font (13.5f));
@@ -369,11 +366,7 @@ void ConflictsView::paintListBoxItem (int row, juce::Graphics& g, int w, int h, 
     const int d = decided[(size_t) row];
     auto chip = [&] (juce::Rectangle<int> b, const juce::String& t, bool lit, juce::Colour c)
     {
-        g.setColour (lit ? c : Theme::panel);
-        g.fillRoundedRectangle (b.toFloat(), 3.0f);
-        g.setColour (lit ? juce::Colours::black : Theme::textDim);
-        g.setFont (Theme::font (11.5f, true));
-        g.drawText (t, b, juce::Justification::centred);
+        psyched::paintChip (g, b.toFloat(), t, c, lit ? psyched::ChipState::on : psyched::ChipState::off);
     };
     chip ({ w - 220, 4, 100, h - 8 }, d == 1 ? "KEPT MINE" : "KEEP MINE", d == 1, Theme::good);
     chip ({ w - 112, 4, 100, h - 8 }, d == 2 ? "TOOK REKORDBOX" : "TAKE REKORDBOX", d == 2, Theme::accent);

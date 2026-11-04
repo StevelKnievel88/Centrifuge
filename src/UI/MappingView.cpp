@@ -25,8 +25,8 @@ MappingView::MappingView (MidiManager& m, std::function<void()> saveFn) : midi (
 
     for (auto* b : { &learnButton, &learnAddButton, &clearButton, &guidedButton, &skipButton, &stopButton, &invertButton })
         addAndMakeVisible (*b);
-    learnButton.setColour (juce::TextButton::buttonColourId, Theme::accent.withAlpha (0.85f));
-    learnButton.setColour (juce::TextButton::textColourOffId, juce::Colours::black);
+    learnButton.getProperties().set ("psyched.solid", true);
+    learnButton.setColour (juce::TextButton::buttonOnColourId, Theme::map);
     invertButton.setClickingTogglesState (true);
     skipButton.setVisible (false);
     stopButton.setVisible (false);
@@ -208,11 +208,7 @@ void MappingView::cellClicked (int row, int, const juce::MouseEvent&)
 
 void MappingView::paint (juce::Graphics& g)
 {
-    g.fillAll (Theme::bg);
-    g.setColour (Theme::textDim);
-    g.setFont (Theme::font (12.0f, true));
-    g.drawText ("MIDI MONITOR - move anything on the XDJ-XZ", monitor.getBounds().withY (monitor.getY() - 22).withHeight (20),
-                juce::Justification::centredLeft);
+    psyched::paintLabel (g, "MIDI monitor - move anything on the XDJ-XZ", monitor.getBounds().withY (monitor.getY() - 22).withHeight (20).toFloat());
 }
 
 void MappingView::resized()

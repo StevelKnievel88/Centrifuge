@@ -85,7 +85,8 @@ MainComponent::MainComponent()
     for (auto* t : { &tabPlay, &tabMapping, &tabStems, &tabSettings })
     {
         addAndMakeVisible (*t);
-        t->setColour (juce::TextButton::buttonColourId, Theme::panel);
+        t->getProperties().set ("psyched.mode", true);   // Cockpit mode switch: pressed = solid green
+        t->setColour (juce::TextButton::buttonOnColourId, psyched::Colours::green);
         const int p = i++;
         t->onClick = [this, p] { showPage (p); };
     }
@@ -263,31 +264,23 @@ void MainComponent::timerCallback()
 
 void MainComponent::paint (juce::Graphics& g)
 {
-    g.fillAll (Theme::bg);
-
-    g.setColour (Theme::panel);
-    g.fillRect (topBar);
-    g.setColour (Theme::line);
-    g.fillRect (topBar.withTop (topBar.getBottom() - 1));
+    psyched::paintBackdrop (g, getLocalBounds());
+    psyched::paintHeader (g, topBar.toFloat());
 
     // Dividers (drag to resize)
     for (auto d : { dividerDecks, dividerBrowser })
         if (! d.isEmpty() && page == 0)
         {
-            g.setColour (Theme::panel);
-            g.fillRect (d);
-            g.setColour (Theme::line.brighter (0.4f));
-            g.fillRoundedRectangle (d.withSizeKeepingCentre (40, 2).toFloat(), 1.0f);
+            g.setColour (psyched::Colours::edge2);
+            g.fillRect (d.withSizeKeepingCentre (40, 2));
         }
 
     // Logo (click for About)
     auto r = topBar.reduced (14, 0);
-    auto logo = r.removeFromLeft (130).toFloat();
+    auto logo = r.removeFromLeft (236).toFloat();
     logoArea = logo.toNearestInt();
-    CentrifugeRotor::paintRotor (g, logo.withWidth (28.0f).withSizeKeepingCentre (28.0f, 28.0f), 0.4f, 0.0f, 1.0f, 0.0f, 0.0f);
-    g.setColour (Theme::text);
-    g.setFont (Theme::font (17.0f, true));
-    g.drawText ("Centrifuge", logo.withTrimmedLeft (30.0f), juce::Justification::centredLeft);
+    CentrifugeRotor::paintRotor (g, logo.withWidth (30.0f).withSizeKeepingCentre (30.0f, 30.0f), 0.4f, 0.0f, 1.0f, 0.0f, 0.0f);
+    psyched::paintWordmark (g, logo.withTrimmedLeft (40.0f), "Centrifuge", 0, psyched::Signature::spin, 17.0f);
 
     // Status pills (right side)
     auto pills = topBar.reduced (10, 9).toFloat();
@@ -297,9 +290,9 @@ void MainComponent::paint (juce::Graphics& g)
         drawPill (g, pr, text, dot);
         pills.removeFromRight (8.0f);
     };
-    pill ("Audio CPU " + juce::String (juce::roundToInt (cpu * 100.0)) + "%", cpu < 0.5 ? Theme::good : (cpu < 0.8 ? Theme::warn : Theme::bad), 128.0f);
-    pill (audioStatus, audioStatus.startsWith ("No") ? Theme::bad : Theme::good, juce::jmin (330.0f, Theme::font (12.5f).getStringWidthFloat (audioStatus) + 40.0f));
-    pill (xdjConnected ? juce::String ("XDJ-XZ connected") : juce::String ("XDJ-XZ not found"), xdjConnected ? Theme::good : Theme::bad, 150.0f);
+    pill ("CPU " + juce::String (juce::roundToInt (cpu * 100.0)) + "%", cpu < 0.5 ? Theme::good : (cpu < 0.8 ? Theme::warn : Theme::bad), 84.0f);
+    pill (audioStatus, audioStatus.startsWith ("No") ? Theme::bad : Theme::good, juce::jmin (330.0f, psyched::Fonts::label().getStringWidthFloat (audioStatus.toUpperCase()) + 34.0f));
+    pill (xdjConnected ? juce::String ("XDJ-XZ connected") : juce::String ("XDJ-XZ not found"), xdjConnected ? Theme::good : Theme::bad, 164.0f);
     juce::String extra = stemStatus;
     juce::Colour extraColour = Theme::accent;
     if (importing.load())
@@ -310,7 +303,7 @@ void MainComponent::paint (juce::Graphics& g)
         extraColour = Theme::warn;
     }
     if (page == 0 || extra != stemStatus)
-        pill (extra, extraColour, juce::jmin (page == 0 ? 520.0f : 700.0f, Theme::font (12.5f).getStringWidthFloat (extra) + 40.0f));
+        pill (extra, extraColour, juce::jmin (page == 0 ? 520.0f : 700.0f, psyched::Fonts::label().getStringWidthFloat (extra.toUpperCase()) + 34.0f));
 }
 
 void MainComponent::resized()
@@ -320,13 +313,13 @@ void MainComponent::resized()
     exportView.setBounds (getLocalBounds());
     conflictsView.setBounds (getLocalBounds());
     auto r = getLocalBounds();
-    topBar = r.removeFromTop (44);
+    topBar = r.removeFromTop (52);
 
-    auto tabs = topBar.withTrimmedLeft (160).withWidth (420).reduced (0, 8);
+    auto tabs = topBar.withTrimmedLeft (262).withWidth (404).reduced (0, 12);
     for (auto* t : { &tabPlay, &tabMapping, &tabStems, &tabSettings })
     {
-        t->setBounds (tabs.removeFromLeft (98));
-        tabs.removeFromLeft (6);
+        t->setBounds (tabs.removeFromLeft (100));
+        tabs.removeFromLeft (-1);
     }
 
     if (page == 0)

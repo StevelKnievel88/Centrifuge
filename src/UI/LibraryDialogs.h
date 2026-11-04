@@ -19,6 +19,7 @@ protected:
     virtual void layoutCard (juce::Rectangle<int> card) = 0;
     juce::Rectangle<int> card;
     juce::String title;
+    juce::Colour accentColour { 0xffffd339 };   // panel top border (function colour)
     int cardWidth = 640, cardHeight = 420;
 };
 

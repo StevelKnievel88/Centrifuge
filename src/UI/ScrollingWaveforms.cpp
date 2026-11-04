@@ -243,16 +243,16 @@ void ScrollingWaveforms::paint (juce::Graphics& g)
 void ScrollingWaveforms::drawLabel (juce::Graphics& g, juce::Rectangle<int> lane, const juce::String& text, bool atTop)
 {
     if (lane.getHeight() < 20) return;
-    const auto f = Theme::font (10.5f, true);
-    const float w = f.getStringWidthFloat (text) + 14.0f;
+    const auto f = psyched::Fonts::label (10.0f);
+    const float w = f.getStringWidthFloat (text.toUpperCase()) + 14.0f;
     auto r = juce::Rectangle<float> ((float) lane.getX() + 34.0f, atTop ? (float) lane.getY() + 4.0f : (float) lane.getBottom() - 20.0f, w, 16.0f);
-    g.setColour (juce::Colours::black.withAlpha (0.78f));
-    g.fillRoundedRectangle (r, 4.0f);
-    g.setColour (juce::Colours::white.withAlpha (0.35f));
-    g.drawRoundedRectangle (r.reduced (0.5f), 4.0f, 1.0f);
-    g.setColour (juce::Colours::white);
+    g.setColour (psyched::Colours::field.withAlpha (0.85f));
+    g.fillRect (r);
+    g.setColour (psyched::Colours::edge2);
+    g.drawRect (r, 1.0f);
+    g.setColour (psyched::Colours::ink2);
     g.setFont (f);
-    g.drawText (text, r, juce::Justification::centred);
+    g.drawText (text.toUpperCase(), r, juce::Justification::centred);
 }
 
 void ScrollingWaveforms::paintDeck (juce::Graphics& g, int d, juce::Rectangle<int> r)
@@ -267,8 +267,8 @@ void ScrollingWaveforms::paintDeck (juce::Graphics& g, int d, juce::Rectangle<in
     // Divider with a small grip
     g.setColour (Theme::panel);
     g.fillRect (div);
-    g.setColour (Theme::line.brighter (0.4f));
-    g.fillRoundedRectangle (div.withSizeKeepingCentre (36, 2).toFloat(), 1.0f);
+    g.setColour (psyched::Colours::edge2);
+    g.fillRect (div.withSizeKeepingCentre (36, 2).toFloat());
 
     // Playhead through both lanes (drag it left/right to see more of what's coming)
     const auto& st = engine.deck (d).state();
@@ -282,9 +282,9 @@ void ScrollingWaveforms::paintDeck (juce::Graphics& g, int d, juce::Rectangle<in
     // Deck badge + lane labels (dark backing so they read over any waveform)
     auto badge = juce::Rectangle<float> ((float) r.getX() + 6.0f, (float) r.getY() + 4.0f, 22.0f, 18.0f);
     g.setColour (Theme::deckColour (d));
-    g.fillRoundedRectangle (badge, 3.0f);
-    g.setColour (juce::Colours::black);
-    g.setFont (Theme::font (13.0f, true));
+    g.fillRect (badge);
+    g.setColour (psyched::Colours::onSolid);
+    g.setFont (Theme::display (11.0f, true));
     g.drawText (juce::String (d + 1), badge, juce::Justification::centred);
 
     drawLabel (g, topLane, laneName (d, 0), false);
@@ -305,9 +305,9 @@ void ScrollingWaveforms::paintDeck (juce::Graphics& g, int d, juce::Rectangle<in
                 }
             auto tr = juce::Rectangle<float> ((float) r.getX() + 34.0f, (float) r.getY() + 4.0f, 130.0f, 16.0f);
             g.setColour (juce::Colours::black.withAlpha (0.78f));
-            g.fillRoundedRectangle (tr, 4.0f);
+            g.fillRect (tr);
             g.setColour (Theme::deckColour (d));
-            g.setFont (Theme::font (11.0f, true));
+            g.setFont (psyched::Fonts::label (10.0f));
             g.drawText ("SEPARATING " + juce::String (juce::roundToInt (p * 100.0f)) + "%", tr, juce::Justification::centred);
         }
     }
@@ -583,7 +583,7 @@ void ScrollingWaveforms::paintOverlays (juce::Graphics& g, int d, juce::Rectangl
         {
             auto flag = juce::Rectangle<float> (x, flagTop, 14.0f, (float) markerBand - 2.0f);
             g.setColour (col);
-            g.fillRoundedRectangle (flag, 2.0f);
+            g.fillRect (flag);
             g.setColour (juce::Colours::black);
             g.drawText (juce::String::charToString ((juce::juce_wchar) ('A' + i)), flag, juce::Justification::centred);
             markers.push_back ({ flag.expanded (1.0f), d, markerHot, i });

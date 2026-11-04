@@ -54,8 +54,10 @@ public:
     {
         if (isSelected())
         {
-            g.setColour (Theme::accent.withAlpha (owner.treeFocused ? 0.3f : 0.16f));
+            g.setColour (Theme::accent.withAlpha (owner.treeFocused ? 0.16f : 0.09f));
             g.fillRect (0, 0, w, h);
+            g.setColour (Theme::accent);
+            g.fillRect (0, 0, 2, h);
         }
         auto r = juce::Rectangle<float> (0, 0, (float) w, (float) h).reduced (4.0f, 0.0f);
         auto icon = r.removeFromLeft (16.0f).withSizeKeepingCentre (12.0f, 12.0f);
@@ -66,12 +68,12 @@ public:
         else if (isSourceRoot)
         {
             g.setColour (src->kind == LibrarySource::Kind::usbExport ? Theme::warn : Theme::deckColour (0));
-            g.fillRoundedRectangle (icon, 2.0f);
+            g.fillRect (icon);
         }
         else if (node != nullptr && node->isFolder)
         {
             g.setColour (Theme::textDim);
-            g.drawRoundedRectangle (icon, 2.0f, 1.2f);
+            g.drawRect (icon, 1.2f);
         }
         else
         {
@@ -132,7 +134,7 @@ BrowserView::BrowserView (LibraryManager& lib, StemManager& stems) : library (li
     for (auto* b : { &load1, &load2 })
     {
         addAndMakeVisible (*b);
-        b->setColour (juce::TextButton::buttonColourId, Theme::panelHi);
+        b->setColour (juce::TextButton::buttonOnColourId, Theme::deckColour (b == &load1 ? 0 : 1));
     }
     load1.onClick = [this] { loadSelected (0); };
     load2.onClick = [this] { loadSelected (1); };
@@ -140,8 +142,9 @@ BrowserView::BrowserView (LibraryManager& lib, StemManager& stems) : library (li
     for (auto* b : { &importButton, &exportButton, &viewR, &viewC })
     {
         addAndMakeVisible (*b);
-        b->setColour (juce::TextButton::buttonColourId, Theme::panelHi);
     }
+    importButton.setColour (juce::TextButton::buttonOnColourId, Theme::good);    // input
+    exportButton.setColour (juce::TextButton::buttonOnColourId, Theme::output);  // output
     importButton.setTooltip ("Copy rekordbox's collection or a USB stick into Centrifuge's library (rekordbox is only read)");
     exportButton.setTooltip ("Write a rekordbox-compatible USB stick or a rekordbox XML file");
     viewR.setTooltip ("Show the library's rekordbox copy");
@@ -173,7 +176,8 @@ void BrowserView::paint (juce::Graphics& g)
     g.fillAll (Theme::panel);
     g.setColour (Theme::line);
     g.fillRect (tree.getRight(), 0, 1, getHeight());
-    g.fillRect (0, 0, getWidth(), 1);
+    g.setColour (Theme::accent);
+    g.fillRect (0, 0, getWidth(), 2);
 }
 
 void BrowserView::resized()
@@ -311,12 +315,14 @@ int BrowserView::getNumRows() { return (int) rows.size(); }
 
 void BrowserView::paintRowBackground (juce::Graphics& g, int row, int w, int h, bool selected)
 {
-    g.setColour (row % 2 ? Theme::panel : Theme::panel.brighter (0.025f));
+    g.setColour (row % 2 ? Theme::panel : juce::Colour (0xff0d0c17));
     g.fillRect (0, 0, w, h);
     if (selected)
     {
-        g.setColour (Theme::accent.withAlpha (treeFocused ? 0.14f : 0.26f));
+        g.setColour (Theme::accent.withAlpha (treeFocused ? 0.08f : 0.13f));
         g.fillRect (0, 0, w, h);
+        g.setColour (Theme::accent);
+        g.fillRect (w - 2, 0, 2, h);
     }
     if (row < (int) rows.size() && currentSource != nullptr)
     {
@@ -379,7 +385,7 @@ void BrowserView::paintCell (juce::Graphics& g, int row, int col, int w, int h, 
                 // The rekordbox copy and the Centrifuge version are different
                 auto b = juce::Rectangle<float> ((float) w * 0.5f - 15.0f, (float) h * 0.5f - 8.0f, 30.0f, 16.0f);
                 g.setColour (Theme::accent.withAlpha (0.25f));
-                g.fillRoundedRectangle (b, 3.0f);
+                g.fillRect (b);
                 g.setColour (Theme::accent);
                 g.setFont (Theme::font (11.0f, true));
                 g.drawText ("R/C", b, juce::Justification::centred);

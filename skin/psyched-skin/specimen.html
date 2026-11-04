@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Psyched Devices Skin</title>
+<link rel="stylesheet" href="css/psyched-skin.css">
+<style>
+.sp{max-width:1180px;margin:0 auto;padding-block:24px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;gap:16px}
+.lead{max-width:68ch;color:var(--ink2);font-size:14px;line-height:1.6;margin:0 0 4px}
+.ph{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,440px),1fr));gap:16px}
+.two>*{min-width:0}
+.sw{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.sw>div{display:grid;grid-template-columns:auto 1fr;column-gap:10px;row-gap:3px;align-items:center;padding:10px;background:var(--field);border:1px solid var(--edge2)}
+.sw i{grid-row:span 3;width:14px;height:44px;background:var(--c);box-shadow:0 0 10px color-mix(in srgb,var(--c) 60%,transparent)}
+.sw b{font:600 11px/1 var(--display);letter-spacing:.14em;text-transform:uppercase;color:var(--c)}
+.sw span{font-size:12px;color:var(--dim)} .sw code{font:500 11px var(--mono);color:var(--mute)}
+.neutrals{display:flex;flex-wrap:wrap;margin-top:12px;border:1px solid var(--edge2)}
+.neutrals span{flex:1 1 60px;padding:16px 6px 6px;font:600 9px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink2)}
+.ty{display:grid;gap:14px}.ty>div{display:grid;gap:6px}
+.marks{display:flex;flex-wrap:wrap;gap:8px 28px}.marks .word{font-size:26px}
+@media (max-width:560px){.hdr .word{font-size:15px}.hdr>.lbl{display:none}.marks .word{font-size:20px}}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+.stat>span{display:inline-flex;align-items:center;gap:8px;margin-right:12px}
+.well{background:var(--field);border:1px solid var(--edge);padding:12px;display:grid;gap:8px}
+.well svg{width:100%;height:56px;display:block}
+</style></head><body>
+<div class="app" style="min-height:100%">
+<header class="hdr">
+  <span class="word">PSYCHED&nbsp;D<span class="mr">E</span>VICES</span>
+  <span class="lbl" style="margin-left:6px">Cockpit skin · v1.0.0</span>
+  <div style="flex:1"></div>
+  <div class="modes" role="group" aria-label="Mode">
+    <button aria-pressed="true">Skin</button><button>Tokens</button><button>Build</button>
+  </div>
+</header>
+
+<main class="sp">
+  <p class="lead">This is the standard skin for every Psyched Devices program, taken from Mirari's main Cockpit. Colour shows what a control does, panels are chamfered, and lit things glow. The pack has CSS for web pages, a LookAndFeel for JUCE apps, tokens for everything else, and the fonts.</p>
+
+  <section class="panel chamf" style="--c:var(--yellow)">
+    <div class="ph"><span class="ttl">Colour = function</span><span class="lbl">pick by job, not by looks</span></div>
+    <div class="sw">
+      <div style="--c:var(--green)"><i></i><b>green</b><span>inputs · armed · OK</span><code>#3cf06a</code></div>
+      <div style="--c:var(--cyan)"><i></i><b>cyan</b><span>layers · lanes · decks</span><code>#2ee6d6</code></div>
+      <div style="--c:var(--mint)"><i></i><b>mint</b><span>mapping · routing</span><code>#7dffd6</code></div>
+      <div style="--c:var(--yellow)"><i></i><b>yellow</b><span>active stage · focus</span><code>#ffd339</code></div>
+      <div style="--c:var(--pink)"><i></i><b>pink</b><span>output · export · brand</span><code>#ff3fa0</code></div>
+      <div style="--c:var(--violet)"><i></i><b>violet</b><span>modulation · FX</span><code>#c77dff</code></div>
+      <div style="--c:var(--blue)"><i></i><b>blue</b><span>sync · clock · tempo</span><code>#6e8cff</code></div>
+      <div style="--c:var(--orange)"><i></i><b>orange</b><span>alerts · destructive</span><code>#ff4b1f</code></div>
+      <div style="--c:var(--amber)"><i></i><b>amber</b><span>warnings · busy</span><code>#f5b54a</code></div>
+    </div>
+    <div class="neutrals">
+      <span style="background:#050409">page</span><span style="background:#07060d">void</span><span style="background:#0b0a13">field</span><span style="background:#110f1d">panel</span><span style="background:#171428">raise</span><span style="background:#24203a">edge</span><span style="background:#2c2844">edge2</span><span style="background:#4d4670">hot</span><span style="background:#6f6b8c">mute</span><span style="background:#9a97b6;color:#08070f">dim</span><span style="background:#ece9ff;color:#08070f">ink</span>
+    </div>
+  </section>
+
+  <div class="two">
+    <section class="panel chamf" style="--c:var(--pink)">
+      <div class="ph"><span class="ttl">Type</span><span class="lbl">three faces, three jobs</span></div>
+      <div class="ty">
+        <div><span class="lbl">Unbounded 800 · wordmark</span><div class="marks"><span class="word">MI<span class="mr">R</span>ARI</span><span class="word"><span class="sp">C</span>ENTRIFUGE</span></div></div>
+        <div><span class="lbl">Unbounded 600 · titles</span><span class="ttl" style="font-size:13px">Stem separation</span></div>
+        <div><span class="lbl">Manrope · text</span><span style="font-size:14px">Tracks are split into drums, bass, inst and vocals as soon as they load.</span></div>
+        <div><span class="lbl">JetBrains Mono · values</span><span class="val" style="font-size:22px">128.00 &nbsp;<span class="dim">BPM</span> &nbsp;-2:46.1</span></div>
+      </div>
+    </section>
+
+    <section class="panel chamf" style="--c:var(--green)">
+      <div class="ph"><span class="ttl">Controls</span><span class="lbl">glow means on</span></div>
+      <div class="row"><button class="chip">Loop 4</button><button class="chip on cyan">Deck 1</button><button class="chip on blue">Sync</button><button class="chip on orange">Quantize</button></div>
+      <div class="row"><button class="chip solid pink">Export</button><button class="chip solid">Pre-analyse</button><button class="chip solid mint">Learn</button><button class="chip" disabled>Undo</button></div>
+      <div class="row stat">
+        <span><span class="led on"></span><span class="lbl">XDJ-XZ connected</span></span>
+        <span><span class="led on" style="--c:var(--amber)"></span><span class="lbl">Separating 41%</span></span>
+        <span><span class="led"></span><span class="lbl">Recording</span></span>
+      </div>
+      <div class="row">
+        <label class="lbl" for="sp-tempo" style="min-width:56px">Tempo</label><input id="sp-tempo" type="range" value="62" style="flex:1">
+        <label class="lbl" for="sp-fx" style="min-width:28px">FX</label><input id="sp-fx" type="range" value="30" style="flex:1;--acc:var(--violet)">
+      </div>
+      <div class="row"><input id="sp-search" type="search" placeholder="Search tracks" style="flex:1;min-width:0"><select id="sp-ver"><option>Centrifuge version</option><option>rekordbox copy</option></select></div>
+      <div class="row"><label style="display:flex;gap:8px;align-items:center"><input id="sp-chk" type="checkbox" checked> <span>Mix both decks onto outputs 1/2</span></label></div>
+    </section>
+  </div>
+
+  <div class="two">
+    <section class="panel chamf" style="--c:var(--cyan)">
+      <div class="ph"><span class="ttl">Readout well</span><span class="lbl">scanlines on displays</span></div>
+      <div class="well scan">
+        <div class="lbl">Deck 1 · Demo Track 1</div>
+        <div class="val" style="font-size:30px;color:var(--cyan);text-shadow:0 0 12px rgba(46,230,214,.5)">0:06.5</div>
+        <svg viewBox="0 0 300 40" preserveAspectRatio="none" aria-hidden="true"><path fill="var(--amber)" d="M0 20 L6 8 L12 30 L18 12 L24 26 L30 6 L36 33 L42 14 L48 24 L54 9 L60 31 L66 15 L72 22 L78 7 L84 34 L90 13 L96 27 L102 10 L108 30 L114 16 L120 23 L126 5 L132 35 L138 12 L144 26 L150 8 L156 32 L162 14 L168 24 L174 9 L180 31 L186 15 L192 22 L198 7 L204 34 L210 13 L216 27 L222 10 L228 30 L234 16 L240 23 L246 6 L252 33 L258 12 L264 26 L270 9 L276 31 L282 15 L288 24 L294 10 L300 20 Z"/><rect x="58" width="2" height="40" fill="#fff"/></svg>
+      </div>
+    </section>
+
+    <section class="panel chamf" style="--c:var(--violet)">
+      <div class="ph"><span class="ttl">List</span><span class="lbl">selected row = yellow</span></div>
+      <div style="overflow-x:auto">
+      <table class="grid">
+        <thead><tr><th>Title</th><th>BPM</th><th>Key</th><th>Time</th></tr></thead>
+        <tbody>
+          <tr class="sel"><td>Demo Track 1</td><td class="val">128.00</td><td style="color:var(--green)">Fm</td><td class="val">2:52</td></tr>
+          <tr><td>Demo Track 2</td><td class="val">120.00</td><td style="color:var(--green)">Fm</td><td class="val">2:08</td></tr>
+          <tr><td>Horn</td><td class="val">124.00</td><td style="color:var(--green)">Am</td><td class="val">0:30</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <div class="menu" style="margin-top:12px;max-width:220px">
+        <button class="item">Rename cue…</button><button class="item">Set colour</button><div class="sep"></div><button class="item" style="color:var(--orange)">Delete</button>
+      </div>
+    </section>
+  </div>
+</main>
+</div>
+</body></html>
