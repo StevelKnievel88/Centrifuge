@@ -123,6 +123,18 @@ bool DemucsSeparator::load (const Options& opt, juce::String& error)
 
     // The best level whose models are all on disk, up to the one asked for.
     auto quality = opt.quality;
+    juce::String note;
+   #if ORBIT_HAS_DML
+    const bool gpuPossible = opt.useGpu;
+   #else
+    const bool gpuPossible = false;
+   #endif
+    // The RoFormer needs far more memory than the computer is likely to have when it runs on the CPU.
+    if (quality == StemQuality::best && ! gpuPossible && ! opt.allowBestOnCpu)
+    {
+        quality = StemQuality::high;
+        note = " (Best needs the graphics card)";
+    }
     auto haveAll = [&] (StemQuality q)
     {
         for (auto& n : StemModels::required (q)) if (! fileFor (n).existsAsFile()) return false;
@@ -199,6 +211,16 @@ bool DemucsSeparator::load (const Options& opt, juce::String& error)
             }
             else m->timeOutput = (int) i;
         }
+        if (m->waveform && ! m->usingGpu && ! opt.allowBestOnCpu)
+        {
+            // The graphics card couldn't take the RoFormer: Best isn't practical here.
+            auto o2 = opt;
+            o2.quality = StemQuality::high;
+            juce::String ignored;
+            const bool ok = load (o2, ignored);
+            impl->backend << " (Best: the graphics card couldn't load the RoFormer)";
+            return ok;
+        }
         const bool layoutOk = m->waveform ? (m->inNames.size() == 1 && m->outNames.size() >= 1)
                                           : (m->inNames.size() == 2 && m->outNames.size() == 2 && m->sources == 4);
         if (! layoutOk)
@@ -217,7 +239,7 @@ bool DemucsSeparator::load (const Options& opt, juce::String& error)
     const bool gpu = impl->models.begin()->second->usingGpu;
     impl->backend = (gpu ? juce::String ("GPU (DirectML)") : "CPU (" + juce::String (threads) + " threads)")
                   + ", " + stemQualityName (quality)
-                  + (quality != opt.quality ? " (" + stemQualityName (opt.quality) + " needs models that aren't installed)" : juce::String())
+                  + (note.isNotEmpty() ? note : quality != opt.quality ? " (" + stemQualityName (opt.quality) + " needs models that aren't installed)" : juce::String())
                   + (gpuError.isNotEmpty() && ! gpu ? " - GPU failed: " + gpuError : juce::String());
     return true;
 #endif

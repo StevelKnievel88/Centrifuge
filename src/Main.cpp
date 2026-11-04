@@ -43,6 +43,7 @@ static int runCommandLine (const juce::StringArray& args)
         DemucsSeparator::Options o;
         o.modelFile = model;
         o.useGpu = ! args.contains ("--cpu");
+        o.allowBestOnCpu = args.contains ("--allow-cpu-best");
         // --quality fast|better|high|best (models are looked for next to --model)
         const auto q = argAfter ("--quality").toLowerCase();
         o.quality = q == "best" ? StemQuality::best : q == "high" ? StemQuality::high : q == "better" ? StemQuality::better : StemQuality::fast;

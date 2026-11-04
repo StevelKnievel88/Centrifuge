@@ -65,6 +65,7 @@ public:
         StemQuality quality = StemQuality::fast;
         bool useGpu = true;
         int cpuThreads = 0;          // 0 = automatic (leaves cores free for audio)
+        bool allowBestOnCpu = false; // Best's RoFormer needs a lot of memory on the CPU (tests only)
     };
 
     static bool isAvailable();       // false when built without ONNX Runtime
