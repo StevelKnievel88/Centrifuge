@@ -51,9 +51,9 @@ private:
     juce::CriticalSection lock;
     Options options;
     std::atomic<int> serialCounter { 0 };
-    std::array<std::atomic<int>, AudioEngine::maxDecks> pending {};
-    std::array<std::atomic<bool>, AudioEngine::maxDecks> loading {};
-    std::array<std::atomic<bool>, AudioEngine::maxDecks> cancel {};
+    std::array<std::atomic<int>, AudioEngine::totalDecks> pending {};
+    std::array<std::atomic<bool>, AudioEngine::totalDecks> loading {};
+    std::array<std::atomic<bool>, AudioEngine::totalDecks> cancel {};
     juce::ThreadPool pool { 2 };
 };
 

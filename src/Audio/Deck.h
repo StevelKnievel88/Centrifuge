@@ -70,6 +70,8 @@ public:
         quantizeSet, hotCueColour,
         locatorAdd, locatorDelete, locatorDeleteNearest, locatorColour,
         skipIn, skipOut, skipSet, skipAdd, skipDelete, skipDeleteNearest, skipsToggle, skipsSet,
+        locatorLoopMode,  // index = locator, value = mode (0 normal, 1 active, 2 cycle), value2 = cycles
+        locatorLoopAdd,   // value = start, value2 = end: a loop locator (orange)
         swapTrackData   // same audio, new grid / cues (ptr = LoadedTrack*); playback carries on
     };
 
@@ -145,6 +147,9 @@ public:
         std::atomic<int> numLocators { 0 }, numSkips { 0 };
         std::array<std::atomic<double>, maxLocators> locStart, locEnd;
         std::array<std::atomic<juce::uint32>, maxLocators> locColour;
+        std::array<std::atomic<int>, maxLocators> locMode, locCycles;
+        std::atomic<int> autoLoopLocator { -1 };   // locator whose active / cycle loop is running (-1 = none)
+        std::atomic<int> cyclesLeft { 0 };         // passes left in a running cycle loop (counting this one)
         std::array<std::atomic<double>, maxSkips> skipFrom, skipTo;
         std::atomic<bool> skipsOn { true };
         std::atomic<double> skipPendingFrom { -1.0 };
@@ -158,6 +163,8 @@ public:
             for (auto& v : locStart) v = -1.0;
             for (auto& v : locEnd) v = -1.0;
             for (auto& v : locColour) v = 0;
+            for (auto& v : locMode) v = 0;
+            for (auto& v : locCycles) v = 4;
             for (auto& v : skipFrom) v = -1.0;
             for (auto& v : skipTo) v = -1.0;
             for (auto& h : hotStart) h = -1.0;
@@ -189,7 +196,9 @@ private:
     void readResampled (float* outL, float* outR, int n, double step);
     inline void frameAt (int64_t idx, float& l, float& r, const float* g) const noexcept;
     inline void sampleAt (double p, float& l, float& r, const float* g) const noexcept;
-    void addLocator (double sec, juce::Colour colour, double endSec = -1.0);
+    void addLocator (double sec, juce::Colour colour, double endSec = -1.0, int mode = 0, int cycles = 4);
+    bool loopAtPlayhead (double now) const noexcept;   // a loop is set and engaged, or stopped at its start
+    void endAutoLoop() noexcept { autoLoc = -1; cyclesLeft = 0; }
     int nearestLocator (double sec, double within) const noexcept;
     void addSkip (double from, double to);
     void sortSkips();
@@ -238,13 +247,16 @@ private:
     double loopIn = -1.0, loopOut = -1.0;
     bool loopActive = false;
     bool loopInPending = false;
+    int autoLoc = -1;               // locator whose active / cycle loop is engaged
+    int cyclesLeft = 0;             // passes left in that cycle loop
+    static constexpr juce::uint32 loopColour = 0xffff8c00;   // rekordbox orange for loops
 
     // Hot cues (deck-local copy; set/delete happen here)
     std::array<CuePoint, 8> hot {};
     std::array<bool, 8> hotSet {};
 
     // Locators (memory cues), sorted by time, and skips (sorted, non-overlapping)
-    struct Loc { double start = 0.0, end = -1.0; juce::uint32 colour = 0; };
+    struct Loc { double start = 0.0, end = -1.0; juce::uint32 colour = 0; int mode = 0; int cycles = 4; };
     std::array<Loc, maxLocators> locs {};
     int numLocs = 0;
     struct Skip { double from = 0.0, to = 0.0; };

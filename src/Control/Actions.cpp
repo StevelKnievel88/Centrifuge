@@ -63,6 +63,14 @@ static std::vector<ActionDef> buildActions()
         add (p + "loop.double", "Loop 2X",               D + " - Loops", B, d);
         for (auto beats : { "1/4", "1/2", "1", "2", "4", "8", "16", "32" })
             add (p + "beatloop." + juce::String (beats), juce::String (beats) + " beat loop", D + " - Loops", B, d, true);
+        add (p + "loop.toggle",       "Loop on / off (at the loop size)", D + " - Loops", B, d, true);
+        add (p + "loopsize.halve",    "Loop size / 2 (halves a running loop)", D + " - Loops", B, d);
+        add (p + "loopsize.double",   "Loop size x 2 (doubles a running loop)", D + " - Loops", B, d);
+        for (auto [beats, name] : { std::pair<int, const char*> { 1, "1 beat" }, { 4, "1 bar" }, { 8, "2 bars" }, { 16, "4 bars" } })
+        {
+            add (p + "beatjump.back." + juce::String (beats), "Beat jump back " + juce::String (name),    D + " - Loops", B, d);
+            add (p + "beatjump.fwd." + juce::String (beats),  "Beat jump forward " + juce::String (name), D + " - Loops", B, d);
+        }
         add (p + "beatjump.back", "Beat jump back",      D + " - Loops", B, d);
         add (p + "beatjump.fwd",  "Beat jump forward",   D + " - Loops", B, d);
         add (p + "beatjump.size", "Beat jump size (encoder)", D + " - Loops", E, d);

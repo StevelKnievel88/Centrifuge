@@ -1,6 +1,7 @@
 #pragma once
 #include <juce_core/juce_core.h>
 #include <cmath>
+#include <atomic>
 
 namespace orbit
 {
@@ -13,6 +14,18 @@ struct MusicalKey
     bool camelotStyle = false;
 
     bool isValid() const noexcept { return pitch >= 0; }
+
+    /** How keys are shown in the app: false = standard ("Fm"), true = Camelot ("4A"). */
+    static std::atomic<bool>& camelotDisplay() { static std::atomic<bool> c { false }; return c; }
+
+    /** A key as text in the chosen notation (anything unrecognised is shown as it is). */
+    static juce::String display (const juce::String& text)
+    {
+        auto k = parse (text);
+        if (! k.isValid()) return text;
+        k.camelotStyle = camelotDisplay().load();
+        return k.toString();
+    }
 
     static MusicalKey parse (const juce::String& text)
     {

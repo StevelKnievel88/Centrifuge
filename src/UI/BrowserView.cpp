@@ -1,5 +1,7 @@
 #include "BrowserView.h"
 #include "Theme.h"
+#include "../Library/Anlz.h"
+#include "../Audio/MusicalKey.h"
 #include "CentrifugeRotor.h"
 
 namespace orbit
@@ -112,6 +114,7 @@ BrowserView::BrowserView (LibraryManager& lib, StemManager& stems) : library (li
     auto& hdr = table.getHeader();
     hdr.addColumn ("#", 1, 40, 30, 60);
     hdr.addColumn ("Title", 2, 300, 100, 2000);
+    hdr.addColumn ("Preview", 11, 130, 70, 400);
     hdr.addColumn ("Artist", 3, 200, 80, 1000);
     hdr.addColumn ("BPM", 4, 64, 50, 90);
     hdr.addColumn ("Key", 5, 50, 40, 80);
@@ -120,6 +123,8 @@ BrowserView::BrowserView (LibraryManager& lib, StemManager& stems) : library (li
     hdr.addColumn ("Stems", 8, 56, 40, 80);
     hdr.addColumn ("Cues", 9, 46, 36, 70);
     hdr.addColumn ("R/C", 10, 46, 36, 70);
+    hdr.addColumn ("Rating", 12, 76, 60, 100);
+    hdr.addColumn ("Plays", 13, 48, 40, 80);
     hdr.setStretchToFitActive (true);
     table.setRowHeight (24);
     table.setMultipleSelectionEnabled (true);
@@ -169,6 +174,7 @@ BrowserView::BrowserView (LibraryManager& lib, StemManager& stems) : library (li
 BrowserView::~BrowserView()
 {
     tree.setRootItem (nullptr);
+    previewPool.removeAllJobs (true, 3000);
 }
 
 void BrowserView::paint (juce::Graphics& g)
@@ -311,7 +317,7 @@ void BrowserView::applyFilter()
         if (currentSource == nullptr || i < 0 || i >= (int) currentSource->tracks.size()) continue;
         const auto& t = currentSource->tracks[(size_t) i];
         if (q.isEmpty() || t.title.toLowerCase().contains (q) || t.artist.toLowerCase().contains (q)
-            || t.genre.toLowerCase().contains (q) || t.key.toLowerCase() == q || t.album.toLowerCase().contains (q))
+            || t.genre.toLowerCase().contains (q) || t.key.toLowerCase() == q || MusicalKey::display (t.key).toLowerCase() == q || t.album.toLowerCase().contains (q))
             rows.push_back (i);
     }
 
@@ -333,6 +339,8 @@ void BrowserView::applyFilter()
                 case 7: c = x.genre.compareNatural (y.genre); break;
                 case 9: c = x.numCues - y.numCues; break;
                 case 10: c = (int) x.versionsDiffer - (int) y.versionsDiffer; break;
+                case 12: c = x.rating - y.rating; break;
+                case 13: c = x.playCount - y.playCount; break;
                 default: break;
             }
             return sortForwards ? c < 0 : c > 0;
@@ -384,7 +392,7 @@ void BrowserView::paintCell (juce::Graphics& g, int row, int col, int w, int h, 
         case 2: s = t.title; break;
         case 3: s = t.artist; g.setColour (Theme::textDim); break;
         case 4: s = t.bpm > 0 ? juce::String (t.bpm, 2) : juce::String(); just = juce::Justification::centredRight; break;
-        case 5: s = t.key; g.setColour (Theme::good); break;
+        case 5: s = MusicalKey::display (t.key); g.setColour (Theme::good); break;
         case 6:
         {
             const int sec = (int) t.durationSec;
@@ -424,15 +432,194 @@ void BrowserView::paintCell (juce::Graphics& g, int row, int col, int w, int h, 
                 g.drawText ("R/C", b, juce::Justification::centred);
             }
             return;
+        case 11:
+        {
+            // Preview waveform (click to play from there); the previewing track shows its position and a stop square
+            const auto path = t.file.getFullPathName();
+            const bool active = path == previewPath && previewPath.isNotEmpty();
+            auto area = juce::Rectangle<float> (2.0f, 3.0f, (float) w - 4.0f, (float) h - 6.0f);
+            if (active)
+            {
+                auto stop = area.removeFromLeft (area.getHeight());
+                g.setColour (previewPlaying ? Theme::output : Theme::textDim);
+                g.fillRect (stop.reduced (3.0f));
+                area.removeFromLeft (3.0f);
+            }
+            auto it = previewWaves.find (path);
+            if (it == previewWaves.end()) { requestPreviewWave (t); it = previewWaves.find (path); }
+            const auto& wv = it->second;
+            if (wv.empty())
+            {
+                g.setColour (Theme::line);
+                g.fillRect (area.withSizeKeepingCentre (area.getWidth(), 1.0f));
+            }
+            else
+            {
+                const auto col = active ? Theme::output : Theme::textDim;
+                const int n = (int) wv.size();
+                const float px = area.getWidth() / (float) n;
+                for (int i = 0; i < n; ++i)
+                {
+                    const float hh = juce::jmax (1.0f, area.getHeight() * (float) wv[(size_t) i] / 255.0f);
+                    const bool played = active && (float) i / (float) n < (float) previewFraction;
+                    g.setColour (played ? col : col.withAlpha (0.55f));
+                    g.fillRect (area.getX() + (float) i * px, area.getCentreY() - hh * 0.5f, juce::jmax (1.0f, px - 0.5f), hh);
+                }
+            }
+            if (active)
+            {
+                g.setColour (juce::Colours::white);
+                g.fillRect (area.getX() + area.getWidth() * (float) previewFraction - 0.5f, area.getY() - 2.0f, 1.5f, area.getHeight() + 4.0f);
+            }
+            return;
+        }
+        case 12:
+        {
+            // Rating: five stars (click to set; click the same star again to clear)
+            const float sz = juce::jmin ((float) h - 8.0f, ((float) w - 8.0f) / 5.0f);
+            for (int i = 0; i < 5; ++i)
+            {
+                juce::Path star;
+                const auto c = juce::Point<float> (4.0f + sz * (i + 0.5f), (float) h * 0.5f);
+                star.addStar (c, 5, sz * 0.22f, sz * 0.5f);
+                g.setColour (i < t.rating ? Theme::accent : Theme::line);
+                g.fillPath (star);
+            }
+            return;
+        }
+        case 13:
+            if (t.libraryId > 0) { s = juce::String (t.playCount); g.setColour (Theme::textDim); }
+            just = juce::Justification::centred;
+            break;
         default: break;
     }
     g.drawText (s, juce::Rectangle<int> (6, 0, w - 12, h), just, true);
 }
 
-void BrowserView::cellClicked (int, int, const juce::MouseEvent&)
+float BrowserView::cellFraction (int col, const juce::MouseEvent& e) const
+{
+    auto& hdr = table.getHeader();
+    const auto pos = hdr.getColumnPosition (hdr.getIndexOfColumnId (col, true));
+    const auto p = e.getEventRelativeTo (const_cast<juce::TableListBox*> (&table)).position;
+    return juce::jlimit (0.0f, 1.0f, (p.x - (float) pos.getX() + (float) table.getViewport()->getViewPositionX()) / (float) juce::jmax (1, pos.getWidth()));
+}
+
+void BrowserView::cellClicked (int row, int col, const juce::MouseEvent& e)
 {
     treeFocused = false;
     tree.repaint();
+    if (row < 0 || row >= (int) rows.size() || currentSource == nullptr) return;
+    const auto& t = currentSource->tracks[(size_t) rows[(size_t) row]];
+
+    if (e.mods.isPopupMenu())
+    {
+        if (! table.isRowSelected (row)) table.selectRow (row);
+        showTrackMenu (row);
+        return;
+    }
+    if (col == 11)
+    {
+        auto& hdr = table.getHeader();
+        const int w = hdr.getColumnWidth (11);
+        float f = cellFraction (11, e);
+        const bool active = t.file.getFullPathName() == previewPath && previewPath.isNotEmpty();
+        if (active)
+        {
+            const float stopW = (float) table.getRowHeight() - 6.0f;
+            if (f * (float) w < stopW + 2.0f) { if (onPreviewStop) onPreviewStop(); return; }
+            f = juce::jlimit (0.0f, 1.0f, (f * (float) w - stopW - 5.0f) / juce::jmax (1.0f, (float) w - stopW - 9.0f));
+        }
+        if (onPreview) onPreview (t, currentSource->kind == LibrarySource::Kind::pcCollection, (double) f);
+        return;
+    }
+    if (col == 12 && t.libraryId > 0 && onSetRating)
+    {
+        const int stars = juce::jlimit (1, 5, (int) (cellFraction (12, e) * 5.0f) + 1);
+        onSetRating (t, stars == t.rating ? 0 : stars);
+    }
+}
+
+juce::var BrowserView::getDragSourceDescription (const juce::SparseSet<int>&)
+{
+    dragged = getSelectedTracks();
+    draggedPc = currentSource != nullptr && currentSource->kind == LibrarySource::Kind::pcCollection;
+    return dragged.empty() ? juce::var() : juce::var ("centrifuge-tracks");
+}
+
+void BrowserView::showTrackMenu (int)
+{
+    auto tracks = getSelectedTracks();
+    if (tracks.empty()) return;
+    bool anyLibrary = false;
+    for (auto& t : tracks) anyLibrary = anyLibrary || t.libraryId > 0;
+    const bool one = tracks.size() == 1;
+    juce::PopupMenu m;
+    m.addSectionHeader (one ? tracks.front().displayArtistTitle() : juce::String ((int) tracks.size()) + " tracks");
+    m.addItem (1, "Load to deck 1", one);
+    m.addItem (2, "Load to deck 2", one);
+    m.addItem (3, "Load into PREP", one);
+    if (anyLibrary)
+    {
+        m.addSeparator();
+        m.addItem (10, "Remove from the Centrifuge collection");
+        m.addItem (11, "Remove from the rekordbox copy");
+        m.addItem (12, "Reset play count");
+    }
+    juce::Component::SafePointer<BrowserView> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [safe, tracks] (int r)
+    {
+        if (safe == nullptr || safe->onTrackAction == nullptr || r == 0) return;
+        const char* actions[] = { "", "load.0", "load.1", "load.2" };
+        if (r >= 1 && r <= 3) safe->onTrackAction (tracks, actions[r]);
+        else if (r == 10) safe->onTrackAction (tracks, "remove.cf");
+        else if (r == 11) safe->onTrackAction (tracks, "remove.rb");
+        else if (r == 12) safe->onTrackAction (tracks, "plays.reset");
+    });
+}
+
+void BrowserView::setPreviewState (const juce::String& path, double fraction, bool playing)
+{
+    if (path == previewPath && std::abs (fraction - previewFraction) < 0.002 && playing == previewPlaying) return;
+    previewPath = path;
+    previewFraction = fraction;
+    previewPlaying = playing;
+    table.repaint();
+}
+
+void BrowserView::notePreviewWaveform (const juce::String& path, const WaveformData& w)
+{
+    constexpr int points = 100;
+    std::vector<uint8_t> v (points, 0);
+    const int n = w.size();
+    if (n <= 0) return;
+    for (int i = 0; i < n; ++i)
+    {
+        const int b = juce::jmin (points - 1, i * points / n);
+        int hgt = 0;
+        if (w.style == WaveformData::Style::threeBand)
+            hgt = juce::jmax ((int) w.low[(size_t) i], (int) w.mid[(size_t) i], (int) w.high[(size_t) i]);
+        else hgt = w.height[(size_t) i];
+        v[(size_t) b] = (uint8_t) juce::jmax ((int) v[(size_t) b], hgt);
+    }
+    previewWaves[path] = std::move (v);
+    table.repaint();
+}
+
+void BrowserView::requestPreviewWave (const TrackInfo& t)
+{
+    const auto path = t.file.getFullPathName();
+    previewWaves[path] = {};   // placeholder while loading (and when there's no analysis yet)
+    if (! t.anlzBase.existsAsFile()) return;
+    const auto anlz = t.anlzBase;
+    juce::Component::SafePointer<BrowserView> safe (this);
+    previewPool.addJob ([safe, anlz, path]
+    {
+        const auto data = loadAnlz (anlz);
+        if (data.waveforms.numDetailEntries() <= 0) return;
+        auto w = WaveformData::fromAnlz (data.waveforms, WaveformData::Style::threeBand);
+        if (w == nullptr) return;
+        juce::MessageManager::callAsync ([safe, w, path] { if (safe != nullptr) safe->notePreviewWaveform (path, *w); });
+    });
 }
 
 void BrowserView::cellDoubleClicked (int row, int, const juce::MouseEvent&)

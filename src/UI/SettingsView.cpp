@@ -18,6 +18,7 @@ public:
         add (&deviceSelector, 300, {});
         add (&deck1Out, 28, "Deck 1 plays on");
         add (&deck2Out, 28, "Deck 2 plays on");
+        add (&previewOut, 28, "PREP / previews play on");
         add (&sumToMaster, 28, {});
         sumToMaster.setButtonText ("Mix both decks onto outputs 1/2 (only when not using the XDJ-XZ mixer)");
         engine.getDeviceManager().addChangeListener (this);
@@ -31,6 +32,10 @@ public:
         add (&dbKey, 28, "Database key");
         add (&usbFolder, 28, "Extra export folder");
         add (&analysisRange, 28, "Tempo range (added music)");
+        add (&keyNotation, 28, "Key notation");
+        keyNotation.addItemList ({ "Standard (Fm, Ab, ...)", "Camelot (4A, 4B, ...)" }, 1);
+        keyNotation.setSelectedId (settings.camelotKeys ? 2 : 1, juce::dontSendNotification);
+        keyNotation.onChange = [this] { settings.camelotKeys = keyNotation.getSelectedId() == 2; onChanged(); };
         analysisRange.addItemList ({ "70 - 140 BPM", "88 - 175 BPM (house, techno, psytrance, drum & bass)", "100 - 200 BPM", "120 - 240 BPM" }, 1);
         analysisRange.setSelectedId (juce::jlimit (0, 3, settings.analysisRange) + 1, juce::dontSendNotification);
         analysisRange.setTooltip ("Music added from files or folders is analysed by Centrifuge: its tempo is looked for in this range");
@@ -213,6 +218,7 @@ public:
             settings.sumToMaster = sumToMaster.getToggleState() ? 1 : 0;
             onChanged();
         };
+        previewOut.onChange = [this] { settings.previewOutput = previewOut.getSelectedId() <= 1 ? -1 : previewOut.getSelectedId() - 2; onChanged(); };
         deck1Out.onChange = routeChanged;
         deck2Out.onChange = routeChanged;
         sumToMaster.onClick = routeChanged;
@@ -252,6 +258,15 @@ public:
                 box->addItem (label, ch + 2);
             }
         }
+        previewOut.clear (juce::dontSendNotification);
+        previewOut.addItem ("Automatic (the first output pair the decks don't use)", 1);
+        for (int ch = 0; ch + 1 < outs; ch += 2)
+        {
+            juce::String label = "Outputs " + juce::String (ch + 1) + "/" + juce::String (ch + 2);
+            if (ch + 1 < names.size()) label += "   (" + names[ch] + " / " + names[ch + 1] + ")";
+            previewOut.addItem (label, ch + 2);
+        }
+        previewOut.setSelectedId (settings.previewOutput >= 0 ? settings.previewOutput + 2 : 1, juce::dontSendNotification);
         deck1Out.setSelectedId (engine.getDeckOutput (0) + 2, juce::dontSendNotification);
         deck2Out.setSelectedId (engine.getDeckOutput (1) + 2, juce::dontSendNotification);
         sumToMaster.setToggleState (engine.isSummingToMaster(), juce::dontSendNotification);
@@ -363,7 +378,7 @@ private:
     std::array<juce::Slider, 4> stemOpacity;
     PairRow overviewRow;
     juce::TextButton colourButton;
-    juce::ComboBox deck1Out, deck2Out, fps, analysisRange;
+    juce::ComboBox deck1Out, deck2Out, previewOut, fps, analysisRange, keyNotation;
     juce::ToggleButton sumToMaster, leds, stemsOnLoad, stemsGpu, foldSkips, quantize;
     juce::TextEditor dbPath, dbKey, usbFolder, modelPath, cachePath;
     Resizer dbButtons;

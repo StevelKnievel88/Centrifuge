@@ -469,7 +469,36 @@ private:
         {
             snap ("08_export.png");
             main.closeExport();
+            // PREP: one track with a locator, a cycle loop locator, an active loop locator and a skip
+            auto lib = main.librarySource (1);
+            main.getLoader().load (AudioEngine::previewDeck, lib->tracks[0], false);
             stage = 11;
+            t0 = ticks;
+        }
+        else if (stage == 11 && main.getEngine().deck (AudioEngine::previewDeck).state().trackSerial.load() != 0)
+        {
+            auto& p = main.getEngine().deck (AudioEngine::previewDeck);
+            p.post (Deck::Cmd::locatorAdd, 3.0);
+            p.post (Deck::Command { Deck::Cmd::locatorLoopAdd, 8.0, 0, true, nullptr, 0, 10.0 });
+            p.post (Deck::Command { Deck::Cmd::locatorLoopAdd, 20.0, 0, true, nullptr, 0, 22.0 });
+            p.post2 (Deck::Cmd::skipAdd, 14.0, 16.0);
+            p.post (Deck::Cmd::seekSeconds, 6.0);
+            stage = 12;
+            t0 = ticks;
+        }
+        else if (stage == 12 && ticks - t0 == 2)
+        {
+            auto& p = main.getEngine().deck (AudioEngine::previewDeck);
+            p.post (Deck::Command { Deck::Cmd::locatorLoopMode, 2.0, 1, true, nullptr, 0, 4.0 });
+            p.post (Deck::Command { Deck::Cmd::locatorLoopMode, 1.0, 2, true, nullptr, 0, 4.0 });
+            p.post (Deck::Cmd::hotCue, 0.0, 0, true);
+            p.post (Deck::Cmd::hotCue, 0.0, 0, false);
+            main.showPage (4);
+        }
+        else if (stage == 12 && ticks - t0 > 8)
+        {
+            snap ("09_prep.png");
+            stage = 13;
         }
     }
 

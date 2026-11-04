@@ -16,6 +16,7 @@ namespace
         if (c.endSec > c.startSec) o->setProperty ("e", r3 (c.endSec));
         if (! c.colour.isTransparent()) o->setProperty ("c", c.colour.toString());
         if (c.comment.isNotEmpty()) o->setProperty ("n", c.comment);
+        if (c.endSec > c.startSec && c.loopMode != 0) { o->setProperty ("m", c.loopMode); o->setProperty ("x", c.cycles); }
         return juce::var (o);
     }
 
@@ -28,6 +29,8 @@ namespace
         c.endSec = v.hasProperty ("e") ? (double) v["e"] : -1.0;
         if (v.hasProperty ("c")) c.colour = juce::Colour::fromString (v["c"].toString());
         c.comment = v.getProperty ("n", {}).toString();
+        c.loopMode = juce::jlimit (0, 2, (int) v.getProperty ("m", 0));
+        c.cycles = juce::jlimit (1, 64, (int) v.getProperty ("x", 4));
         return c;
     }
 }
@@ -85,8 +88,11 @@ TrackVersion TrackVersion::limitedForRekordbox() const
     for (auto& h : r.hot)
         if (h && ! h->colour.isTransparent())
             h->colour = rekordboxHotCueColour (nearestRekordboxHotCueCode (h->colour));
+    for (auto& h : r.hot)
+        if (h) h->loopMode = 0;
     for (auto& m : r.memory)
     {
+        m.loopMode = 0;   // rekordbox has ordinary loops only
         const int id = nearestRekordboxMemoryColourId (m.colour);
         m.colour = id > 0 ? rekordboxMemoryColour (id) : juce::Colour();
     }

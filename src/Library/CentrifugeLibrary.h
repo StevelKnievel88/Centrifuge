@@ -26,6 +26,8 @@ public:
         bool differ = false;                // the two versions are different
         juce::String importHash, source;
         std::vector<Beat> importedGrid;     // rekordbox's grid at import (for "reset grid")
+        int hidden = 0;                     // bit 0: removed from the rekordbox copy, bit 1: from the Centrifuge version
+        int plays = 0;
     };
 
     struct Conflict
@@ -89,6 +91,14 @@ public:
 
     /** Library key for a file (file name + length in whole seconds), as used for every track. */
     static juce::String keyForFile (const juce::File& f, double lengthSec);
+
+    /** Removes a track from one collection (view 0 = rekordbox copy, 1 = Centrifuge version). Once it's in
+        neither, it's deleted from the library. Importing it from rekordbox again brings back the rekordbox copy. */
+    void removeFromView (juce::int64 id, int view);
+    void deleteTrack (juce::int64 id);
+    void addPlay (juce::int64 id);
+    void resetPlays (juce::int64 id);
+    void setRating (juce::int64 id, int stars);
 
     /** Saves one or both versions of a track (null = leave as it is). */
     void saveVersions (juce::int64 id, const TrackVersion* rb, const TrackVersion* cf);

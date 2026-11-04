@@ -12,6 +12,8 @@
 #include "../UI/SettingsView.h"
 #include "../UI/CentrifugeRotor.h"
 #include "../UI/AboutView.h"
+#include "../UI/PrepView.h"
+#include "../UI/PhaseMeter.h"
 #include "../Library/CueStore.h"
 #include "../UI/LibraryDialogs.h"
 #include "TrackEditor.h"
@@ -21,6 +23,7 @@ namespace orbit
 {
 
 class MainComponent : public juce::Component,
+                      public juce::DragAndDropContainer,
                       private juce::Timer
 {
 public:
@@ -67,6 +70,20 @@ private:
     void askRename (int deck, bool hotCue, int index, const juce::String& current);
     void askBpm (int deck);
     void flash (const juce::String& text);
+    void loadDragged (int deck);
+    void startPreview (const TrackInfo& info, bool fromPc, double fraction);
+    void trackAction (const std::vector<TrackInfo>& tracks, const juce::String& action);
+    void countPlays();
+    juce::Rectangle<int> phaseArea;
+    PhaseMeter phaseMeter { engine };
+    PrepView prepView { engine, editor };
+    juce::TextButton tabPrep { "PREP" };
+    juce::String pendingPreviewPath;
+    double pendingPreviewFraction = -1.0;
+    std::array<int, 2> playSerial { -1, -1 };
+    std::array<double, 2> playedSeconds { 0.0, 0.0 };
+    std::array<bool, 2> playCounted { false, false };
+    juce::uint32 lastTick = 0;
     std::shared_ptr<const LibrarySource> centrifugeSource (int view);
 
     struct SettingsHolder { AppSettings s; SettingsHolder() { s.load(); } } settingsHolder;

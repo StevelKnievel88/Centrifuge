@@ -182,6 +182,7 @@ void Deck::loadTrack (LoadedTrack* t)
     hotPreview = -1;
     loopActive = false;
     loopIn = loopOut = -1.0;
+    endAutoLoop();
     stretchActive = false;
     fadeTailLen = 0;
     bendRate = 0.0;
@@ -201,7 +202,8 @@ void Deck::loadTrack (LoadedTrack* t)
     numLocs = 0;
     for (auto& m : track->memoryCues)
         if (numLocs < maxLocators)
-            locs[(size_t) numLocs++] = { m.startSec, m.isLoop() ? m.endSec : -1.0, (m.colour.isTransparent() ? juce::Colour (0xffe62828) : m.colour).getARGB() };
+            locs[(size_t) numLocs++] = { m.startSec, m.isLoop() ? m.endSec : -1.0, (m.colour.isTransparent() ? juce::Colour (m.isLoop() ? loopColour : 0xffe62828) : m.colour).getARGB(),
+                                                m.isLoop() ? m.loopMode : 0, m.cycles };
     std::sort (locs.begin(), locs.begin() + numLocs, [] (const Loc& a, const Loc& b) { return a.start < b.start; });
 
     numSkipsLocal = 0;
@@ -218,10 +220,16 @@ void Deck::loadTrack (LoadedTrack* t)
     pos = cuePoint * srcRate;
 }
 
-void Deck::addLocator (double sec, juce::Colour colour, double endSec)
+bool Deck::loopAtPlayhead (double now) const noexcept
+{
+    if (loopIn < 0.0 || loopOut <= loopIn) return false;
+    return loopActive || (! playing && std::abs (now - loopIn) < 0.03);
+}
+
+void Deck::addLocator (double sec, juce::Colour colour, double endSec, int mode, int cycles)
 {
     if (nearestLocator (sec, 0.01) >= 0 || numLocs >= maxLocators) return;
-    locs[(size_t) numLocs++] = { sec, endSec, colour.getARGB() };
+    locs[(size_t) numLocs++] = { sec, endSec, colour.getARGB(), endSec > sec ? mode : 0, cycles };
     std::sort (locs.begin(), locs.begin() + numLocs, [] (const Loc& a, const Loc& b) { return a.start < b.start; });
     cueEdited();
 }
@@ -299,7 +307,8 @@ void Deck::apply (const Command& c)
             numLocs = 0;
             for (auto& m : t->memoryCues)
                 if (numLocs < maxLocators)
-                    locs[(size_t) numLocs++] = { m.startSec, m.isLoop() ? m.endSec : -1.0, (m.colour.isTransparent() ? juce::Colour (0xffe62828) : m.colour).getARGB() };
+                    locs[(size_t) numLocs++] = { m.startSec, m.isLoop() ? m.endSec : -1.0, (m.colour.isTransparent() ? juce::Colour (m.isLoop() ? loopColour : 0xffe62828) : m.colour).getARGB(),
+                                                m.isLoop() ? m.loopMode : 0, m.cycles };
             std::sort (locs.begin(), locs.begin() + numLocs, [] (const Loc& a, const Loc& b) { return a.start < b.start; });
             numSkipsLocal = 0;
             for (auto& k : t->skips)
@@ -377,13 +386,22 @@ void Deck::apply (const Command& c)
                 }
                 if (! hotSet[(size_t) i])
                 {
-                    setHotCueAt (i, quantizeTime (now));
+                    if (loopAtPlayhead (now))
+                    {
+                        // A loop is set here: the pad saves it as a hot loop (orange).
+                        setHotCueAt (i, loopIn);
+                        hot[(size_t) i].endSec = loopOut;
+                        hot[(size_t) i].colour = juce::Colour (loopColour);
+                    }
+                    else
+                        setHotCueAt (i, quantizeTime (now));
                     cueEdited();
                     break;
                 }
                 const auto& hc = hot[(size_t) i];
                 if (hc.isLoop())
                 {
+                    endAutoLoop();
                     loopIn = hc.startSec;
                     loopOut = hc.endSec;
                     loopActive = true;
@@ -458,6 +476,11 @@ void Deck::apply (const Command& c)
             {
                 // From the UI a time is given; from a button, store the cue point when stopped (like rekordbox's
                 // MEMORY button) or the playing position.
+                if (c.value < 0.0 && loopAtPlayhead (now))
+                {
+                    addLocator (loopIn, juce::Colour (loopColour), loopOut);   // a loop locator
+                    break;
+                }
                 const double at = c.value >= 0.0 ? quantizeTime (c.value) : (playing ? quantizeTime (now) : cuePoint);
                 addLocator (at, juce::Colour (0xffe62828));
             }
@@ -466,6 +489,7 @@ void Deck::apply (const Command& c)
         case Cmd::locatorDelete:
             if (c.index >= 0 && c.index < numLocs)
             {
+                if (autoLoc >= 0) { endAutoLoop(); loopActive = false; }
                 for (int k = c.index; k < numLocs - 1; ++k) locs[(size_t) k] = locs[(size_t) k + 1];
                 --numLocs;
                 cueEdited();
@@ -483,6 +507,22 @@ void Deck::apply (const Command& c)
                     --numLocs;
                     cueEdited();
                 }
+            }
+            break;
+
+        case Cmd::locatorLoopAdd:
+            if (track != nullptr && c.value2 > c.value)
+                addLocator (c.value, juce::Colour (loopColour), c.value2);
+            break;
+
+        case Cmd::locatorLoopMode:
+            if (c.index >= 0 && c.index < numLocs && locs[(size_t) c.index].end > locs[(size_t) c.index].start)
+            {
+                auto& l = locs[(size_t) c.index];
+                l.mode = juce::jlimit (0, 2, (int) c.value);
+                l.cycles = juce::jlimit (1, 64, (int) c.value2);
+                if (autoLoc == c.index && l.mode == 0) { endAutoLoop(); loopActive = false; }
+                cueEdited();
             }
             break;
 
@@ -604,6 +644,7 @@ void Deck::apply (const Command& c)
         case Cmd::loopIn:
             if (c.down && track != nullptr)
             {
+                endAutoLoop();
                 loopIn = quantizeTime (now);
                 loopOut = -1.0;
                 loopActive = false;
@@ -623,6 +664,7 @@ void Deck::apply (const Command& c)
 
         case Cmd::reloopExit:
             if (! c.down || track == nullptr) break;
+            endAutoLoop();
             if (loopActive)
                 loopActive = false;
             else if (loopIn >= 0.0 && loopOut > loopIn)
@@ -635,6 +677,7 @@ void Deck::apply (const Command& c)
         case Cmd::beatLoop:
         {
             if (! c.down || track == nullptr) break;
+            endAutoLoop();
             const double beats = juce::jlimit (1.0 / 32.0, 512.0, c.value);
             if (haveGrid)
             {
@@ -665,6 +708,7 @@ void Deck::apply (const Command& c)
         case Cmd::loopDouble:
             if (c.down && loopIn >= 0.0 && loopOut > loopIn)
             {
+                endAutoLoop();
                 const double len = loopOut - loopIn;
                 const double newLen = c.cmd == Cmd::loopHalve ? len * 0.5 : len * 2.0;
                 if (newLen > 0.005 && newLen < 600.0)
@@ -673,7 +717,7 @@ void Deck::apply (const Command& c)
             break;
 
         case Cmd::loopOff:
-            if (c.down) loopActive = false;
+            if (c.down) { loopActive = false; endAutoLoop(); }
             break;
 
         case Cmd::beatJump:
@@ -821,8 +865,8 @@ inline void Deck::sampleAt (double p, float& l, float& r, const float* g) const 
 void Deck::readResampled (float* outL, float* outR, int n, double step)
 {
     const auto& a = *track->audio;
-    const double loopInF = loopIn * srcRate, loopOutF = loopOut * srcRate;
-    const bool looping = loopActive && loopOutF > loopInF + 8.0;
+    double loopInF = loopIn * srcRate, loopOutF = loopOut * srcRate;
+    bool looping = loopActive && loopOutF > loopInF + 8.0;
 
     // Skips only apply while playing forwards (not scratching or previewing backwards).
     const bool skipping = skipsOn && numSkipsLocal > 0 && step > 0.0 && ! scratching;
@@ -836,6 +880,21 @@ void Deck::readResampled (float* outL, float* outR, int n, double step)
     };
     if (skipping) findNextSkip();
 
+    // Active / cycle loop locators: the next one ahead engages when playback runs into it.
+    double autoStartF = -1.0;
+    int autoNext = -1;
+    auto findNextAuto = [&]
+    {
+        autoNext = -1;
+        if (scratching || step <= 0.0) return;
+        for (int k = 0; k < numLocs; ++k)
+        {
+            const auto& L = locs[(size_t) k];
+            if (L.mode != 0 && L.end > L.start && L.start * srcRate > pos) { autoNext = k; autoStartF = L.start * srcRate; return; }
+        }
+    };
+    findNextAuto();
+
     // Stem gain ramp across this block
     std::array<float, 4> target;
     bool stemsActive = false;
@@ -848,7 +907,8 @@ void Deck::readResampled (float* outL, float* outR, int n, double step)
     stemsValid = stemsActive ? stems->validFrames.load (std::memory_order_acquire) : 0;
 
     // Fast path: straight copy (no resampling, no stems, no loop or skip crossing, no cross-fade running)
-    const bool skipInBlock = nextSkip >= 0 && skipFromF < pos + n + 1.0;
+    const bool skipInBlock = (nextSkip >= 0 && skipFromF < pos + n + 1.0) || (autoNext >= 0 && autoStartF < pos + n * step + 1.0)
+                          || (autoLoc >= 0 && looping);
     if (! stemsActive && step == 1.0 && pos == std::floor (pos) && pos >= 0 && xfRemain == 0 && ! skipInBlock
         && (int64_t) pos + n < a.numFrames && (! looping || pos + n < loopOutF || pos >= loopOutF))
     {
@@ -866,10 +926,35 @@ void Deck::readResampled (float* outL, float* outR, int n, double step)
     {
         // Jumps inside the block (loop wrap, skip) cross-fade from the old position over a few ms.
         double jumpedFrom = -1.0;
+        if (autoNext >= 0 && pos >= autoStartF)
+        {
+            // Ran into an active / cycle loop: engage it.
+            const auto& L = locs[(size_t) autoNext];
+            loopIn = L.start;
+            loopOut = L.end;
+            loopActive = true;
+            autoLoc = autoNext;
+            cyclesLeft = L.mode == 2 ? L.cycles : 0;
+            loopInF = loopIn * srcRate;
+            loopOutF = loopOut * srcRate;
+            looping = loopOutF > loopInF + 8.0;
+            autoNext = -1;
+        }
         if (looping && step > 0.0 && pos >= loopOutF)
         {
-            jumpedFrom = pos;
-            pos = loopInF + std::fmod (pos - loopInF, loopOutF - loopInF);
+            if (autoLoc >= 0 && cyclesLeft > 0 && --cyclesLeft <= 0)
+            {
+                // A cycle loop has played its passes: carry on past it.
+                looping = false;
+                loopActive = false;
+                endAutoLoop();
+                findNextAuto();
+            }
+            else
+            {
+                jumpedFrom = pos;
+                pos = loopInF + std::fmod (pos - loopInF, loopOutF - loopInF);
+            }
         }
         if (nextSkip >= 0 && pos >= skipFromF)
         {
@@ -1088,8 +1173,12 @@ void Deck::publish()
         pub.locStart[(size_t) i] = on ? locs[(size_t) i].start : -1.0;
         pub.locEnd[(size_t) i] = on ? locs[(size_t) i].end : -1.0;
         pub.locColour[(size_t) i] = on ? locs[(size_t) i].colour : 0u;
+        pub.locMode[(size_t) i] = on ? locs[(size_t) i].mode : 0;
+        pub.locCycles[(size_t) i] = on ? locs[(size_t) i].cycles : 4;
     }
     pub.numLocators = numLocs;
+    pub.autoLoopLocator = autoLoc;
+    pub.cyclesLeft = cyclesLeft;
     for (int i = 0; i < maxSkips; ++i)
     {
         const bool on = i < numSkipsLocal;

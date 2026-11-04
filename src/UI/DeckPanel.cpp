@@ -1,5 +1,6 @@
 #include "DeckPanel.h"
 #include "Theme.h"
+#include "../Audio/MusicalKey.h"
 #include "../Control/Actions.h"
 
 namespace orbit
@@ -36,10 +37,14 @@ void DeckPanel::resized()
     rowInfo = r.removeFromTop (38.0f);
     rowStatus = r.removeFromTop (26.0f);
     r.removeFromTop (6.0f);
-    rowOverview = r.removeFromTop (juce::jlimit (30.0f, 56.0f, r.getHeight() * 0.36f));
+    // the overview gives way first, so the transport row keeps at least 30 px
+    const float fixed = 6.0f + 8.0f + 26.0f + 6.0f + 22.0f + 6.0f + 30.0f;
+    rowOverview = r.removeFromTop (juce::jlimit (22.0f, 56.0f, juce::jmin (r.getHeight() * 0.36f, r.getHeight() - fixed)));
     r.removeFromTop (8.0f);
     rowPads = r.removeFromTop (26.0f);
-    r.removeFromTop (8.0f);
+    r.removeFromTop (6.0f);
+    rowJump = r.removeFromTop (22.0f);
+    r.removeFromTop (6.0f);
     rowControls = r;
     overviewWidth = 0;
     repaint();
@@ -78,7 +83,9 @@ void DeckPanel::timerCallback()
     for (size_t i = 0; i < 8; ++i) mix ((double) st.hotColour[i].load());
     mix (st.trackDataVersion.load());
     if (editor != nullptr) { mix (editor->editsRekordbox (deck)); mix (editor->editsCentrifuge (deck)); mix (editor->versionsDiffer (deck)); }
-    mix (gridMode);
+    mix (gridMode); mix (router.getLoopBeats (deck)); mix (st.autoLoopLocator.load()); mix (st.cyclesLeft.load());
+    for (size_t i = 0; i < 8; ++i) mix (st.hotEnd[i].load());
+    mix (Theme::deckColour (deck).getARGB()); mix (MusicalKey::camelotDisplay().load());
     rotor.setBounds (rotorArea.toNearestInt());
     rotor.setSpinning (st.stemsReady.load() && st.stemsProgress.load() < 0.999f);
     rotor.setProgress (st.stemsReady.load() ? st.stemsProgress.load() : 0.0f);
@@ -105,6 +112,7 @@ void DeckPanel::paint (juce::Graphics& g)
         g.setColour (psyched::Colours::onSolid);
         g.setFont (Theme::display (15.0f, true));
         g.drawText (juce::String (deck + 1), badge, juce::Justification::centred);
+        regions.push_back ({ badge, "deckcolour", 5 });
         r.removeFromLeft (10.0f);
 
         auto bpmArea = r.removeFromRight (110.0f);
@@ -127,7 +135,7 @@ void DeckPanel::paint (juce::Graphics& g)
             r.removeFromRight (4.0f);
 
             auto plus = r.removeFromRight (18.0f).withSizeKeepingCentre (18.0f, 22.0f);
-            auto keyChip = r.removeFromRight (shift != 0 ? 66.0f : 44.0f).withSizeKeepingCentre (shift != 0 ? 64.0f : 42.0f, 22.0f);
+            auto keyChip = r.removeFromRight (76.0f).withSizeKeepingCentre (74.0f, 22.0f);   // one size for every key, shifted or not
             auto minus = r.removeFromRight (18.0f).withSizeKeepingCentre (18.0f, 22.0f);
             chip (g, minus, "-", false, Theme::good);
             chip (g, plus, "+", false, Theme::good);
@@ -139,7 +147,7 @@ void DeckPanel::paint (juce::Graphics& g)
             g.fillRect (keyChip);
             g.setColour (shift != 0 ? Theme::warn : Theme::good);
             g.setFont (Theme::font (13.0f, true));
-            auto keyText = router.effectiveKeyText (deck);
+            auto keyText = MusicalKey::display (router.effectiveKeyText (deck));
             if (shift != 0) keyText << "  " << (shift > 0 ? "+" : "") << shift;
             g.drawText (keyText, keyChip, juce::Justification::centred);
             r.removeFromRight (6.0f);
@@ -179,17 +187,7 @@ void DeckPanel::paint (juce::Graphics& g)
         g.setColour (warn ? Theme::bad : Theme::textDim);
         g.drawText (loaded ? formatTime (-(len - pos)) : "-0:00.0", r.removeFromLeft (86.0f), juce::Justification::centredLeft);
 
-        // Beat counter (position in the bar)
-        r.removeFromLeft (6.0f);
-        int beatInBar = 0;
-        if (loaded && track->grid.isValid() && pos >= track->grid.getBeats().front().timeSec)
-            beatInBar = track->grid.beatInBarAt (pos);
-        for (int i = 1; i <= 4; ++i)
-        {
-            auto b = r.removeFromLeft (14.0f).withSizeKeepingCentre (10.0f, 10.0f);
-            g.setColour (i == beatInBar ? (i == 1 ? Theme::bad : col) : Theme::line);
-            g.fillRect (b);
-        }
+        // (The phase meter for both decks is in the top bar.)
 
         // Edit targets: R = rekordbox copy, C = Centrifuge version (both lit = edit both); GRID opens the grid editor
         {
@@ -369,6 +367,8 @@ void DeckPanel::paint (juce::Graphics& g)
             g.setColour (set ? juce::Colours::black : Theme::textFaint);
             g.setFont (Theme::font (12.0f, true));
             auto label = juce::String::charToString ((juce::juce_wchar) ('A' + i));
+            if (set && st.hotEnd[(size_t) i].load() > st.hotStart[(size_t) i].load())
+                drawLoopIcon (g, pad.removeFromLeft (pad.getHeight()).reduced (6.0f), juce::Colours::black, 1.4f);   // hot loop
             if (set && editor != nullptr)
                 if (auto name = editor->cueName (deck, true, i); name.isNotEmpty()) label << "  " << name;
             g.drawText (label, pad.reduced (4.0f, 0.0f), juce::Justification::centred, true);
@@ -376,10 +376,32 @@ void DeckPanel::paint (juce::Graphics& g)
         }
     }
 
+    // --- Beat jump: 1 beat, 1 bar, 2 bars, 4 bars, back and forward ----------------
+    {
+        auto r = rowJump;
+        const auto p = juce::String ("d") + juce::String (deck + 1) + ".beatjump.";
+        psyched::paintLabel (g, "Jump", r.removeFromLeft (40.0f), juce::Justification::centredLeft);
+        const std::pair<int, const char*> sizes[] = { { 1, "1 BEAT" }, { 4, "1 BAR" }, { 8, "2 BARS" }, { 16, "4 BARS" } };
+        const float gw = (r.getWidth() - 3 * 8.0f) / 4.0f;
+        for (int k = 0; k < 4; ++k)
+        {
+            auto grp = r.removeFromLeft (gw);
+            if (k < 3) r.removeFromLeft (8.0f);
+            auto back = grp.removeFromLeft (22.0f);
+            auto fwd = grp.removeFromRight (22.0f);
+            chip (g, back, "<", false, Theme::sync);
+            chip (g, fwd, ">", false, Theme::sync);
+            psyched::paintLabel (g, sizes[k].second, grp, juce::Justification::centred, Theme::textDim, 9.5f);
+            regions.push_back ({ back, p + "back." + juce::String (sizes[k].first), 0 });
+            regions.push_back ({ fwd, p + "fwd." + juce::String (sizes[k].first), 0 });
+        }
+    }
+
     // --- Transport + stems -------------------------------------------------------
     {
         auto r = rowControls;
         const auto p = juce::String ("d") + juce::String (deck + 1) + ".";
+        auto vfit = [] (juce::Rectangle<float> b) { return b.withSizeKeepingCentre (b.getWidth(), juce::jmin (b.getHeight(), 24.0f)); };
 
         auto cue = r.removeFromLeft (58.0f).reduced (0.0f, 2.0f);
         const bool atCue = loaded && ! st.playing.load();
@@ -411,18 +433,29 @@ void DeckPanel::paint (juce::Graphics& g)
         g.fillPath (icon);
         regions.push_back ({ play, p + "play", 0 });
 
+        // Loop: [<] halves the size (and a running loop), [size] sets / removes the loop, [>] doubles
         r.removeFromLeft (10.0f);
-        auto loopBtn = r.removeFromLeft (64.0f).reduced (0.0f, 6.0f);
-        chip (g, loopBtn, "LOOP 4", st.loopActive.load(), Theme::accent);
-        regions.push_back ({ loopBtn, p + "beatloop.4", 0 });
+        {
+            const double lb = router.getLoopBeats (deck);
+            const auto sizeText = lb >= 1.0 ? juce::String ((int) std::lround (lb)) : "1/" + juce::String ((int) std::lround (1.0 / lb));
+            auto lessBtn = vfit (r.removeFromLeft (22.0f));
+            auto sizeBtn = vfit (r.removeFromLeft (44.0f)).reduced (1.0f, 0.0f);
+            auto moreBtn = vfit (r.removeFromLeft (22.0f));
+            chip (g, lessBtn, "<", false, Theme::accent);
+            chip (g, sizeBtn, sizeText, st.loopActive.load(), Theme::accent);
+            chip (g, moreBtn, ">", false, Theme::accent);
+            regions.push_back ({ lessBtn, p + "loopsize.halve", 0 });
+            regions.push_back ({ sizeBtn, p + "loop.toggle", 0 });
+            regions.push_back ({ moreBtn, p + "loopsize.double", 0 });
+        }
 
         // Locator (memory) and skip: SKIP once to start, again to end
         r.removeFromLeft (6.0f);
-        auto memBtn = r.removeFromLeft (64.0f).reduced (0.0f, 6.0f);
-        chip (g, memBtn, "MEMORY", false, Theme::bad);
+        auto memBtn = vfit (r.removeFromLeft (66.0f));
+        chip (g, memBtn, "LOCATOR", false, Theme::bad);
         regions.push_back ({ memBtn, p + "locator.add", 0 });
         r.removeFromLeft (6.0f);
-        auto skipBtn = r.removeFromLeft (56.0f).reduced (0.0f, 6.0f);
+        auto skipBtn = vfit (r.removeFromLeft (56.0f));
         const bool pending = st.skipPendingFrom.load() >= 0.0;
         chip (g, skipBtn, pending ? "SKIP TO" : "SKIP", pending, juce::Colour (0xff38d9ff));
         regions.push_back ({ skipBtn, p + "skip.set", 0 });
@@ -483,6 +516,27 @@ void DeckPanel::showPadMenu (int pad, juce::Rectangle<float> area)
     });
 }
 
+void DeckPanel::showDeckColourMenu (juce::Rectangle<float> area)
+{
+    const auto current = Theme::deckColour (deck);
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("Deck " + juce::String (deck + 1) + " colour");
+    menu.addItem (200, "Default (" + juce::String (deck == 0 ? "cyan" : "pink") + ")");
+    menu.addSeparator();
+    addCueColourItems (menu, 100, current);
+    const auto screen = localAreaToGlobal (area.toNearestInt());
+    juce::Component::SafePointer<DeckPanel> safe (this);
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (screen),
+                        [safe, screen, current] (int result)
+    {
+        if (safe == nullptr || safe->onDeckColour == nullptr) return;
+        auto set = [safe] (juce::Colour c) { if (safe != nullptr && safe->onDeckColour) safe->onDeckColour (safe->deck, c); };
+        if (result == 200) set (safe->deck == 0 ? psyched::Colours::cyan : psyched::Colours::pink);
+        else if (result >= 100 && result < 116) set (juce::Colour (rekordboxCueColours()[(size_t) (result - 100)].argb));
+        else if (result == 116) ColourPickerBubble::show (screen, current, set);
+    });
+}
+
 const DeckPanel::Region* DeckPanel::regionAt (juce::Point<float> p) const
 {
     for (auto& r : regions)
@@ -517,6 +571,11 @@ void DeckPanel::mouseDown (const juce::MouseEvent& e)
     if (r->kind == 4)
     {
         if (onSetBpm) onSetBpm (deck);
+        return;
+    }
+    if (r->kind == 5)
+    {
+        showDeckColourMenu (r->r);
         return;
     }
     if (r->action.endsWith ("grid.mode"))

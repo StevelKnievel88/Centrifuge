@@ -18,8 +18,12 @@ struct AppSettings
     juce::String audioDeviceState;     // JUCE AudioDeviceManager XML
     int bufferSize = 512;
     std::array<int, 2> deckOutputs { 0, 2 };
+    int previewOutput = -1;            // PREP / browser previews: first output channel, -1 = automatic
+    bool prepEditR = true, prepEditC = true;
     int sumToMaster = -1;              // -1 auto, 0 off, 1 on
     double mp3OffsetMs = 0.0;
+    std::array<juce::uint32, 2> deckColours { 0xff2ee6d6, 0xffff3fa0 };
+    bool camelotKeys = false;          // show keys in Camelot notation
     int analysisRange = 1;             // tempo range for analysing music added from files: 0 = 70-140, 1 = 88-175, 2 = 100-200, 3 = 120-240
     std::pair<double, double> analysisBpmRange() const
     {

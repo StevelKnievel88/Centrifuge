@@ -15,6 +15,10 @@ struct CuePoint
     double endSec = -1.0;       // > startSec when this is a loop
     juce::Colour colour;
     juce::String comment;
+    // Loops (Centrifuge only): 0 = an ordinary loop (called up, not engaged), 1 = active loop (engages as soon as
+    // playback runs into it), 2 = cycle loop (engages, plays `cycles` times, then carries on).
+    int loopMode = 0;
+    int cycles = 4;
 
     bool isLoop() const noexcept { return endSec > startSec; }
 };
@@ -63,6 +67,7 @@ struct TrackInfo
     juce::int64 libraryId = 0;  // non-zero for tracks in Centrifuge's library
     bool versionsDiffer = false;// the rekordbox copy and the Centrifuge version are different
     int numCues = 0;            // hot cues + memory cues / locators in the version shown
+    int playCount = 0;          // times played on a deck (Centrifuge's library)
     bool hasSkips = false;
     juce::String libraryKey;    // Centrifuge's key for the track (file name + length)
 

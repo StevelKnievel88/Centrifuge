@@ -544,15 +544,46 @@ void ScrollingWaveforms::paintOverlays (juce::Graphics& g, int d, juce::Rectangl
         if (! visible (s)) continue;
         const float x = xOf (s);
         const auto c = juce::Colour (st.locColour[(size_t) i].load());
+        const double le = st.locEnd[(size_t) i].load();
+        const bool isLoop = le > s;
+        const int mode = st.locMode[(size_t) i].load();
+        if (isLoop)
+        {
+            // Loop locators: shade the loop
+            g.setColour (c.withAlpha (st.autoLoopLocator.load() == i ? 0.22f : 0.10f));
+            g.fillRect (juce::Rectangle<float>::leftTopRightBottom (x, (float) wave.getY(), juce::jmax (x + 1.0f, xOf (le)), (float) wave.getBottom()));
+        }
         g.setColour (c.withAlpha (0.8f));
         g.fillRect (x - 0.5f, (float) wave.getY(), 1.0f, (float) wave.getHeight());
         if (withFlags)
         {
-            juce::Path p;
-            p.addTriangle (x - 5.5f, flagTop, x + 5.5f, flagTop, x, flagTop + 10.0f);
-            g.setColour (c);
-            g.fillPath (p);
-            markers.push_back ({ juce::Rectangle<float> (x - 7.0f, flagTop - 1.0f, 14.0f, (float) markerBand), d, markerLocator, i });
+            const float h = (float) markerBand - 3.0f;
+            if (! isLoop)
+            {
+                juce::Path p;
+                p.addTriangle (x - 5.5f, flagTop, x + 5.5f, flagTop, x, flagTop + 10.0f);
+                g.setColour (c);
+                g.fillPath (p);
+            }
+            else if (mode == 2)
+            {
+                // Cycle loop: the passes left (or the setting) as the head, e.g. "4x"
+                const int left = st.autoLoopLocator.load() == i ? st.cyclesLeft.load() : st.locCycles[(size_t) i].load();
+                auto box = juce::Rectangle<float> (x, flagTop, 22.0f, h);
+                g.setColour (c);
+                g.fillRect (box);
+                g.setColour (juce::Colours::black);
+                g.setFont (psyched::Fonts::mono (10.0f, true));
+                g.drawText (juce::String (left) + "x", box, juce::Justification::centred);
+            }
+            else
+            {
+                // Loop (and active loop: filled head)
+                auto box = juce::Rectangle<float> (x, flagTop, h, h);
+                if (mode == 1) { g.setColour (c); g.fillRect (box); }
+                drawLoopIcon (g, box.reduced (1.5f), mode == 1 ? juce::Colours::black : c, 1.5f);
+            }
+            markers.push_back ({ juce::Rectangle<float> (x - 7.0f, flagTop - 1.0f, isLoop ? 26.0f : 14.0f, (float) markerBand), d, markerLocator, i });
             if (cueName)
                 if (auto name = cueName (d, false, i); name.isNotEmpty())
                 {
@@ -655,6 +686,14 @@ void ScrollingWaveforms::showMarkerMenu (const Marker& m)
         menu.addSeparator();
     }
 
+    const bool loopLocator = m.kind == markerLocator && st.locEnd[(size_t) m.index].load() > st.locStart[(size_t) m.index].load();
+    const int loopMode = loopLocator ? st.locMode[(size_t) m.index].load() : 0;
+    const int loopCycles = loopLocator ? st.locCycles[(size_t) m.index].load() : 4;
+    if (loopLocator)
+    {
+        addLoopModeItems (menu, 200, loopMode, loopCycles);
+        menu.addSeparator();
+    }
     if (m.kind != markerSkip)
     {
         addCueColourItems (menu, 100, current);
@@ -666,9 +705,14 @@ void ScrollingWaveforms::showMarkerMenu (const Marker& m)
     const auto marker = m;
     const auto screen = localAreaToGlobal (m.r.toNearestInt());
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (screen),
-                        [this, marker, screen, current] (int result)
+                        [this, marker, screen, current, loopCycles] (int result)
     {
         auto& deck = engine.deck (marker.deck);
+        if (auto [mode, cycles] = loopModeFromMenu (result, 200, loopCycles); mode >= 0)
+        {
+            deck.post (Deck::Command { Deck::Cmd::locatorLoopMode, (double) mode, marker.index, true, nullptr, 0, (double) cycles });
+            return;
+        }
         auto setColour = [this, marker] (juce::Colour c)
         {
             engine.deck (marker.deck).post (marker.kind == markerHot ? Deck::Cmd::hotCueColour : Deck::Cmd::locatorColour,

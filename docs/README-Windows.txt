@@ -68,7 +68,25 @@ Hot cues, locators and skips
 ----------------------------
 - Hot cue pads: shift+click deletes, right-click picks a colour
   (rekordbox colours or any colour). The same works on the waveform flags.
-- MEMORY adds a locator (like a rekordbox memory cue, up to 32 per track).
+- LOCATOR adds a locator (like a rekordbox memory cue, up to 32 per track).
+- Loops: the "< 16 >" group sets the loop size (< halves, > doubles) and the
+  middle button starts / ends a loop of that size.
+- BEAT JUMP row: back / forward 1 beat, 1 bar, 2 bars or 4 bars.
+- Loops on cues: stop at the start of a loop (or with the loop playing) and
+  press an empty hot cue pad - it saves a hot loop (orange, with a loop
+  icon). LOCATOR does the same as a loop locator.
+- Right-click a loop locator to make it:
+    Normal  plays when you press it, like any saved loop
+    Active  the loop switches on by itself when the playhead reaches it
+    Cycle   active, but plays the loop N times (2-32; its flag shows "4x"
+            and counts down) and then carries on - it resets next time
+  Hot loops and loop modes are kept in the Centrifuge version only; the
+  rekordbox copy gets a plain loop.
+- Click the coloured deck number to change a deck's colour (default,
+  rekordbox colours or any colour). The phrase meter, deck badges and
+  waveforms follow it.
+- Phrase meter (top bar): decks 1 and 2 stacked, one block per beat over a
+  16-bar phrase, every other bar a shade darker; the current beat flashes.
 - SKIP: press at the start of a section, press again at its end. Playback
   jumps over it (snapped to the beat grid with QUANTIZE on) and the
   waveform folds it out. Your audio files are never changed.
@@ -76,6 +94,35 @@ Hot cues, locators and skips
   skips on/off, fold on/off.
 - Your edits are saved in %APPDATA%\Centrifuge\cues.json. rekordbox's
   library is never changed.
+
+PREP page (F5)
+--------------
+- One track on its own, for getting it ready: big zoomable waveform (drag
+  to scrub, wheel to zoom), overview (click to go anywhere), the beat grid
+  editor, hot cues A-H, loops, locators, skips and beat jumps.
+- On the right: every locator, loop locator and skip in one list, in the
+  order they come in the track. Click to go there; right-click to rename,
+  recolour, change a loop's mode or delete.
+- Load a track: double-click it while on PREP, drag it onto PREP, or
+  right-click it in the browser > Load into PREP.
+- PREP (and browser previews) play on a third, separate deck. Choose its
+  output in Settings > PREP / previews play on (Automatic = the first
+  output pair the decks aren't using, e.g. headphones). Loading a preview
+  replaces the track on PREP.
+
+Browser
+-------
+- PREVIEW column: a small waveform of each track - click it to play from
+  there on the PREP / preview output; click the square to stop.
+- Drag a track onto deck 1 or 2 (or the top / bottom half of the waveforms)
+  to load it.
+- RATING (click the stars) and PLAYS columns. A play is counted once a
+  track has played for 30 seconds on deck 1 or 2.
+- Right-click a track: load to deck 1 / 2 / PREP, remove from the Centrifuge
+  collection, remove from the rekordbox copy (rekordbox itself is never
+  changed), reset play count. Ratings and plays are kept in Centrifuge's
+  library (import or add the track first).
+- Settings > Key notation: Standard (Am, F#) or Camelot (8A, 2B).
 
 Libraries: rekordbox copy and Centrifuge
 ----------------------------------------

@@ -1,8 +1,10 @@
 #pragma once
 #include "../Library/LibraryManager.h"
 #include "../Stems/StemManager.h"
+#include "../Audio/WaveformData.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <unordered_map>
+#include <map>
 
 namespace orbit
 {
@@ -28,6 +30,21 @@ public:
     std::function<void (juce::Component& anchor)> onImport, onExport;
     /** Audio files / folders dropped on the browser (added to Centrifuge's library). */
     std::function<void (const juce::Array<juce::File>&)> onFilesDropped;
+
+    /** Preview: play this track from `fraction` (0..1) on the PREP / preview deck; stop it. */
+    std::function<void (const TrackInfo&, bool fromPc, double fraction)> onPreview;
+    std::function<void()> onPreviewStop;
+    /** What the preview deck is playing (file path; empty = nothing) and where, for the preview column. */
+    void setPreviewState (const juce::String& filePath, double fraction, bool playing);
+    /** Short waveform for the preview column, from a loaded track (key = file path). */
+    void notePreviewWaveform (const juce::String& filePath, const WaveformData& w);
+
+    /** Track menu actions: "load.0", "load.1", "load.2" (PREP), "remove.rb", "remove.cf", "plays.reset"; and ratings. */
+    std::function<void (const std::vector<TrackInfo>&, const juce::String& action)> onTrackAction;
+    std::function<void (const TrackInfo&, int stars)> onSetRating;
+    /** The tracks being dragged out of the list (to a deck or PREP). */
+    std::vector<TrackInfo> getDraggedTracks() const { return dragged; }
+    bool draggedFromPc() const { return draggedPc; }
 
     bool isInterestedInFileDrag (const juce::StringArray& files) override;
     void fileDragEnter (const juce::StringArray&, int, int) override { dragHover = true; repaint(); }
@@ -68,6 +85,9 @@ private:
     void cellDoubleClicked (int row, int col, const juce::MouseEvent&) override;
     void sortOrderChanged (int columnId, bool forwards) override;
     void cellClicked (int row, int col, const juce::MouseEvent&) override;
+    juce::var getDragSourceDescription (const juce::SparseSet<int>& rows) override;
+    void showTrackMenu (int row);
+    float cellFraction (int col, const juce::MouseEvent& e) const;
     void timerCallback() override;
 
     LibraryManager& library;
@@ -90,6 +110,14 @@ private:
     juce::Label countLabel;
     bool treeFocused = false;
     bool dragHover = false;
+    std::vector<TrackInfo> dragged;
+    bool draggedPc = false;
+    juce::String previewPath;
+    double previewFraction = 0.0;
+    bool previewPlaying = false;
+    std::map<juce::String, std::vector<uint8_t>> previewWaves;   // by file path; empty vector = being loaded / none
+    juce::ThreadPool previewPool { 1 };
+    void requestPreviewWave (const TrackInfo& t);
     int sortColumn = 0;
     bool sortForwards = true;
 };

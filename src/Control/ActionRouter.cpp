@@ -23,6 +23,7 @@ ActionRouter::ActionRouter (AudioEngine& e) : engine (e)
     {
         rangeIndex[(size_t) d] = 1;  // ±10 %
         beatJump[(size_t) d] = 4.0;
+        loopBeats[(size_t) d] = 4.0;
         vinyl[(size_t) d] = true;
         if (d < AudioEngine::maxDecks)
             engine.deck (d).post (Deck::Cmd::setPitchRange, pitchRanges[1]);
@@ -214,6 +215,29 @@ void ActionRouter::perform (const ActionDef& a, const ActionValue& v)
     else if (name.startsWith ("beatloop."))
     {
         if (v.down) button (C::beatLoop, parseBeats (name.fromFirstOccurrenceOf (".", false, false)));
+    }
+    else if (name == "loop.toggle")
+    {
+        if (v.down)
+        {
+            if (engine.deck (d).state().loopActive.load()) button (C::loopOff);
+            else button (C::beatLoop, loopBeats[(size_t) d].load());
+        }
+    }
+    else if (name == "loopsize.halve" || name == "loopsize.double")
+    {
+        if (v.down)
+        {
+            const bool up = name == "loopsize.double";
+            const double b = loopBeats[(size_t) d].load();
+            loopBeats[(size_t) d] = up ? juce::jmin (512.0, b * 2.0) : juce::jmax (1.0 / 32.0, b * 0.5);
+            if (engine.deck (d).state().loopActive.load()) button (up ? C::loopDouble : C::loopHalve);
+        }
+    }
+    else if (name.startsWith ("beatjump.back.") || name.startsWith ("beatjump.fwd."))
+    {
+        const double beats = name.fromLastOccurrenceOf (".", false, false).getDoubleValue();
+        if (v.down && beats > 0.0) button (C::beatJump, name.startsWith ("beatjump.back.") ? -beats : beats);
     }
     else if (name == "beatjump.back") { if (v.down) button (C::beatJump, -beatJump[(size_t) d].load()); }
     else if (name == "beatjump.fwd")  { if (v.down) button (C::beatJump,  beatJump[(size_t) d].load()); }

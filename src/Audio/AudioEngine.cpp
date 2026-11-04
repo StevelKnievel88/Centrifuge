@@ -42,6 +42,7 @@ AudioEngine::AudioEngine()
         decks[(size_t) i] = std::make_unique<Deck> (i);
         deckOutputs[(size_t) i] = i * 2;
     }
+    decks[(size_t) previewDeck] = std::make_unique<Deck> (previewDeck);
     deviceManager.addChangeListener (this);
 }
 
@@ -321,6 +322,36 @@ void AudioEngine::render (float* const* outputs, int numOutputs, int numSamples)
                 }
             }
         }
+        // PREP / preview deck (after the decks, which copy onto their outputs): added onto its output (automatic: the first pair the decks don't use, else 1/2)
+        {
+            int ch = previewOutput.load();
+            if (ch < 0 || ch + 1 >= numOutputs)
+            {
+                ch = 0;
+                if (! sum)
+                    for (int c = 0; c + 1 < numOutputs; c += 2)
+                    {
+                        bool used = false;
+                        for (int d = 0; d < maxDecks; ++d) used = used || deckOutputs[(size_t) d].load() == c;
+                        if (! used) { ch = c; break; }
+                    }
+            }
+            previewInUse = ch;
+            auto& pd = *decks[(size_t) previewDeck];
+            if (pd.hasTrack())
+            {
+                pd.process (scratchL.data(), scratchR.data(), n);
+                if (ch + 1 < numOutputs && outputs[ch] != nullptr && outputs[ch + 1] != nullptr)
+                {
+                    juce::FloatVectorOperations::add (outputs[ch] + start, scratchL.data(), n);
+                    juce::FloatVectorOperations::add (outputs[ch + 1] + start, scratchR.data(), n);
+                }
+            }
+            else
+                pd.process (scratchL.data(), scratchR.data(), n);   // keeps its state published
+        }
+
+
     }
 }
 

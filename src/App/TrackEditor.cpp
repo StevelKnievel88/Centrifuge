@@ -97,6 +97,8 @@ TrackEditor::Snap TrackEditor::snapFromDeck (int deck, double shift) const
         const double le = st.locEnd[(size_t) i].load();
         c.endSec = le > 0.0 ? le - shift : -1.0;
         c.colour = juce::Colour (st.locColour[(size_t) i].load());
+        c.loopMode = st.locMode[(size_t) i].load();
+        c.cycles = st.locCycles[(size_t) i].load();
         n.locs.push_back (c);
     }
     for (int i = 0; i < juce::jmin (st.numSkips.load(), Deck::maxSkips); ++i)
@@ -153,7 +155,13 @@ void TrackEditor::applyDiff (TrackVersion& t, const Snap& before, const Snap& no
         const int b = findAt (before.locs, c.startSec);
         const int k = findAt (t.memory, c.startSec);
         if (b < 0 && k < 0) { auto m = c; m.type = CuePoint::Type::memory; t.memory.push_back (m); }
-        else if (b >= 0 && k >= 0 && before.locs[(size_t) b].colour != c.colour) t.memory[(size_t) k].colour = c.colour;
+        else if (b >= 0 && k >= 0)
+        {
+            const auto& was = before.locs[(size_t) b];
+            auto& m = t.memory[(size_t) k];
+            if (was.colour != c.colour) m.colour = c.colour;
+            if (was.loopMode != c.loopMode || was.cycles != c.cycles) { m.loopMode = c.loopMode; m.cycles = c.cycles; }
+        }
     }
 
     for (auto& old : before.skips)
@@ -194,7 +202,7 @@ void TrackEditor::swapDeck (int deck, const TrackVersion& v)
 
 void TrackEditor::poll()
 {
-    for (int d = 0; d < 2; ++d)
+    for (int d = 0; d < (int) sessions.size(); ++d)
     {
         auto& s = sessions[(size_t) d];
         const auto& st = engine.deck (d).state();

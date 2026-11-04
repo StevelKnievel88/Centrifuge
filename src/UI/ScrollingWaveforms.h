@@ -1,5 +1,6 @@
 #pragma once
 #include "WaveformRender.h"
+#include "Theme.h"
 #include "../Audio/AudioEngine.h"
 
 namespace orbit
@@ -10,9 +11,30 @@ namespace orbit
     waveform, full or half height. The split between the lanes and the playhead position can be dragged.
     Skipped sections are folded out so the waveform shows the track as it will play.
     Repaints are synced to the display and skipped while nothing moves. */
-class ScrollingWaveforms : public juce::Component
+class ScrollingWaveforms : public juce::Component,
+                           public juce::DragAndDropTarget
 {
 public:
+    // Tracks dragged from the browser: the top half loads deck 1, the bottom half deck 2
+    bool isInterestedInDragSource (const SourceDetails& d) override { return d.description == juce::var ("centrifuge-tracks"); }
+    void itemDragEnter (const SourceDetails& d) override { itemDragMove (d); }
+    void itemDragMove (const SourceDetails& d) override { const int h = d.localPosition.y < getHeight() / 2 ? 0 : 1; if (h != dropDeck) { dropDeck = h; repaint(); } }
+    void itemDragExit (const SourceDetails&) override { dropDeck = -1; repaint(); }
+    void itemDropped (const SourceDetails& d) override { const int h = d.localPosition.y < getHeight() / 2 ? 0 : 1; dropDeck = -1; repaint(); if (onTrackDropped) onTrackDropped (h); }
+    void paintOverChildren (juce::Graphics& g) override
+    {
+        if (dropDeck < 0) return;
+        auto r = getLocalBounds().toFloat();
+        auto half = dropDeck == 0 ? r.removeFromTop (r.getHeight() / 2) : r.removeFromBottom (r.getHeight() / 2);
+        g.setColour (psyched::Colours::void_.withAlpha (0.65f));
+        g.fillRect (half);
+        g.setColour (Theme::deckColour (dropDeck));
+        g.drawRect (half.reduced (2.0f), 2.0f);
+        psyched::paintTitle (g, "Drop to load on deck " + juce::String (dropDeck + 1), half, juce::Justification::centred, Theme::deckColour (dropDeck), 14.0f);
+    }
+    std::function<void (int deck)> onTrackDropped;
+    int dropDeck = -1;
+
     enum LaneStyle { stems = 0, threeBand = 1, rgb = 2, singleColour = 3 };
     struct LaneConfig { int style = threeBand; int shape = StripOptions::full; };
 

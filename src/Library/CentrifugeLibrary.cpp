@@ -61,6 +61,8 @@ CentrifugeLibrary::CentrifugeLibrary (juce::File file)
     exec ("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;");
     exec ("CREATE TABLE IF NOT EXISTS tracks (id INTEGER PRIMARY KEY, key TEXT UNIQUE, info TEXT, source TEXT, rb TEXT, cf TEXT, "
           "rb_edited INTEGER DEFAULT 0, cf_edited INTEGER DEFAULT 0, import_hash TEXT, imported_grid TEXT)");
+    exec ("ALTER TABLE tracks ADD COLUMN hidden INTEGER DEFAULT 0");   // fails harmlessly when it already exists
+    exec ("ALTER TABLE tracks ADD COLUMN plays INTEGER DEFAULT 0");
     exec ("CREATE TABLE IF NOT EXISTS playlists (id INTEGER PRIMARY KEY, parent INTEGER, name TEXT, folder INTEGER, seq INTEGER, source TEXT)");
     exec ("CREATE TABLE IF NOT EXISTS playlist_tracks (playlist INTEGER, pos INTEGER, track INTEGER)");
     loadAll();
@@ -138,7 +140,7 @@ void CentrifugeLibrary::loadAll()
     byKey.clear();
     playlists.clear();
 
-    Stmt q (db, "SELECT id, key, info, source, rb, cf, rb_edited, cf_edited, import_hash, imported_grid FROM tracks");
+    Stmt q (db, "SELECT id, key, info, source, rb, cf, rb_edited, cf_edited, import_hash, imported_grid, hidden, plays FROM tracks");
     while (q.step())
     {
         Track t;
@@ -152,6 +154,8 @@ void CentrifugeLibrary::loadAll()
         t.cfEdited = q.i64 (7) != 0;
         t.importHash = q.text (8);
         t.importedGrid = beatsFromVar (juce::JSON::parse (q.text (9)));
+        t.hidden = (int) q.i64 (10);
+        t.plays = (int) q.i64 (11);
         t.differ = ! t.rb.sameAs (t.cf);
         byKey[t.key] = t.id;
         tracks[t.id] = std::move (t);
@@ -171,11 +175,12 @@ void CentrifugeLibrary::writeTrack (const Track& tc)
 {
     auto& t = const_cast<Track&> (tc);
     t.differ = ! t.rb.sameAs (t.cf);
-    Stmt s (db, "INSERT OR REPLACE INTO tracks (id, key, info, source, rb, cf, rb_edited, cf_edited, import_hash, imported_grid) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?)");
+    Stmt s (db, "INSERT OR REPLACE INTO tracks (id, key, info, source, rb, cf, rb_edited, cf_edited, import_hash, imported_grid, hidden, plays) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)");
     s.bind (1, t.id).bind (2, t.key).bind (3, juce::JSON::toString (infoToVar (t.info), true)).bind (4, t.source)
      .bind (5, t.rb.toJson()).bind (6, t.cf.toJson()).bind (7, (juce::int64) t.rbEdited).bind (8, (juce::int64) t.cfEdited)
-     .bind (9, t.importHash).bind (10, juce::JSON::toString (beatsToVar (t.importedGrid), true));
+     .bind (9, t.importHash).bind (10, juce::JSON::toString (beatsToVar (t.importedGrid), true))
+     .bind (11, (juce::int64) t.hidden).bind (12, (juce::int64) t.plays);
     s.run();
 }
 
@@ -267,6 +272,7 @@ CentrifugeLibrary::ImportResult CentrifugeLibrary::import (const LibrarySource& 
 
         auto& t = tracks[it->second];
         idsBySourceIndex[(size_t) i] = t.id;
+        t.hidden &= ~1;   // imported again: back in the rekordbox copy
         // Track details always follow rekordbox (title, file location, ...)
         auto newInfo = info;
         newInfo.dbCues.clear();
@@ -480,6 +486,67 @@ juce::String CentrifugeLibrary::keyForFile (const juce::File& f, double lengthSe
     return CueStore::keyFor (t, lengthSec);
 }
 
+void CentrifugeLibrary::removeFromView (juce::int64 id, int view)
+{
+    bool remove = false;
+    {
+        const juce::ScopedLock sl (lock);
+        auto it = tracks.find (id);
+        if (it == tracks.end()) return;
+        it->second.hidden |= view == 0 ? 1 : 2;
+        remove = it->second.hidden == 3;
+        if (! remove) Stmt (db, "UPDATE tracks SET hidden=? WHERE id=?").bind (1, (juce::int64) it->second.hidden).bind (2, id).run();
+    }
+    if (remove) deleteTrack (id);
+    else ++changeCount;
+}
+
+void CentrifugeLibrary::deleteTrack (juce::int64 id)
+{
+    const juce::ScopedLock sl (lock);
+    auto it = tracks.find (id);
+    if (it == tracks.end()) return;
+    byKey.erase (it->second.key);
+    tracks.erase (it);
+    for (auto& p : playlists)
+        p.tracks.erase (std::remove (p.tracks.begin(), p.tracks.end(), id), p.tracks.end());
+    exec ("BEGIN");
+    Stmt (db, "DELETE FROM tracks WHERE id=?").bind (1, id).run();
+    Stmt (db, "DELETE FROM playlist_tracks WHERE track=?").bind (1, id).run();
+    exec ("COMMIT");
+    ++changeCount;
+}
+
+void CentrifugeLibrary::addPlay (juce::int64 id)
+{
+    const juce::ScopedLock sl (lock);
+    auto it = tracks.find (id);
+    if (it == tracks.end()) return;
+    ++it->second.plays;
+    Stmt (db, "UPDATE tracks SET plays=? WHERE id=?").bind (1, (juce::int64) it->second.plays).bind (2, id).run();
+    ++changeCount;
+}
+
+void CentrifugeLibrary::resetPlays (juce::int64 id)
+{
+    const juce::ScopedLock sl (lock);
+    auto it = tracks.find (id);
+    if (it == tracks.end()) return;
+    it->second.plays = 0;
+    Stmt (db, "UPDATE tracks SET plays=0 WHERE id=?").bind (1, id).run();
+    ++changeCount;
+}
+
+void CentrifugeLibrary::setRating (juce::int64 id, int stars)
+{
+    const juce::ScopedLock sl (lock);
+    auto it = tracks.find (id);
+    if (it == tracks.end()) return;
+    it->second.info.rating = juce::jlimit (0, 5, stars);
+    Stmt (db, "UPDATE tracks SET info=? WHERE id=?").bind (1, juce::JSON::toString (infoToVar (it->second.info), true)).bind (2, id).run();
+    ++changeCount;
+}
+
 void CentrifugeLibrary::saveVersions (juce::int64 id, const TrackVersion* rb, const TrackVersion* cf)
 {
     const juce::ScopedLock sl (lock);
@@ -509,7 +576,9 @@ std::shared_ptr<LibrarySource> CentrifugeLibrary::makeSource (int view) const
     std::map<juce::int64, int> indexOf;
     for (auto& [id, t] : tracks)
     {
+        if ((t.hidden & (view == 0 ? 1 : 2)) != 0) continue;   // removed from this collection
         TrackInfo info = t.info;
+        info.playCount = t.plays;
         const auto& v = view == 0 ? t.rb : t.cf;
         info.libraryId = id;
         info.libraryKey = t.key;

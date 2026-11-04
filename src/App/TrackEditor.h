@@ -70,7 +70,7 @@ private:
 
     AudioEngine& engine;
     CentrifugeLibrary& library;
-    std::array<Session, 2> sessions;
+    std::array<Session, 3> sessions;   // decks 1, 2 and PREP
 };
 
 } // namespace orbit

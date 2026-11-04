@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "../Audio/MusicalKey.h"
 #include "../Library/RekordboxMasterDb.h"
 
 namespace orbit
@@ -39,33 +40,74 @@ MainComponent::MainComponent()
 
     loader.onLoaded = [this] (int deck, LoadedTrack::Ptr t)
     {
-        (deck == 0 ? deck1 : deck2).setLoadingText ({});
+        if (deck < 2) (deck == 0 ? deck1 : deck2).setLoadingText ({});
         editor.trackLoaded (deck, t);
         waves.forceRedraw();
+        if (t != nullptr && t->waveform != nullptr)
+            browser.notePreviewWaveform (t->info.file.getFullPathName(), *t->waveform);
+        // A browser preview: start it where it was clicked
+        if (deck == AudioEngine::previewDeck && t != nullptr && pendingPreviewFraction >= 0.0
+            && t->info.file.getFullPathName() == pendingPreviewPath)
+        {
+            engine.deck (deck).post (Deck::Cmd::seekFraction, pendingPreviewFraction);
+            engine.deck (deck).post (Deck::Cmd::play);
+        }
+        pendingPreviewFraction = -1.0;
     };
 
     // Library editing
     for (int d = 0; d < 2; ++d)
         editor.setEditTargets (d, settings.editR[(size_t) d], settings.editC[(size_t) d]);
-    editor.onTargetsChanged = [this] (int d, bool r, bool c) { settings.editR[(size_t) d] = r; settings.editC[(size_t) d] = c; settings.save(); };
+    editor.setEditTargets (AudioEngine::previewDeck, settings.prepEditR, settings.prepEditC);
+    editor.onTargetsChanged = [this] (int d, bool r, bool c)
+    {
+        if (d < 2) { settings.editR[(size_t) d] = r; settings.editC[(size_t) d] = c; }
+        else { settings.prepEditR = r; settings.prepEditC = c; }
+        settings.save();
+    };
     editor.onMessage = [this] (const juce::String& m) { flash (m); };
     for (auto* dp : { &deck1, &deck2 })
     {
         dp->setEditor (&editor);
         dp->onRenameCue = [this] (int d, bool hot, int i, juce::String cur) { askRename (d, hot, i, cur); };
         dp->onSetBpm = [this] (int d) { askBpm (d); };
+        dp->onDeckColour = [this] (int d, juce::Colour c)
+        {
+            settings.deckColours[(size_t) d] = c.getARGB();
+            settings.save();
+            applySettings();
+            deck1.repaint(); deck2.repaint(); waves.repaint(); phaseMeter.repaint();
+        };
+        dp->onTrackDropped = [this] (int d) { loadDragged (d); };
     }
+    waves.onTrackDropped = [this] (int d) { loadDragged (d); };
+    prepView.onTrackDropped = [this] { loadDragged (AudioEngine::previewDeck); };
+    prepView.onRenameCue = [this] (int d, bool hot, int i, juce::String cur) { askRename (d, hot, i, cur); };
+    prepView.onSetBpm = [this] (int d) { askBpm (d); };
+    browser.onPreview = [this] (const TrackInfo& t, bool pc, double f) { startPreview (t, pc, f); };
+    browser.onPreviewStop = [this] { engine.deck (AudioEngine::previewDeck).post (Deck::Cmd::pause); };
+    browser.onTrackAction = [this] (const std::vector<TrackInfo>& t, const juce::String& a) { trackAction (t, a); };
+    browser.onSetRating = [this] (const TrackInfo& t, int stars)
+    {
+        if (t.libraryId != 0) centrifugeLibrary.setRating (t.libraryId, stars);
+        else flash ("Ratings are kept in Centrifuge's library - import the track first");
+    };
     waves.cueName = [this] (int d, bool hot, int i) { return editor.cueName (d, hot, i); };
     waves.onRenameCue = [this] (int d, bool hot, int i, juce::String cur) { askRename (d, hot, i, cur); };
     browser.centrifugeSource = [this] (int view) { return centrifugeSource (view); };
     browser.onImport = [this] (juce::Component& c) { showImportMenu (c); };
     browser.onFilesDropped = [this] (const juce::Array<juce::File>& items) { addMusic (items); };
     browser.onExport = [this] (juce::Component& c) { showExportMenu (c); };
-    loader.onError = [this] (int deck, const juce::String& err) { (deck == 0 ? deck1 : deck2).setLoadingText (err); };
+    loader.onError = [this] (int deck, const juce::String& err)
+    {
+        if (deck < 2) (deck == 0 ? deck1 : deck2).setLoadingText (err);
+        else flash (err);
+    };
 
     browser.onLoadToDeck = [this] (int deck, const TrackInfo& t, bool pc) { loadToDeck (deck, t, pc); };
     browser.chooseDeckForDoubleClick = [this]
     {
+        if (page == 4) return (int) AudioEngine::previewDeck;   // PREP page: load into PREP
         // Load onto the deck that isn't playing (deck 1 if both are free)
         const bool p0 = engine.deck (0).state().playing.load(), p1 = engine.deck (1).state().playing.load();
         if (p0 && ! p1) return 1;
@@ -79,17 +121,18 @@ MainComponent::MainComponent()
     engine.onDeviceChanged = [this] { settingsView.refreshRouting(); };
 
     // --- UI --------------------------------------------------------------------
-    for (auto* c : std::initializer_list<juce::Component*> { &deck1, &deck2, &waves, &browser, &mapping, &stemsView, &settingsView })
+    for (auto* c : std::initializer_list<juce::Component*> { &deck1, &deck2, &waves, &browser, &mapping, &stemsView, &settingsView, &prepView })
         addChildComponent (c);
+    addAndMakeVisible (phaseMeter);
 
-    int i = 0;
-    for (auto* t : { &tabPlay, &tabMapping, &tabStems, &tabSettings })
+    // Tabs in screen order, with their page ids (PREP is page 4)
+    const std::pair<juce::TextButton*, int> tabList[] = { { &tabPlay, 0 }, { &tabPrep, 4 }, { &tabMapping, 1 }, { &tabStems, 2 }, { &tabSettings, 3 } };
+    for (auto [t, p] : tabList)
     {
         addAndMakeVisible (*t);
         t->getProperties().set ("psyched.mode", true);   // Cockpit mode switch: pressed = solid green
         t->setColour (juce::TextButton::buttonOnColourId, psyched::Colours::green);
-        const int p = i++;
-        t->onClick = [this, p] { showPage (p); };
+        t->onClick = [this, p = p] { showPage (p); };
     }
 
     addChildComponent (about);
@@ -99,7 +142,7 @@ MainComponent::MainComponent()
     applySettings();
     showPage (0);
     setWantsKeyboardFocus (true);
-    startTimerHz (4);
+    startTimerHz (10);
 
     splash = std::make_unique<CentrifugeSplash>();
     splash->onFinished = [this] { skipSplash(); };
@@ -127,6 +170,12 @@ MainComponent::~MainComponent()
 
 void MainComponent::applySettings()
 {
+    Theme::deckColours()[0] = juce::Colour (settings.deckColours[0]);
+    Theme::deckColours()[1] = juce::Colour (settings.deckColours[1]);
+    MusicalKey::camelotDisplay() = settings.camelotKeys;
+    engine.setPreviewOutput (settings.previewOutput);
+    repaint();
+    browser.repaint();
     for (int d = 0; d < AudioEngine::maxDecks; ++d)
         engine.setDeckOutput (d, settings.deckOutputs[(size_t) d]);
     if (settings.sumToMaster >= 0)
@@ -179,6 +228,13 @@ void MainComponent::applySettings()
 
 void MainComponent::loadToDeck (int deck, const TrackInfo& info, bool fromPc)
 {
+    if (deck >= 2)
+    {
+        // PREP / preview deck: never on air, so it's fine to stop it and load
+        engine.deck (deck).post (Deck::Cmd::pause);
+        loader.load (deck, info, fromPc, editor.versionToLoad (deck, info));
+        return;
+    }
     if (engine.deck (deck).state().playing.load())
     {
         (deck == 0 ? deck1 : deck2).setLoadingText ("Deck is playing - pause it to load");
@@ -218,15 +274,16 @@ void MainComponent::handleAppAction (const juce::String& id, int deck, const Act
 void MainComponent::showPage (int p)
 {
     page = p;
-    juce::TextButton* tabs[] = { &tabPlay, &tabMapping, &tabStems, &tabSettings };
-    for (int i = 0; i < 4; ++i)
+    juce::TextButton* tabs[] = { &tabPlay, &tabMapping, &tabStems, &tabSettings, &tabPrep };
+    for (int i = 0; i < 5; ++i)
         tabs[i]->setToggleState (i == p, juce::dontSendNotification);
     if (p == 3) settingsView.refreshValues();
 
     deck1.setVisible (p == 0);
     deck2.setVisible (p == 0);
     waves.setVisible (p == 0);
-    browser.setVisible (p == 0 && settings.showBrowser);
+    browser.setVisible ((p == 0 && settings.showBrowser) || p == 4);
+    prepView.setVisible (p == 4);
     mapping.setVisible (p == 1);
     stemsView.setVisible (p == 2);
     settingsView.setVisible (p == 3);
@@ -237,6 +294,16 @@ void MainComponent::timerCallback()
 {
     engine.getReleasePool().collect();
     editor.poll();
+    countPlays();
+
+    // The preview column follows the PREP / preview deck
+    {
+        const auto& pst = engine.deck (AudioEngine::previewDeck).state();
+        auto pt = engine.deck (AudioEngine::previewDeck).getLoadedTrack();
+        const double len = pst.lengthSec.load();
+        browser.setPreviewState (pt != nullptr ? pt->info.file.getFullPathName() : juce::String(),
+                                 len > 0.0 ? pst.positionSec.load() / len : 0.0, pst.playing.load());
+    }
 
     // Library changed (import, edits): refresh the browser, at most every couple of seconds
     if (const int lc = centrifugeLibrary.getChangeCount(); lc != seenLibraryChanges
@@ -289,7 +356,7 @@ void MainComponent::paint (juce::Graphics& g)
     psyched::paintWordmark (g, logo.withTrimmedLeft (40.0f), "Centrifuge", 0, psyched::Signature::spin, 17.0f);
 
     // Status pills (right side)
-    auto pills = topBar.reduced (10, 9).toFloat();
+    auto pills = topBar.reduced (10, 9).withLeft (phaseArea.getRight() + 14).toFloat();
     auto pill = [&] (const juce::String& text, juce::Colour dot, float w)
     {
         auto pr = pills.removeFromRight (w);
@@ -311,8 +378,8 @@ void MainComponent::paint (juce::Graphics& g)
         extra = flashText;
         extraColour = Theme::warn;
     }
-    if (page == 0 || extra != stemStatus)
-        pill (extra, extraColour, juce::jmin (page == 0 ? 520.0f : 700.0f, psyched::Fonts::label().getStringWidthFloat (extra.toUpperCase()) + 34.0f));
+    if ((page == 0 || extra != stemStatus) && pills.getWidth() > 80.0f)
+        pill (extra, extraColour, juce::jmin (pills.getWidth(), psyched::Fonts::label().getStringWidthFloat (extra.toUpperCase()) + 34.0f));
 }
 
 void MainComponent::resized()
@@ -324,12 +391,15 @@ void MainComponent::resized()
     auto r = getLocalBounds();
     topBar = r.removeFromTop (52);
 
-    auto tabs = topBar.withTrimmedLeft (262).withWidth (404).reduced (0, 12);
-    for (auto* t : { &tabPlay, &tabMapping, &tabStems, &tabSettings })
+    auto tabs = topBar.withTrimmedLeft (262).withWidth (5 * 92).reduced (0, 12);
+    for (auto* t : { &tabPlay, &tabPrep, &tabMapping, &tabStems, &tabSettings })
     {
-        t->setBounds (tabs.removeFromLeft (100));
+        t->setBounds (tabs.removeFromLeft (92));
         tabs.removeFromLeft (-1);
     }
+    // Phrase meter: both decks stacked, to the right of the tabs
+    phaseArea = juce::Rectangle<int> (262 + 5 * 92 + 18, topBar.getY() + 10, juce::jlimit (220, 520, (getWidth() - 262 - 5 * 92 - 18) / 2), topBar.getHeight() - 20);
+    phaseMeter.setBounds (phaseArea);
 
     if (page == 0)
     {
@@ -352,6 +422,14 @@ void MainComponent::resized()
             waves.setBounds (r);
         }
         browser.setVisible (settings.showBrowser);
+    }
+    else if (page == 4)
+    {
+        dividerDecks = dividerBrowser = {};
+        const int prepH = juce::jmax (360, (int) (r.getHeight() * 0.6));
+        prepView.setBounds (r.removeFromTop (prepH));
+        r.removeFromTop (4);
+        browser.setBounds (r);
     }
     else
     {
@@ -549,7 +627,7 @@ void MainComponent::askRename (int deck, bool hotCue, int index, const juce::Str
 
 void MainComponent::askBpm (int deck)
 {
-    auto* w = new juce::AlertWindow ("Set BPM - deck " + juce::String (deck + 1),
+    auto* w = new juce::AlertWindow (deck >= 2 ? juce::String ("Set BPM - PREP") : "Set BPM - deck " + juce::String (deck + 1),
                                      "Makes a constant grid at this tempo, keeping the beat nearest the playhead where it is.",
                                      juce::MessageBoxIconType::NoIcon);
     w->addTextEditor ("bpm", juce::String (editor.currentBpm (deck), 2));
@@ -562,6 +640,82 @@ void MainComponent::askBpm (int deck)
     }), true);
 }
 
+void MainComponent::loadDragged (int deck)
+{
+    const auto tracks = browser.getDraggedTracks();
+    if (tracks.empty()) return;
+    loadToDeck (deck, tracks.front(), browser.draggedFromPc());
+}
+
+void MainComponent::startPreview (const TrackInfo& info, bool fromPc, double fraction)
+{
+    auto& d = engine.deck (AudioEngine::previewDeck);
+    auto t = d.getLoadedTrack();
+    if (t != nullptr && t->info.file == info.file)
+    {
+        d.post (Deck::Cmd::seekFraction, juce::jlimit (0.0, 1.0, fraction));
+        d.post (Deck::Cmd::play);
+        return;
+    }
+    pendingPreviewPath = info.file.getFullPathName();
+    pendingPreviewFraction = juce::jlimit (0.0, 1.0, fraction);
+    loadToDeck (AudioEngine::previewDeck, info, fromPc);
+}
+
+void MainComponent::trackAction (const std::vector<TrackInfo>& tracks, const juce::String& action)
+{
+    if (tracks.empty()) return;
+    const bool pc = browser.getCurrentSource() != nullptr && browser.getCurrentSource()->kind == LibrarySource::Kind::pcCollection;
+    if (action.startsWith ("load."))
+    {
+        const int d = action.getTrailingIntValue();
+        loadToDeck (d, tracks.front(), pc);
+        if (d == AudioEngine::previewDeck) showPage (4);
+        return;
+    }
+    int n = 0;
+    for (auto& t : tracks)
+    {
+        if (t.libraryId == 0) continue;
+        ++n;
+        if (action == "remove.cf")        centrifugeLibrary.removeFromView (t.libraryId, 1);
+        else if (action == "remove.rb")   centrifugeLibrary.removeFromView (t.libraryId, 0);
+        else if (action == "plays.reset") centrifugeLibrary.resetPlays (t.libraryId);
+    }
+    if (n == 0) { flash ("Only tracks in Centrifuge's library can be removed or reset"); return; }
+    const auto what = juce::String (n) + (n == 1 ? " track" : " tracks");
+    if (action == "remove.cf")        flash ("Removed " + what + " from the Centrifuge collection");
+    else if (action == "remove.rb")   flash ("Removed " + what + " from the rekordbox copy (rekordbox itself is unchanged)");
+    else if (action == "plays.reset") flash ("Play count reset for " + what);
+}
+
+void MainComponent::countPlays()
+{
+    // A play counts once a track has played for 30 seconds on deck 1 or 2.
+    const auto now = juce::Time::getMillisecondCounter();
+    const double dt = lastTick == 0 ? 0.0 : juce::jmin (1.0, (now - lastTick) / 1000.0);
+    lastTick = now;
+    for (int d = 0; d < 2; ++d)
+    {
+        const auto& st = engine.deck (d).state();
+        const int s = st.trackSerial.load();
+        if (s != playSerial[(size_t) d]) { playSerial[(size_t) d] = s; playedSeconds[(size_t) d] = 0.0; playCounted[(size_t) d] = false; }
+        if (s == 0 || playCounted[(size_t) d] || ! st.playing.load()) continue;
+        playedSeconds[(size_t) d] += dt;
+        if (playedSeconds[(size_t) d] < 30.0) continue;
+        playCounted[(size_t) d] = true;
+        auto t = engine.deck (d).getLoadedTrack();
+        if (t == nullptr) continue;
+        juce::int64 id = t->info.libraryId;
+        if (id == 0)
+        {
+            const auto key = t->info.libraryKey.isNotEmpty() ? t->info.libraryKey : CentrifugeLibrary::keyForFile (t->info.file, st.lengthSec.load());
+            if (auto found = centrifugeLibrary.find (key)) id = found->id;
+        }
+        if (id != 0) centrifugeLibrary.addPlay (id);
+    }
+}
+
 bool MainComponent::keyPressed (const juce::KeyPress& k)
 {
     // Handy keyboard shortcuts (the XDJ-XZ remains the main controller).
@@ -569,6 +723,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& k)
     if (k == juce::KeyPress::F2Key) { showPage (1); return true; }
     if (k == juce::KeyPress::F3Key) { showPage (2); return true; }
     if (k == juce::KeyPress::F4Key) { showPage (3); return true; }
+    if (k == juce::KeyPress::F5Key) { showPage (4); return true; }
     return false;
 }
 

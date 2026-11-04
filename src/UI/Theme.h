@@ -36,8 +36,9 @@ namespace Theme
         return c[juce::jlimit (0, 3, stem)];
     }
 
-    /** Decks are layers: deck 1 cyan, deck 2 pink. */
-    inline juce::Colour deckColour (int deck) { return deck == 0 ? P::cyan : P::pink; }
+    /** Deck colours (layers): deck 1 cyan, deck 2 pink by default; set from Settings / the deck number. */
+    inline std::array<juce::Colour, 2>& deckColours() { static std::array<juce::Colour, 2> c { P::cyan, P::pink }; return c; }
+    inline juce::Colour deckColour (int deck) { return deckColours()[deck == 0 ? 0u : 1u]; }
 
     juce::Font font (float height, bool bold = false);      // Manrope
     juce::Font mono (float height, bool bold = false);      // JetBrains Mono

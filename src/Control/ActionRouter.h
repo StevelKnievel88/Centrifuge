@@ -22,6 +22,8 @@ public:
     bool ledState (const ActionDef& action) const;
 
     double getBeatJumpBeats (int deck) const { return beatJump[(size_t) deck].load(); }
+    /** Loop size for the deck's loop button (beats). */
+    double getLoopBeats (int deck) const { return loopBeats[(size_t) deck].load(); }
     int getPitchRangePercent (int deck) const;
     bool isVinylMode (int deck) const { return vinyl[(size_t) deck].load(); }
 
@@ -42,6 +44,7 @@ private:
     AudioEngine& engine;
     std::array<std::atomic<int>, 4> rangeIndex;
     std::array<std::atomic<double>, 4> beatJump;
+    std::array<std::atomic<double>, 4> loopBeats;
     std::array<std::atomic<bool>, 4> vinyl;
 
     // Stem state per deck: direct per-stem volume/mute, and the four matrix controls.

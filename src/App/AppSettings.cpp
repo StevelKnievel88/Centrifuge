@@ -76,6 +76,13 @@ void AppSettings::load()
     num ("sumToMaster", sumToMaster);
     num ("mp3OffsetMs", mp3OffsetMs);
     num ("analysisRange", analysisRange);
+    num ("previewOutput", previewOutput);
+    boolean ("prepEditR", prepEditR);
+    boolean ("prepEditC", prepEditC);
+    boolean ("camelotKeys", camelotKeys);
+    if (auto* dc = v["deckColours"].getArray())
+        for (int i = 0; i < juce::jmin (2, dc->size()); ++i)
+            deckColours[(size_t) i] = (juce::uint32) (juce::int64) (*dc)[i];
 
     // Lanes (older settings had one main-lane mode and one original-lane style for both decks)
     if (auto* arr = v["laneStyle"].getArray())
@@ -156,6 +163,11 @@ void AppSettings::save() const
     o->setProperty ("sumToMaster", sumToMaster);
     o->setProperty ("mp3OffsetMs", mp3OffsetMs);
     o->setProperty ("analysisRange", analysisRange);
+    o->setProperty ("previewOutput", previewOutput);
+    o->setProperty ("prepEditR", prepEditR);
+    o->setProperty ("prepEditC", prepEditC);
+    o->setProperty ("camelotKeys", camelotKeys);
+    o->setProperty ("deckColours", juce::Array<juce::var> { (juce::int64) deckColours[0], (juce::int64) deckColours[1] });
 
     o->setProperty ("laneStyle", juce::Array<juce::var> { laneStyle[0][0], laneStyle[0][1], laneStyle[1][0], laneStyle[1][1] });
     o->setProperty ("laneShape", juce::Array<juce::var> { laneShape[0][0], laneShape[0][1], laneShape[1][0], laneShape[1][1] });

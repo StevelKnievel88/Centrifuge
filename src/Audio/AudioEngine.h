@@ -11,7 +11,9 @@ class AudioEngine : private juce::AudioIODeviceCallback,
                     private juce::ChangeListener
 {
 public:
-    static constexpr int maxDecks = 2;
+    static constexpr int maxDecks = 2;          // the two performance decks
+    static constexpr int previewDeck = 2;       // a third deck for PREP and browser previews (not synced)
+    static constexpr int totalDecks = 3;
 
     AudioEngine();
     ~AudioEngine() override;
@@ -22,8 +24,12 @@ public:
     juce::String saveDeviceState() const;
 
     juce::AudioDeviceManager& getDeviceManager() { return deviceManager; }
-    Deck& deck (int i) { return *decks[(size_t) juce::jlimit (0, maxDecks - 1, i)]; }
-    const Deck& deck (int i) const { return *decks[(size_t) juce::jlimit (0, maxDecks - 1, i)]; }
+    Deck& deck (int i) { return *decks[(size_t) juce::jlimit (0, totalDecks - 1, i)]; }
+    const Deck& deck (int i) const { return *decks[(size_t) juce::jlimit (0, totalDecks - 1, i)]; }
+
+    /** Where PREP / browser previews play: first output channel (0-based), -1 = automatic. Mixed in (added). */
+    void setPreviewOutput (int firstChannel) { previewOutput = firstChannel; }
+    int getPreviewOutputInUse() const { return previewInUse.load(); }
 
     /** Output routing: first output channel (0-based) used by each deck. -1 = not routed. */
     void setDeckOutput (int deckIndex, int firstChannel);
@@ -59,7 +65,8 @@ private:
     void stopInternalClock();
 
     juce::AudioDeviceManager deviceManager;
-    std::array<std::unique_ptr<Deck>, maxDecks> decks;
+    std::array<std::unique_ptr<Deck>, totalDecks> decks;
+    std::atomic<int> previewOutput { -1 }, previewInUse { 0 };
     std::array<std::atomic<int>, maxDecks> deckOutputs;
     std::atomic<bool> sumToMaster { false };
     std::atomic<int> masterDeck { -1 };

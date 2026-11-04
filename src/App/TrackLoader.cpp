@@ -162,7 +162,7 @@ LoadedTrack::Ptr TrackLoader::build (const TrackInfo& info, TrackAudio::Ptr audi
 
 void TrackLoader::load (int deck, const TrackInfo& info, bool fromPc, std::optional<TrackVersion> version)
 {
-    if (deck < 0 || deck >= AudioEngine::maxDecks) return;
+    if (deck < 0 || deck >= AudioEngine::totalDecks) return;
 
     const int serial = ++serialCounter;
     pending[(size_t) deck] = serial;
@@ -211,6 +211,7 @@ void TrackLoader::load (int deck, const TrackInfo& info, bool fromPc, std::optio
             c.ptr = track.get();
             d.post (c);
 
+            if (deck < AudioEngine::maxDecks)   // PREP / previews don't separate stems
             stemManager.requestForDeck (deck, track->info, track->audio, serial, [this, deck, serial] (StemAudio::Ptr stems)
             {
                 if (pending[(size_t) deck].load() != serial || stems == nullptr) return;
