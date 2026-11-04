@@ -43,7 +43,12 @@ static int runCommandLine (const juce::StringArray& args)
         DemucsSeparator::Options o;
         o.modelFile = model;
         o.useGpu = ! args.contains ("--cpu");
+        // --quality fast|better|high|best (models are looked for next to --model)
+        const auto q = argAfter ("--quality").toLowerCase();
+        o.quality = q == "best" ? StemQuality::best : q == "high" ? StemQuality::high : q == "better" ? StemQuality::better : StemQuality::fast;
         if (! sep.load (o, err)) { std::cerr << err << std::endl; return 3; }
+        if (q.isNotEmpty() && stemQualityName (sep.getQuality()).toLowerCase() != q)
+        { std::cerr << "quality " << q << " not available: " << sep.getBackendDescription() << std::endl; return 3; }
         std::cout << "backend: " << sep.getBackendDescription() << std::endl;
 
         StemAudio stems;

@@ -169,6 +169,9 @@ void MainComponent::applySettings()
     ss.useGpu = settings.stemsUseGpu;
     ss.cpuThreads = settings.stemThreads;
     ss.separateOnLoad = settings.stemsOnLoad;
+    ss.qualityOnLoad = (StemQuality) juce::jlimit (0, 3, settings.stemQualityOnLoad);
+    ss.qualityBatch = (StemQuality) juce::jlimit (0, 3, settings.stemQualityBatch);
+    ss.findModel = [s = settings] (const juce::String& n) { return s.findModel (n); };
     stems.setSettings (ss);
 
     settings.save();

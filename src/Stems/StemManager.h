@@ -25,6 +25,9 @@ public:
         bool useGpu = true;
         int cpuThreads = 0;
         bool separateOnLoad = true;
+        StemQuality qualityOnLoad = StemQuality::fast;
+        StemQuality qualityBatch = StemQuality::better;
+        std::function<juce::File (const juce::String&)> findModel;   // locates the models for higher quality levels
         int oggQualityIndex = 5;   // 160 kbps per stem
     };
     void setSettings (const Settings& s);
@@ -41,6 +44,10 @@ public:
     void cancelBatch();
 
     bool hasCachedStems (const TrackInfo& info) const;
+    /** Quality level of the cached stems (-1 = none). */
+    int cachedQuality (const TrackInfo& info) const;
+    /** The highest level up to `q` whose models are installed. */
+    StemQuality achievable (StemQuality q) const;
     juce::File cacheFolderFor (const TrackInfo& info) const;
 
     struct Status
@@ -67,14 +74,15 @@ private:
     };
 
     void run() override;
-    bool ensureModel (juce::String& error);
+    bool ensureModel (StemQuality quality, juce::String& error);
     bool processJob (Job& job);
-    bool writeCache (const TrackInfo& info, const StemAudio& stems);
+    bool writeCache (const TrackInfo& info, const StemAudio& stems, StemQuality quality);
     StemAudio::Ptr readCache (const TrackInfo& info, const TrackAudio& audio);
 
     AudioFileLoader& loader;
     DemucsSeparator separator;
     bool modelTried = false;
+    StemQuality loadedFor = StemQuality::fast;
 
     mutable juce::CriticalSection lock;
     Settings settings;

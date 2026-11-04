@@ -87,6 +87,7 @@ MappingView::MappingView (MidiManager& m, std::function<void()> saveFn) : midi (
 
     addAndMakeVisible (sensitivity);
     sensitivity.setSliderStyle (juce::Slider::LinearHorizontal);
+    sensitivity.setScrollWheelEnabled (false);
     sensitivity.setTextBoxStyle (juce::Slider::TextBoxRight, false, 50, 20);
     sensitivity.setRange (0.1, 8.0, 0.05);
     sensitivity.setSkewFactorFromMidPoint (1.0);

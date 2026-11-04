@@ -28,7 +28,8 @@ StemManager::~StemManager()
 void StemManager::setSettings (const Settings& s)
 {
     const juce::ScopedLock sl (lock);
-    const bool modelChanged = s.modelFile != settings.modelFile || s.useGpu != settings.useGpu || s.cpuThreads != settings.cpuThreads;
+    const bool modelChanged = s.modelFile != settings.modelFile || s.useGpu != settings.useGpu || s.cpuThreads != settings.cpuThreads
+                           || s.qualityOnLoad != settings.qualityOnLoad || s.qualityBatch != settings.qualityBatch;
     settings = s;
     if (modelChanged) modelTried = false;
 }
@@ -54,6 +55,26 @@ bool StemManager::hasCachedStems (const TrackInfo& info) const
         if (! dir.getChildFile (juce::String (n) + ".ogg").existsAsFile())
             return false;
     return true;
+}
+
+int StemManager::cachedQuality (const TrackInfo& info) const
+{
+    if (! hasCachedStems (info)) return -1;
+    const auto f = cacheFolderFor (info).getChildFile ("quality.txt");
+    return f.existsAsFile() ? juce::jlimit (0, 3, f.loadFileAsString().trim().getIntValue()) : 0;
+}
+
+StemQuality StemManager::achievable (StemQuality q) const
+{
+    const auto s = getSettings();
+    auto fileFor = [&] (const juce::String& n) { return n == StemModels::fast ? s.modelFile : (s.findModel ? s.findModel (n) : s.modelFile.getSiblingFile (n)); };
+    for (int level = (int) q; level > 0; --level)
+    {
+        bool all = true;
+        for (auto& n : StemModels::required ((StemQuality) level)) all = all && fileFor (n).existsAsFile();
+        if (all) return (StemQuality) level;
+    }
+    return StemQuality::fast;
 }
 
 StemManager::Status StemManager::getStatus() const
@@ -141,15 +162,26 @@ void StemManager::cancelBatch()
 }
 
 //==============================================================================
-bool StemManager::ensureModel (juce::String& error)
+bool StemManager::ensureModel (StemQuality quality, juce::String& error)
 {
-    if (separator.isLoaded() && modelTried) return true;
-    if (modelTried && ! separator.isLoaded()) { error = status.lastError; return false; }
+    // Models extracted since the last load make a higher level possible: load again.
+    const auto possible = achievable (quality);
+    if (modelTried && loadedFor == quality && separator.isLoaded() && separator.getQuality() != possible)
+        modelTried = false;
+    if (modelTried && loadedFor == quality)
+    {
+        if (separator.isLoaded()) return true;
+        error = status.lastError;
+        return false;
+    }
 
     modelTried = true;
+    loadedFor = quality;
     const auto s = getSettings();
     DemucsSeparator::Options o;
     o.modelFile = s.modelFile;
+    o.findModel = s.findModel;
+    o.quality = quality;
     o.useGpu = s.useGpu;
     o.cpuThreads = s.cpuThreads;
 
@@ -232,11 +264,13 @@ bool StemManager::processJob (Job& job)
 
     const auto name = job.info.displayArtistTitle();
 
-    if (job.kind == Job::Kind::batch && hasCachedStems (job.info))
+    const auto wanted = job.kind == Job::Kind::batch ? getSettings().qualityBatch : getSettings().qualityOnLoad;
+    // Pre-analysis upgrades stems made at a lower quality; anything already as good is left alone.
+    if (job.kind == Job::Kind::batch && cachedQuality (job.info) >= (int) achievable (wanted))
         return true;
 
     juce::String error;
-    if (! ensureModel (error))
+    if (! ensureModel (wanted, error))
         return false;
 
     if (job.audio == nullptr)
@@ -280,16 +314,17 @@ bool StemManager::processJob (Job& job)
     }
 
     setActivity ("Saving stems for " + name, 1.0);
-    writeCache (job.info, *stems);
+    writeCache (job.info, *stems, separator.getQuality());
     setActivity ({}, 0.0);
     return true;
 }
 
 //==============================================================================
-bool StemManager::writeCache (const TrackInfo& info, const StemAudio& stems)
+bool StemManager::writeCache (const TrackInfo& info, const StemAudio& stems, StemQuality q)
 {
     const auto dir = cacheFolderFor (info);
     if (! dir.createDirectory()) return false;
+    dir.getChildFile ("quality.txt").deleteFile();
 
     juce::OggVorbisAudioFormat ogg;
     const int quality = getSettings().oggQualityIndex;
@@ -325,6 +360,7 @@ bool StemManager::writeCache (const TrackInfo& info, const StemAudio& stems)
         writer.reset();
         tmp.moveFileTo (dir.getChildFile (juce::String (cacheNames[c]) + ".ogg"));
     }
+    dir.getChildFile ("quality.txt").replaceWithText (juce::String ((int) q));
     return true;
 }
 

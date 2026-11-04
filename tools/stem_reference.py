@@ -2,8 +2,9 @@
 
 usage:
   python stem_reference.py make-test <out.wav>                 # synthetic 26 s test track
-  python stem_reference.py separate <in.wav> <out_dir>         # official demucs (htdemucs)
+  python stem_reference.py separate <in.wav> <out_dir> [model]  # official demucs (htdemucs, or e.g. htdemucs_ft)
   python stem_reference.py compare <ref_dir> <orbit_dir>       # SDR per stem, fails if too low
+  python stem_reference.py sanity <mix.wav> <orbit_dir>        # stems are finite, not silent, and add up to the mix
 """
 import sys
 import numpy as np
@@ -33,7 +34,7 @@ def make_test(path):
     sf.write(path, stereo.astype(np.float32), sr, subtype="FLOAT")
 
 
-def separate(inp, out_dir):
+def separate(inp, out_dir, model_name="htdemucs"):
     import os
     import torch
     from demucs.pretrained import get_model
@@ -42,7 +43,7 @@ def separate(inp, out_dir):
     wav, sr = sf.read(inp, dtype="float32", always_2d=True)
     assert sr == 44100
     wav = torch.from_numpy(wav.T.copy())
-    model = get_model("htdemucs")
+    model = get_model(model_name)
     model.eval()
     ref = wav.mean(0)
     wav = (wav - ref.mean()) / ref.std()
@@ -80,11 +81,28 @@ def compare(ref_dir, est_dir):
     print("C++ stem separation matches the official demucs output")
 
 
+def sanity(mix_path, est_dir):
+    mix, _ = sf.read(mix_path, dtype="float64", always_2d=True)
+    total = 0
+    for name in ("drums", "bass", "other", "vocals"):
+        e, _ = sf.read(f"{est_dir}/{name}.wav", dtype="float64", always_2d=True)
+        if not np.all(np.isfinite(e)):
+            sys.exit(f"{name} has NaN/inf samples")
+        print(f"{name:7s} rms {np.sqrt(np.mean(e ** 2)):.4f}")
+        total = total + e[: len(mix)]
+    err = 10 * np.log10(np.sum(mix ** 2) / max(np.sum((mix - total) ** 2), 1e-20))
+    print(f"stems add up to the mix within {err:.1f} dB")
+    if err < 40:
+        sys.exit("stems don't add up to the mix")
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1]
     if cmd == "make-test":
         make_test(sys.argv[2])
     elif cmd == "separate":
-        separate(sys.argv[2], sys.argv[3])
+        separate(sys.argv[2], sys.argv[3], *(sys.argv[4:5]))
     elif cmd == "compare":
         compare(sys.argv[2], sys.argv[3])
+    elif cmd == "sanity":
+        sanity(sys.argv[2], sys.argv[3])

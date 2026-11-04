@@ -3,7 +3,8 @@
 The STFT / iSTFT are moved out of the network (ONNX can't export them); OrbitDJ does them in C++
 exactly as demucs does. Uses Sevag Hanssian's demucs fork prepared for this (demucs.onnx).
 
-usage: python export_htdemucs_onnx.py <path-to-demucs-for-onnx> <output.onnx>
+usage: python export_htdemucs_onnx.py <path-to-demucs-for-onnx> <output.onnx> [model name] [sub-model index]
+  e.g. ... htdemucs_ft.onnx htdemucs_ft 0   (htdemucs_ft is 4 specialist models: 0 drums, 1 bass, 2 other, 3 vocals)
 """
 import sys
 import numpy as np
@@ -15,8 +16,10 @@ from demucs.htdemucs import HTDemucs, standalone_spec, standalone_magnitude  # n
 
 out_path = sys.argv[2]
 
-model = get_model("htdemucs")
-core = model if isinstance(model, HTDemucs) else model.models[0]
+name = sys.argv[3] if len(sys.argv) > 3 else "htdemucs"
+index = int(sys.argv[4]) if len(sys.argv) > 4 else 0
+model = get_model(name)
+core = model if isinstance(model, HTDemucs) else model.models[index]
 core.eval()
 
 length = int(core.segment * core.samplerate)

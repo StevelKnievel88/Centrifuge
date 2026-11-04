@@ -59,6 +59,8 @@ struct AppSettings
     juce::String stemCachePath;        // empty = %LOCALAPPDATA%\Centrifuge\Stems
     bool stemsOnLoad = true;
     bool stemsUseGpu = true;
+    int stemQualityOnLoad = 0;         // 0 Fast, 1 Better, 2 High, 3 Best (see StemQuality)
+    int stemQualityBatch = 1;          // for pre-analysis
     int stemThreads = 0;
 
     // UI
@@ -70,6 +72,9 @@ struct AppSettings
     static juce::File mappingFile()  { return folder().getChildFile ("mapping.json"); }
 
     juce::File modelFile() const;
+    /** Where a stem model file is (or would be): next to Centrifuge.exe, or in the downloads folder. */
+    juce::File findModel (const juce::String& name) const;
+    static juce::File downloadedModelsFolder() { return folder().getChildFile ("models"); }
     juce::File stemCacheDir() const;
 
     void load();

@@ -56,10 +56,49 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------------------
+  # Models for the High / Best stem qualities (cached; published once on the "models" release)
+  #   htdemucs_ft: the fine-tuned specialist models for drums, bass and vocals, exported like htdemucs
+  #   Mel-Band RoFormer vocals (Kimberley Jensen, MIT), ONNX conversion by smank (MIT), pinned and checksummed
+  # ---------------------------------------------------------------------------
+  extra-models:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache models
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: extra
+          key: extra-models-${{ hashFiles('tools/export_htdemucs_onnx.py') }}-v1
+
+      - uses: actions/setup-python@v5
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          python-version: "3.11"
+
+      - name: Export htdemucs_ft and fetch the RoFormer
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          tools/run_logged.sh pip install torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+          tools/run_logged.sh pip install "numpy<2" einops julius omegaconf pyyaml tqdm lameenc onnx==1.17.0 onnxruntime==1.20.1 soundfile
+          tools/run_logged.sh pip install --no-deps openunmix==1.3.0
+          git clone https://github.com/sevagh/demucs.onnx demucs-onnx
+          git -C demucs-onnx checkout 81fa192e6fcc88e35e887f6e6ccce91227f4e6f5
+          mkdir -p extra
+          for pair in "drums 0" "bass 1" "vocals 3"; do
+            set -- $pair
+            PYTHONPATH=$PWD/tools/stubs tools/run_logged.sh python tools/export_htdemucs_onnx.py demucs-onnx/demucs-for-onnx extra/htdemucs_ft_$1.onnx htdemucs_ft $2
+          done
+          curl -sSfL -o extra/melband_roformer_vocals.onnx https://huggingface.co/smank/mel-band-roformer-vocals-onnx/resolve/60cb6b4b97e41b42f7ff16c2e386f47a8cc7e50a/melband_roformer_vocals.onnx
+          echo "64a4f3bee48fbe7d971b23875adc924ed004c3533f49672592641dddc0f6f561  extra/melband_roformer_vocals.onnx" | sha256sum -c
+          ls -la extra
+
+  # ---------------------------------------------------------------------------
   # Check the C++ stem pipeline against the official demucs on Linux
   # ---------------------------------------------------------------------------
   validate-stems:
-    needs: model
+    needs: [model, extra-models]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -67,6 +106,11 @@ jobs:
         with:
           name: htdemucs-model
           path: model
+      - uses: actions/cache/restore@v4
+        with:
+          path: extra
+          key: extra-models-${{ hashFiles('tools/export_htdemucs_onnx.py') }}-v1
+          fail-on-cache-miss: true
 
       - name: Linux build dependencies
         run: |
@@ -96,6 +140,18 @@ jobs:
           export LD_LIBRARY_PATH=$PWD/ort/lib
           tools/run_logged.sh xvfb-run -a ./build/Centrifuge_artefacts/Release/Centrifuge --separate test.wav --out orbit --model model/htdemucs.onnx --cpu
           tools/run_logged.sh python tools/stem_reference.py compare ref orbit
+
+      # Better / High / Best: High must match the official htdemucs_ft; Better and Best must run and add up
+      - name: Higher stem qualities
+        run: |
+          export PYTHONPATH=$PWD/tools/stubs LD_LIBRARY_PATH=$PWD/ort/lib
+          cp extra/*.onnx model/
+          tools/run_logged.sh python tools/stem_reference.py separate test.wav ref_ft htdemucs_ft
+          for q in better high best; do
+            tools/run_logged.sh xvfb-run -a ./build/Centrifuge_artefacts/Release/Centrifuge --separate test.wav --out orbit_$q --model model/htdemucs.onnx --cpu --quality $q
+            tools/run_logged.sh python tools/stem_reference.py sanity test.wav orbit_$q
+          done
+          tools/run_logged.sh python tools/stem_reference.py compare ref_ft orbit_high
 
       # The USB export must read back in Centrifuge and in two independent rekordbox readers
       - name: Check USB and rekordbox XML export
@@ -183,8 +239,11 @@ jobs:
           if (Test-Path model/htdemucs.onnx) { Copy-Item model/htdemucs.onnx Centrifuge/models/ } else { Write-Host "::warning::stem model missing from this build" }
           Copy-Item docs/README-Windows.txt Centrifuge/README.txt
           Copy-Item resources/fonts/LICENSE-Inter.txt Centrifuge/
-          Compress-Archive -Path Centrifuge -DestinationPath Centrifuge-Windows.zip -CompressionLevel Optimal
-          Get-Item Centrifuge-Windows.zip
+          $ver = (Select-String -Path CMakeLists.txt -Pattern 'project\(Centrifuge VERSION ([0-9.]+)').Matches[0].Groups[1].Value
+          $zip = "Centrifuge-$ver-Windows.zip"
+          Compress-Archive -Path Centrifuge -DestinationPath $zip -CompressionLevel Optimal
+          "ZIP_NAME=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Get-Item $zip
 
       - uses: actions/upload-artifact@v4
         with:
@@ -199,4 +258,49 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release delete latest --yes --cleanup-tag 2>$null
-          gh release create latest Centrifuge-Windows.zip --prerelease --title "Centrifuge (latest build)" --notes "Built from $env:GITHUB_SHA. Download Centrifuge-Windows.zip, extract it, and run Centrifuge.exe."
+          gh release create latest $env:ZIP_NAME --prerelease --title "Centrifuge (latest build)" --notes "Built from $env:GITHUB_SHA. Download $env:ZIP_NAME, extract it, and run Centrifuge.exe. Models for the High / Best stem qualities: see the 'models' release."
+
+  # ---------------------------------------------------------------------------
+  # The High / Best models as zips on the "models" release (uploaded once; they rarely change)
+  # ---------------------------------------------------------------------------
+  publish-models:
+    if: github.ref == 'refs/heads/main'
+    needs: [extra-models, validate-stems]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the models release
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          assets=$(gh release view models --json assets -q '.assets[].name' 2>/dev/null || true)
+          if echo "$assets" | grep -q "Centrifuge-Models-FineTuned.zip" && echo "$assets" | grep -q "Centrifuge-Models-RoFormer.zip"; then
+            echo "publish=false" >> $GITHUB_OUTPUT
+          else
+            echo "publish=true" >> $GITHUB_OUTPUT
+          fi
+      - uses: actions/cache/restore@v4
+        if: steps.check.outputs.publish == 'true'
+        with:
+          path: extra
+          key: extra-models-${{ hashFiles('tools/export_htdemucs_onnx.py') }}-v1
+          fail-on-cache-miss: true
+      - name: Publish
+        if: steps.check.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p ft/models ro/models
+          cp extra/htdemucs_ft_*.onnx ft/models/
+          cp extra/melband_roformer_vocals.onnx ro/models/
+          cat > ro/models/RoFormer-LICENSE.txt <<'TXT'
+          Mel-Band RoFormer vocals model: weights (c) Kimberley Jensen, MIT licence
+          (https://huggingface.co/KimberleyJSN/melbandroformer). ONNX conversion (c) smank, MIT
+          (https://huggingface.co/smank/mel-band-roformer-vocals-onnx), building on ZFTurbo's
+          Music-Source-Separation-Training and lucidrains' BS-RoFormer implementation (MIT).
+          TXT
+          (cd ft && zip -r -1 ../Centrifuge-Models-FineTuned.zip models)
+          (cd ro && zip -r -0 ../Centrifuge-Models-RoFormer.zip models)
+          gh release view models > /dev/null 2>&1 || gh release create models --title "Stem models for High / Best quality" --notes "Extract into the Centrifuge folder (next to Centrifuge.exe) so the files land in its models folder. High needs Centrifuge-Models-FineTuned.zip; Best needs both zips."
+          gh release upload models Centrifuge-Models-FineTuned.zip Centrifuge-Models-RoFormer.zip --clobber

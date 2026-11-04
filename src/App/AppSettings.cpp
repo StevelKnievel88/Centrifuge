@@ -26,6 +26,16 @@ juce::File AppSettings::modelFile() const
     return exeDir.getChildFile ("models").getChildFile ("htdemucs.onnx");
 }
 
+juce::File AppSettings::findModel (const juce::String& name) const
+{
+    auto exeDir = juce::File::getSpecialLocation (juce::File::currentExecutableFile).getParentDirectory();
+    juce::Array<juce::File> dirs { modelFile().getParentDirectory(), exeDir.getChildFile ("models"),
+                                   exeDir.getParentDirectory().getChildFile ("models"), downloadedModelsFolder() };
+    for (auto& d : dirs)
+        if (d.getChildFile (name).existsAsFile()) return d.getChildFile (name);
+    return downloadedModelsFolder().getChildFile (name);
+}
+
 juce::File AppSettings::stemCacheDir() const
 {
     if (stemCachePath.isNotEmpty()) return juce::File (stemCachePath);
@@ -116,6 +126,8 @@ void AppSettings::load()
     str ("stemCachePath", stemCachePath);
     boolean ("stemsOnLoad", stemsOnLoad);
     boolean ("stemsUseGpu", stemsUseGpu);
+    num ("stemQualityOnLoad", stemQualityOnLoad);
+    num ("stemQualityBatch", stemQualityBatch);
     num ("stemThreads", stemThreads);
 
     boolean ("showBrowser", showBrowser);
@@ -169,6 +181,8 @@ void AppSettings::save() const
     o->setProperty ("stemCachePath", stemCachePath);
     o->setProperty ("stemsOnLoad", stemsOnLoad);
     o->setProperty ("stemsUseGpu", stemsUseGpu);
+    o->setProperty ("stemQualityOnLoad", stemQualityOnLoad);
+    o->setProperty ("stemQualityBatch", stemQualityBatch);
     o->setProperty ("stemThreads", stemThreads);
 
     o->setProperty ("showBrowser", showBrowser);

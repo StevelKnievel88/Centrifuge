@@ -1,4 +1,5 @@
 #include "SettingsView.h"
+#include "../Stems/DemucsSeparator.h"
 #include "Theme.h"
 #include "ColourPicker.h"
 #include "../Library/RekordboxMasterDb.h"
@@ -134,6 +135,18 @@ public:
         stemsOnLoad.setButtonText ("Separate stems automatically when a track is loaded");
         add (&stemsGpu, 28, {});
         stemsGpu.setButtonText ("Use the graphics card (DirectML) - much lower CPU use");
+        add (&qualityOnLoad, 28, "Quality when loading");
+        add (&qualityBatch, 28, "Quality when pre-analysing");
+        for (auto* q : { &qualityOnLoad, &qualityBatch })
+            q->addItemList ({ "Fast - one pass of HTDemucs (quickest)",
+                              "Better - two offset passes averaged (about 2x the time)",
+                              "High - fine-tuned specialist models for drums, bass and vocals (about 3x)",
+                              "Best - RoFormer vocals + fine-tuned drums and bass (cleanest vocals, slowest)" }, 1);
+        qualityOnLoad.setSelectedId (juce::jlimit (0, 3, settings.stemQualityOnLoad) + 1, juce::dontSendNotification);
+        qualityBatch.setSelectedId (juce::jlimit (0, 3, settings.stemQualityBatch) + 1, juce::dontSendNotification);
+        qualityOnLoad.onChange = [this] { settings.stemQualityOnLoad = qualityOnLoad.getSelectedId() - 1; modelsRow.refresh(); onChanged(); };
+        qualityBatch.onChange = [this] { settings.stemQualityBatch = qualityBatch.getSelectedId() - 1; modelsRow.refresh(); onChanged(); };
+        add (&modelsRow, 30, "Models for High / Best");
         add (&stemThreads, 28, "CPU threads (0 = auto)");
         add (&modelPath, 28, "Model file");
         add (&cachePath, 28, "Stem folder");
@@ -299,6 +312,7 @@ private:
     void setupSlider (juce::Slider& s, double lo, double hi, double step, double value)
     {
         s.setSliderStyle (juce::Slider::LinearHorizontal);
+        s.setScrollWheelEnabled (false);   // the mouse wheel scrolls the page, never changes a value
         s.setTextBoxStyle (juce::Slider::TextBoxRight, false, 64, 22);
         s.setRange (lo, hi, step);
         s.setValue (value, juce::dontSendNotification);
@@ -353,6 +367,85 @@ private:
     juce::ToggleButton sumToMaster, leds, stemsOnLoad, stemsGpu, foldSkips, quantize;
     juce::TextEditor dbPath, dbKey, usbFolder, modelPath, cachePath;
     Resizer dbButtons;
+    juce::ComboBox qualityOnLoad, qualityBatch;
+
+    /** Shows whether the High / Best models are installed, and where to get them. The models are too big
+        for the main download: they come as separate zips on the "models" release page. */
+    struct ModelsRow : juce::Component, private juce::Timer
+    {
+        static constexpr const char* releasePage = "https://github.com/StevelKnievel88/Centrifuge/releases/tag/models";
+
+        ModelsRow (AppSettings& s, std::function<void()> changed) : settings (s), onChanged (std::move (changed))
+        {
+            addAndMakeVisible (status);
+            addAndMakeVisible (get);
+            addAndMakeVisible (folder);
+            status.setFont (psyched::Fonts::value (12.0f));
+            get.setColour (juce::TextButton::buttonOnColourId, psyched::Colours::pink);
+            get.onClick = [] { juce::URL (releasePage).launchInDefaultBrowser(); };
+            folder.onClick = []
+            {
+                auto exeDir = juce::File::getSpecialLocation (juce::File::currentExecutableFile).getParentDirectory();
+                exeDir.startAsProcess();
+            };
+            get.setTooltip ("Opens the models page: download the zip(s) and extract them into the Centrifuge folder (they go into models)");
+            folder.setTooltip ("Opens the Centrifuge folder - extract the model zips here");
+            refresh();
+            startTimer (3000);   // notices models as soon as they've been extracted
+        }
+
+        /** Files the chosen quality levels need that aren't installed. */
+        juce::StringArray missing() const
+        {
+            juce::StringArray m;
+            for (int level : { settings.stemQualityOnLoad, settings.stemQualityBatch })
+                for (auto& f : StemModels::required ((StemQuality) juce::jlimit (0, 3, level)))
+                    if (! settings.findModel (f).existsAsFile()) m.addIfNotAlreadyThere (f);
+            return m;
+        }
+
+        void refresh()
+        {
+            const auto m = missing();
+            if (m != lastMissing && ! lastMissing.isEmpty() && m.size() < lastMissing.size() && onChanged)
+                onChanged();   // new models arrived: reload the stem engine
+            lastMissing = m;
+
+            const bool needFt = m.contains (StemModels::ftDrums) || m.contains (StemModels::ftBass) || m.contains (StemModels::ftVocals);
+            const bool needRo = m.contains (StemModels::roformer);
+            get.getProperties().set ("psyched.solid", ! m.isEmpty());
+            get.setButtonText (m.isEmpty() ? "MODELS PAGE" : "GET MODELS");
+            juce::String text;
+            if (m.isEmpty()) text = "Installed: everything the chosen qualities need";
+            else
+            {
+                text = "Needs ";
+                if (needFt) text << "Centrifuge-Models-FineTuned.zip (about 450 MB)";
+                if (needFt && needRo) text << " + ";
+                if (needRo) text << "Centrifuge-Models-RoFormer.zip (about 850 MB)";
+                text << " - until then the next level down is used";
+            }
+            status.setText (text, juce::dontSendNotification);
+            repaint();
+        }
+
+        void timerCallback() override { refresh(); }
+        void resized() override
+        {
+            auto r = getLocalBounds();
+            folder.setBounds (r.removeFromRight (130));
+            r.removeFromRight (6);
+            get.setBounds (r.removeFromRight (130));
+            r.removeFromRight (10);
+            status.setBounds (r);
+        }
+
+        AppSettings& settings;
+        std::function<void()> onChanged;
+        juce::Label status;
+        juce::TextButton get { "GET MODELS" }, folder { "OPEN FOLDER" };
+        juce::StringArray lastMissing;
+    } modelsRow { settings, [this] { onChanged(); } };
     juce::TextButton browseDb { "BROWSE..." }, reloadDb { "RELOAD LIBRARY" };
     juce::Slider zoom, jogTicks, stemThreads, mp3Offset, playhead;
     std::unique_ptr<juce::FileChooser> chooser;

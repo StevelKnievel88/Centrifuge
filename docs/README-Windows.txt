@@ -40,6 +40,19 @@ Stems
   stems fill in from the start of the track. With a graphics card this takes
   seconds; on CPU only it can take a minute or two per track.
 - With every stem at full volume you hear the original file, untouched.
+- Settings > STEMS > Quality: one setting for tracks separated as they load,
+  another for pre-analysis (STEMS page). Pre-analysis upgrades stems made at
+  a lower quality; a loaded track always uses whatever stems it already has.
+    Fast    HTDemucs, one pass (quickest)
+    Better  two offset passes averaged (about 2x the time)
+    High    fine-tuned specialist models for drums, bass and vocals (about 3x)
+    Best    Mel-Band RoFormer vocals (cleanest vocals), then the fine-tuned
+            drums and bass models on the rest (slowest - best with a GPU)
+- High and Best need extra models (too big for this zip): Settings > GET
+  MODELS opens the "models" release. High needs
+  Centrifuge-Models-FineTuned.zip, Best needs that and
+  Centrifuge-Models-RoFormer.zip. Extract them into this folder (they go into
+  models\). Until they're there, the next level down is used.
 
 Waveforms
 ---------
