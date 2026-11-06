@@ -1,7 +1,9 @@
 #include "Exporters.h"
 #include "AnlzWriter.h"
 #include "PdbWriter.h"
+#include "XzStems.h"
 #include "../Library/RekordboxColours.h"
+#include <map>
 
 namespace orbit
 {
@@ -167,7 +169,8 @@ bool writeRekordboxXml (const juce::File& file, const std::vector<ExportItem>& i
 
 //==============================================================================
 bool exportToUsb (const juce::File& root, const std::vector<ExportItem>& items, const ExportList& lists,
-                  AudioFileLoader& loader, const ExportProgress& progress, juce::String& error, juce::String& summary)
+                  AudioFileLoader& loader, const ExportProgress& progress, juce::String& error, juce::String& summary,
+                  const XzStemExport* xz)
 {
     if (! root.isDirectory()) { error = "The export folder doesn't exist: " + root.getFullPathName(); return false; }
 
@@ -187,6 +190,8 @@ bool exportToUsb (const juce::File& root, const std::vector<ExportItem>& items, 
     std::vector<PdbWriter::Track> pdbTracks;
     auto extras = std::make_unique<juce::DynamicObject>();
     int copied = 0, skipped = 0;
+    int xzWritten = 0, xzNoStems = 0, xzFailed = 0;
+    std::map<juce::String, int> xzSkipped;   // reason -> count
     const auto today = juce::Time::getCurrentTime().formatted ("%Y-%m-%d");
 
     for (size_t i = 0; i < items.size(); ++i)
@@ -254,6 +259,29 @@ bool exportToUsb (const juce::File& root, const std::vector<ExportItem>& items, 
 
         if (it.key.isNotEmpty())
             extras->setProperty (it.key, it.centrifuge.toVar());
+
+        // Stems for the XDJ-XZ (XZ Mods loader). Hashed from the copy on the stick, so it must stay unchanged.
+        if (xz != nullptr && xz->loadStems)
+        {
+            if (! XzStems::isSupportedFile (dest)) { ++xzSkipped["not WAV/FLAC"]; continue; }
+            if (progress.report && ! progress.report ((float) i / (float) juce::jmax<size_t> (1, items.size()), "XZ stems: " + t.displayArtistTitle()))
+            {
+                error = "Export cancelled";
+                return false;
+            }
+            juce::String loadError;
+            auto audio = loader.load (dest, loadError, nullptr);
+            if (audio == nullptr) { ++xzFailed; continue; }
+            auto stems = xz->loadStems (t, *audio);
+            if (stems == nullptr) { ++xzNoStems; continue; }
+            juce::String reason;
+            switch (XzStems::write (root, dest, *audio, *stems, reason))
+            {
+                case XzStems::Result::written: ++xzWritten; break;
+                case XzStems::Result::skipped: ++xzSkipped[reason]; break;
+                case XzStems::Result::failed:  ++xzFailed; break;
+            }
+        }
     }
 
     // Playlists (ids follow the tree order; only tracks that made it onto the stick)
@@ -289,6 +317,13 @@ bool exportToUsb (const juce::File& root, const std::vector<ExportItem>& items, 
     summary = juce::String ((int) pdbTracks.size()) + " tracks and " + juce::String ((int) pls.size()) + " playlists written ("
             + juce::String (copied) + " audio files copied)";
     if (skipped > 0) summary << ", " << skipped << " skipped (audio file not found)";
+    if (xz != nullptr)
+    {
+        summary << ". XZ stems: " << xzWritten << " written";
+        if (xzNoStems > 0) summary << ", " << xzNoStems << " not separated yet";
+        for (auto& [why, count] : xzSkipped) summary << ", " << count << " " << why;
+        if (xzFailed > 0) summary << ", " << xzFailed << " failed";
+    }
     return true;
 }
 

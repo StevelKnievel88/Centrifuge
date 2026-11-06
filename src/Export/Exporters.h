@@ -23,6 +23,13 @@ struct ExportList
     std::vector<ExportList> children;
 };
 
+/** Optional: also write stems for the XZ Mods loader on the XDJ-XZ (see XzStems.h). */
+struct XzStemExport
+{
+    /** Finished stems for a track decoded from the stick, or null if it hasn't been separated. */
+    std::function<StemAudio::Ptr (const TrackInfo&, const TrackAudio&)> loadStems;
+};
+
 struct ExportProgress
 {
     std::function<bool (float progress, const juce::String& what)> report;   // return false to cancel
@@ -36,6 +43,7 @@ bool writeRekordboxXml (const juce::File& file, const std::vector<ExportItem>& i
     PIONEER/rekordbox/export.pdb, plus Centrifuge's extras in PIONEER/Centrifuge. The stick's previous
     rekordbox database is kept as a backup next to the new one. */
 bool exportToUsb (const juce::File& root, const std::vector<ExportItem>& items, const ExportList& playlists,
-                  AudioFileLoader& loader, const ExportProgress& progress, juce::String& error, juce::String& summary);
+                  AudioFileLoader& loader, const ExportProgress& progress, juce::String& error, juce::String& summary,
+                  const XzStemExport* xzStems = nullptr);
 
 } // namespace orbit

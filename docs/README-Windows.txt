@@ -180,6 +180,13 @@ Exporting
   XDJ-XZ (music, analysis files, database), from either version. The
   Centrifuge version is cut down to what rekordbox can hold. The stick's old
   rekordbox database is kept as a backup. Test with a spare stick first.
+- "Also write stems for the XDJ-XZ" (on by default): for tracks you have
+  already separated, writes Inst and Vocal stems to the stick in the layout
+  the XZ Mods USB loader (XDJ-XZ firmware 1.26) reads, so stems play on the
+  deck with no laptop. Drums + Bass is what's left of the track. Only WAV or
+  FLAC at 44.1 kHz, up to 6:20 long (the deck's memory limit for stems).
+  Don't re-tag or replace a track on the stick afterwards: its stems are
+  matched to the exact file. See docs/XZ-Mods.md.
 - Browser > EXPORT > rekordbox XML: a file rekordbox can import, to bring
   your edits back into rekordbox's own collection if you want to.
 

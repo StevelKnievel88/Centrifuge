@@ -44,6 +44,8 @@ public:
     void cancelBatch();
 
     bool hasCachedStems (const TrackInfo& info) const;
+    /** Reads finished stems from the cache for a decoded track (any thread). Null if there are none. */
+    StemAudio::Ptr loadCachedStems (const TrackInfo& info, const TrackAudio& audio);
     /** Quality level of the cached stems (-1 = none). */
     int cachedQuality (const TrackInfo& info) const;
     /** The highest level up to `q` whose models are installed. */

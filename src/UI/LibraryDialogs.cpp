@@ -20,17 +20,20 @@ void OverlayCard::resized()
 }
 
 //==============================================================================
-ExportView::ExportView (CentrifugeLibrary& l, AudioFileLoader& fl, Sources s)
-    : library (l), loader (fl), sources (std::move (s))
+ExportView::ExportView (CentrifugeLibrary& l, AudioFileLoader& fl, StemManager& sm, Sources s)
+    : library (l), loader (fl), stems (sm), sources (std::move (s))
 {
-    cardHeight = 430;
+    cardHeight = 470;
     accentColour = Theme::output;
-    for (auto* c : std::initializer_list<juce::Component*> { &what, &version, &path, &choose, &go, &cancel })
+    for (auto* c : std::initializer_list<juce::Component*> { &what, &version, &path, &choose, &xzStems, &go, &cancel })
         addAndMakeVisible (c);
     version.addItem ("rekordbox copy  (as imported from rekordbox, with your R edits)", 1);
     version.addItem ("Centrifuge version, cut down to what rekordbox can hold", 2);
     version.setSelectedId (2, juce::dontSendNotification);
     path.setFont (Theme::font (13.5f));
+    xzStems.setToggleState (true, juce::dontSendNotification);
+    xzStems.setTooltip ("Writes Inst and Vocal stems (Drums + Bass is what's left) for tracks you've already separated. "
+                        "WAV/FLAC at 44.1 kHz, up to 6:20 long.");
     go.getProperties().set ("psyched.solid", true);
     go.setColour (juce::TextButton::buttonOnColourId, Theme::output);
 
@@ -106,6 +109,8 @@ void ExportView::layoutCard (juce::Rectangle<int> c)
     choose.setBounds (p.removeFromRight (110));
     p.removeFromRight (8);
     path.setBounds (p);
+    xzStems.setBounds (row (24));
+    xzStems.setVisible (usb);
     auto buttons = c.reduced (24, 18).removeFromBottom (36);
     cancel.setBounds (buttons.removeFromRight (110));
     buttons.removeFromRight (10);
@@ -125,6 +130,7 @@ void ExportView::paint (juce::Graphics& g)
     r.removeFromTop (50);
     g.drawText (usb ? "USB STICK" : "FILE", r.removeFromTop (18), juce::Justification::centredLeft);
     r.removeFromTop (50);
+    if (usb) r.removeFromTop (34);
 
     g.setFont (Theme::font (12.5f));
     g.setColour (Theme::textFaint);
@@ -257,7 +263,8 @@ void ExportView::start()
     startTimerHz (10);
 
     const bool toUsb = usb;
-    pool.addJob ([this, target, items, playlists, toUsb]
+    const bool withXz = usb && xzStems.getToggleState();
+    pool.addJob ([this, target, items, playlists, toUsb, withXz]
     {
         juce::String err, summary;
         bool ok;
@@ -271,7 +278,9 @@ void ExportView::start()
                 current = what;
                 return ! stop.load();
             };
-            ok = exportToUsb (target, *items, *playlists, loader, p, err, summary);
+            XzStemExport xz;
+            xz.loadStems = [this] (const TrackInfo& info, const TrackAudio& audio) { return stems.loadCachedStems (info, audio); };
+            ok = exportToUsb (target, *items, *playlists, loader, p, err, summary, withXz ? &xz : nullptr);
         }
         else
         {

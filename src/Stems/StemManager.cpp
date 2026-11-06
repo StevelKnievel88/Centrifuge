@@ -57,6 +57,11 @@ bool StemManager::hasCachedStems (const TrackInfo& info) const
     return true;
 }
 
+StemAudio::Ptr StemManager::loadCachedStems (const TrackInfo& info, const TrackAudio& audio)
+{
+    return hasCachedStems (info) ? readCache (info, audio) : StemAudio::Ptr();
+}
+
 int StemManager::cachedQuality (const TrackInfo& info) const
 {
     if (! hasCachedStems (info)) return -1;

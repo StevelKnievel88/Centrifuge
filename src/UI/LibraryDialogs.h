@@ -1,6 +1,7 @@
 #pragma once
 #include "../Library/CentrifugeLibrary.h"
 #include "../Export/Exporters.h"
+#include "../Stems/StemManager.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 
 namespace orbit
@@ -34,7 +35,7 @@ public:
         std::function<juce::File()> defaultStick;
     };
 
-    ExportView (CentrifugeLibrary& library, AudioFileLoader& loader, Sources sources);
+    ExportView (CentrifugeLibrary& library, AudioFileLoader& loader, StemManager& stems, Sources sources);
     ~ExportView() override;
 
     /** toUsb: USB stick, otherwise rekordbox XML. */
@@ -50,11 +51,13 @@ private:
 
     CentrifugeLibrary& library;
     AudioFileLoader& loader;
+    StemManager& stems;
     Sources sources;
     bool usb = true;
 
     juce::ComboBox what, version;
     juce::TextEditor path;
+    juce::ToggleButton xzStems { "Also write stems for the XDJ-XZ (XZ Mods loader)" };
     juce::TextButton choose { "CHOOSE..." }, go { "EXPORT" }, cancel { "CLOSE" };
     std::unique_ptr<juce::FileChooser> chooser;
 

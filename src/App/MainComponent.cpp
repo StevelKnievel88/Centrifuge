@@ -15,7 +15,7 @@ MainComponent::MainComponent()
                  [this] { return router.getStemMatrix(); },
                  [this] (std::array<int, 4> m) { settings.stemMatrix = m; router.setStemMatrix (m); settings.save(); }),
       settingsView (settings, engine, [this] { applySettings(); }, [this] { library.reloadPcLibrary(); }),
-      exportView (centrifugeLibrary, fileLoader,
+      exportView (centrifugeLibrary, fileLoader, stems,
                   { [this] { return browser.getVisibleTracks(); }, [this] { return browser.getSelectedTracks(); },
                     [this] { return browser.getCurrentListName(); },
                     [this]
