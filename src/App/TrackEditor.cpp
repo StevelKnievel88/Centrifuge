@@ -484,6 +484,225 @@ void TrackEditor::deletePhrase (int deck, int index)
     });
 }
 
+void TrackEditor::editVersion (int deck, const std::function<void (TrackVersion&)>& fn, bool seedPhrases)
+{
+    auto& s = sessions[(size_t) deck];
+    if (s.track == nullptr) return;
+    poll();   // take in anything changed on the deck first (skips, loop modes)
+    const double shift = s.track->cueShift;
+    auto apply = [&] (TrackVersion& v)
+    {
+        if (seedPhrases && ! v.phrases)
+        {
+            // Phrase repeats live on the phrases: start from rekordbox's analysis if you haven't edited them.
+            std::vector<Phrase> list;
+            for (auto p : s.track->phrases) { p.startSec -= shift; if (p.endSec > 0) p.endSec -= shift; list.push_back (p); }
+            v.phrases = list;
+        }
+        fn (v);
+    };
+    if (s.r) apply (s.rb);
+    if (s.c) apply (s.cf);
+    save (s, s.r, s.c);
+    swapDeck (deck, playing (s));
+    syncOthers (deck);
+}
+
+void TrackEditor::setPhraseRepeats (int deck, int index, int repeats)
+{
+    if (index < 0 || index >= (int) phrases (deck).size()) return;
+    auto p = phrases (deck)[(size_t) index];
+    p.repeats = juce::jlimit (1, 64, repeats);
+    setPhrase (deck, index, p);
+}
+
+const std::vector<double>& TrackEditor::arrangement (int deck) const
+{
+    static const std::vector<double> none;
+    const auto& s = sessions[(size_t) deck];
+    return s.track != nullptr ? s.track->arrangement : none;
+}
+
+void TrackEditor::setArrangement (int deck, const std::vector<double>& order)
+{
+    if (! hasTrack (deck)) return;
+    const double shift = sessions[(size_t) deck].track->cueShift;
+    editVersion (deck, [&] (TrackVersion& v)
+    {
+        v.arrangement.clear();
+        for (auto t : order) v.arrangement.push_back (t - shift);
+    }, true);
+}
+
+const std::vector<StemLocator>& TrackEditor::stemLocators (int deck) const
+{
+    static const std::vector<StemLocator> none;
+    const auto& s = sessions[(size_t) deck];
+    return s.track != nullptr ? s.track->stemLocs : none;
+}
+
+void TrackEditor::addStemLocator (int deck, const StemLocator& l)
+{
+    if (! hasTrack (deck)) return;
+    const double shift = sessions[(size_t) deck].track->cueShift;
+    editVersion (deck, [&] (TrackVersion& v)
+    {
+        auto x = l;
+        x.timeSec -= shift;
+        v.stemLocs.erase (std::remove_if (v.stemLocs.begin(), v.stemLocs.end(), [&] (auto& o) { return std::abs (o.timeSec - x.timeSec) < 0.01; }), v.stemLocs.end());
+        v.stemLocs.push_back (x);
+        std::sort (v.stemLocs.begin(), v.stemLocs.end(), [] (auto& a, auto& b) { return a.timeSec < b.timeSec; });
+    });
+}
+
+void TrackEditor::setStemLocator (int deck, int index, const StemLocator& l)
+{
+    if (! hasTrack (deck) || index < 0 || index >= (int) stemLocators (deck).size()) return;
+    const double shift = sessions[(size_t) deck].track->cueShift;
+    const double was = stemLocators (deck)[(size_t) index].timeSec - shift;
+    editVersion (deck, [&] (TrackVersion& v)
+    {
+        for (auto& o : v.stemLocs)
+            if (std::abs (o.timeSec - was) < 0.01) { o = l; o.timeSec -= shift; }
+        std::sort (v.stemLocs.begin(), v.stemLocs.end(), [] (auto& a, auto& b) { return a.timeSec < b.timeSec; });
+    });
+}
+
+void TrackEditor::deleteStemLocator (int deck, int index)
+{
+    if (! hasTrack (deck) || index < 0 || index >= (int) stemLocators (deck).size()) return;
+    const double was = stemLocators (deck)[(size_t) index].timeSec - sessions[(size_t) deck].track->cueShift;
+    editVersion (deck, [&] (TrackVersion& v)
+    {
+        v.stemLocs.erase (std::remove_if (v.stemLocs.begin(), v.stemLocs.end(), [&] (auto& o) { return std::abs (o.timeSec - was) < 0.01; }), v.stemLocs.end());
+    });
+}
+
+const std::vector<NoteLocator>& TrackEditor::notes (int deck) const
+{
+    static const std::vector<NoteLocator> none;
+    const auto& s = sessions[(size_t) deck];
+    return s.track != nullptr ? s.track->notes : none;
+}
+
+void TrackEditor::addNote (int deck, const NoteLocator& n)
+{
+    if (! hasTrack (deck)) return;
+    const double shift = sessions[(size_t) deck].track->cueShift;
+    editVersion (deck, [&] (TrackVersion& v)
+    {
+        auto x = n;
+        x.timeSec -= shift;
+        v.notes.push_back (x);
+        std::sort (v.notes.begin(), v.notes.end(), [] (auto& a, auto& b) { return a.timeSec < b.timeSec; });
+    });
+}
+
+void TrackEditor::setNote (int deck, int index, const NoteLocator& n)
+{
+    if (! hasTrack (deck) || index < 0 || index >= (int) notes (deck).size()) return;
+    const double shift = sessions[(size_t) deck].track->cueShift;
+    const auto was = notes (deck)[(size_t) index];
+    editVersion (deck, [&] (TrackVersion& v)
+    {
+        for (auto& o : v.notes)
+            if (std::abs (o.timeSec - (was.timeSec - shift)) < 0.01 && o.text == was.text) { o = n; o.timeSec -= shift; break; }
+        std::sort (v.notes.begin(), v.notes.end(), [] (auto& a, auto& b) { return a.timeSec < b.timeSec; });
+    });
+}
+
+void TrackEditor::deleteNote (int deck, int index)
+{
+    if (! hasTrack (deck) || index < 0 || index >= (int) notes (deck).size()) return;
+    const double shift = sessions[(size_t) deck].track->cueShift;
+    const auto was = notes (deck)[(size_t) index];
+    editVersion (deck, [&] (TrackVersion& v)
+    {
+        for (auto it = v.notes.begin(); it != v.notes.end(); ++it)
+            if (std::abs (it->timeSec - (was.timeSec - shift)) < 0.01 && it->text == was.text) { v.notes.erase (it); break; }
+    });
+}
+
+std::vector<juce::String> TrackEditor::editVersionNames (int deck) const
+{
+    std::vector<juce::String> names;
+    const auto& s = sessions[(size_t) deck];
+    if (s.track == nullptr) return names;
+    for (auto& e : playing (s).editVersions) names.push_back (e.name);
+    return names;
+}
+
+juce::String TrackEditor::activeEdit (int deck) const
+{
+    const auto& s = sessions[(size_t) deck];
+    return s.track != nullptr ? playing (s).activeEdit : juce::String();
+}
+
+bool TrackEditor::activeEditModified (int deck) const
+{
+    const auto& s = sessions[(size_t) deck];
+    if (s.track == nullptr) return false;
+    const auto& v = playing (s);
+    if (v.activeEdit.isEmpty()) return false;
+    for (auto& e : v.editVersions)
+        if (e.name == v.activeEdit) return ! v.editsMatch (e);
+    return false;
+}
+
+bool TrackEditor::hasEdits (int deck) const
+{
+    const auto& s = sessions[(size_t) deck];
+    if (s.track == nullptr) return false;
+    return ! playing (s).editsMatch (EditVersion {});
+}
+
+void TrackEditor::saveEditVersion (int deck, const juce::String& name)
+{
+    if (name.isEmpty()) return;
+    editVersion (deck, [&] (TrackVersion& v)
+    {
+        auto e = v.snapshotEdit (name);
+        bool replaced = false;
+        for (auto& o : v.editVersions) if (o.name == name) { o = e; replaced = true; }
+        if (! replaced) v.editVersions.push_back (e);
+        v.activeEdit = name;
+    });
+}
+
+void TrackEditor::applyEditVersion (int deck, int index)
+{
+    editVersion (deck, [&] (TrackVersion& v)
+    {
+        if (index >= 0 && index < (int) v.editVersions.size()) v.applyEdit (v.editVersions[(size_t) index]);
+    }, true);
+}
+
+void TrackEditor::applyNoEdits (int deck)
+{
+    editVersion (deck, [] (TrackVersion& v) { v.clearEdits(); });
+}
+
+void TrackEditor::renameEditVersion (int deck, int index, const juce::String& name)
+{
+    if (name.isEmpty()) return;
+    editVersion (deck, [&] (TrackVersion& v)
+    {
+        if (index < 0 || index >= (int) v.editVersions.size()) return;
+        if (v.activeEdit == v.editVersions[(size_t) index].name) v.activeEdit = name;
+        v.editVersions[(size_t) index].name = name;
+    });
+}
+
+void TrackEditor::deleteEditVersion (int deck, int index)
+{
+    editVersion (deck, [&] (TrackVersion& v)
+    {
+        if (index < 0 || index >= (int) v.editVersions.size()) return;
+        if (v.activeEdit == v.editVersions[(size_t) index].name) v.activeEdit = {};
+        v.editVersions.erase (v.editVersions.begin() + index);
+    });
+}
+
 juce::String TrackEditor::cueName (int deck, bool hotCue, int index) const
 {
     const auto& s = sessions[(size_t) deck];

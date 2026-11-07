@@ -39,12 +39,14 @@ public:
     std::function<void (int deck, bool hotCue, int index, juce::String currentName)> onRenameCue;
     std::function<void (int deck)> onSetBpm;
     std::function<void (int width)> onListWidthChanged;   // after the list's edge is dragged
+    void setEditView (bool on) { if (on != editView) { editView = on; overviewWidth = 0; repaint(); } }
+    std::function<void()> onEditViewToggled;
     void setListWidth (int w) { listWidth = juce::jlimit (200, 900, w); resized(); repaint(); }
 
 private:
     struct Region { juce::Rectangle<float> r; juce::String action; int kind; };   // kind: 0 button, 1 overview, 2 zoom wave, 3 pad, 4 list row, 5 bpm,
                                                                                     //       6 list colour icon, 7 list delete (x), 8 list loop mode
-    struct ListEntry { double time; int kind; int index; };                        // kind 0 locator, 1 skip, 2 hot cue, 3 phrase
+    struct ListEntry { double time; int kind; int index; };                        // kind 0 locator, 1 skip, 2 hot cue, 3 phrase, 5 stem locator, 6 note
 
     void timerCallback() override;
     void action (const juce::String& id, bool down);
@@ -97,6 +99,23 @@ private:
     double visibleSeconds = 8.0;
     double loopBeats = 4.0;
     int listScroll = 0;
+    bool editView = true;
+    TimeFold fold;
+    std::vector<std::pair<double, double>> foldMapKey, foldSkipKey;
+    bool foldOnKey = false;
+    int renderedFold = -1;
+    void updateFold();
+    double displayNow() const;              // the playhead on the display timeline (edited view)
+    double sourceAtX (float x) const;       // track time under x in the zoomed waveform
+    void showEditVersionMenu (juce::Rectangle<float> area);
+    void showAddMenu (juce::Rectangle<float> area);
+    void showStemEditor (int index, juce::Rectangle<float> area);
+    void showNoteMenu (int index, juce::Rectangle<float> area);
+    static juce::String stemLocatorSummary (const StemLocator& l);
+    std::vector<int> phrasePlayOrder() const;
+    std::vector<ListEntry> shownEntries;
+    float listRowsTop = 0.0f, listRowH = 24.0f;
+    int dragPhrase = -1, dragTarget = -1;
     int listWidth = 300;
     bool resizingList = false;
     int resizeStartX = 0, resizeStartWidth = 0;

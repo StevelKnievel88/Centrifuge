@@ -92,6 +92,9 @@ void DeckPanel::timerCallback()
     rotor.setSpinning (st.stemsReady.load() && st.stemsProgress.load() < 0.999f);
     rotor.setProgress (st.stemsReady.load() ? st.stemsProgress.load() : 0.0f);
     mix (router.getPitchRangePercent (deck));
+    mix (editView); mix (st.playSegment.load());
+    if (editor != nullptr) { mix ((double) (editor->activeEdit (deck).hashCode() & 0xffff)); mix (editor->activeEditModified (deck)); mix (editor->hasEdits (deck)); }
+    if (auto* n = noteShowing (st.positionSec.load())) mix (n->timeSec + 7.0);
     if (h != lastHash) { lastHash = h; repaint(); }
 }
 
@@ -181,7 +184,10 @@ void DeckPanel::paint (juce::Graphics& g)
     // --- Status row ------------------------------------------------------------
     {
         auto r = rowStatus;
-        const double pos = st.positionSec.load(), len = st.lengthSec.load();
+        updateFold();
+        // Times follow the edited view: how far into the track as it plays, and how long is really left
+        fold.reference = fold.toDisplay (st.positionSec.load(), st.playSegment.load());
+        const double pos = fold.reference, len = fold.displayLength (st.lengthSec.load());
         g.setFont (Theme::mono (17.0f, true));
         g.setColour (Theme::text);
         g.drawText (loaded ? formatTime (pos) : "0:00.0", r.removeFromLeft (78.0f), juce::Justification::centredLeft);
@@ -199,6 +205,23 @@ void DeckPanel::paint (juce::Graphics& g)
             auto gc = r.removeFromLeft (44.0f).reduced (1.0f, 3.0f);
             chip (g, gc, "GRID", gridMode, Theme::warn);
             regions.push_back ({ gc, p + "grid.mode", 0 });
+            // Edited view on / off, and which edit version is playing
+            r.removeFromLeft (4.0f);
+            auto ev = r.removeFromLeft (58.0f).reduced (1.0f, 3.0f);
+            chip (g, ev, "EDITED", editView, Theme::sync);
+            regions.push_back ({ ev, p + "editview", 0 });
+            if (loaded && editor != nullptr)
+            {
+                r.removeFromLeft (4.0f);
+                auto name = editor->activeEdit (deck);
+                const bool any = editor->hasEdits (deck);
+                juce::String text = name.isNotEmpty() ? name : (any ? juce::String ("UNSAVED EDITS") : juce::String ("NO EDITS"));
+                if (name.isNotEmpty() && editor->activeEditModified (deck)) text << " *";
+                const float w = juce::jlimit (80.0f, 190.0f, psyched::Fonts::label().getStringWidthFloat ("EDIT: " + text.toUpperCase()) + 30.0f);
+                auto vc = r.removeFromLeft (juce::jmin (w, juce::jmax (40.0f, r.getWidth() - 310.0f))).reduced (1.0f, 3.0f);
+                chip (g, vc, "EDIT: " + text, name.isNotEmpty() || any, Theme::sync.brighter (0.3f));
+                regions.push_back ({ vc, p + "editver", 0 });
+            }
         }
         else
         {
@@ -265,9 +288,11 @@ void DeckPanel::paint (juce::Graphics& g)
         {
             const float scale = g.getInternalContext().getPhysicalPixelScaleFactor();
             const int pw = (int) std::lround (r.getWidth() * scale);
-            if (overviewWidth != pw || overview.isNull())
+            updateFold();
+            if (overviewWidth != pw || overview.isNull() || renderedFold != fold.version)
             {
                 overviewWidth = pw;
+                renderedFold = fold.version;
                 const auto wdStyle = overviewStyle == 2 ? WaveformData::Style::rgb
                                    : overviewStyle == 3 ? WaveformData::Style::blue : WaveformData::Style::threeBand;
                 auto wd = track->waveformInStyle (wdStyle);
@@ -275,7 +300,10 @@ void DeckPanel::paint (juce::Graphics& g)
                 o.overview = true;
                 o.shape = overviewHalf ? StripOptions::halfUp : StripOptions::full;
                 o.tint = overviewStyle == 3 ? singleColour : juce::Colour();
-                overview = renderWaveformStrip (*wd, 0.0, (double) wd->size() / juce::jmax (1, pw), pw,
+                o.fold = &fold;
+                o.entriesPerSecond = wd->entriesPerSecond;
+                const double entries = fold.isEmpty() ? (double) wd->size() : fold.displayLength (wd->lengthSeconds()) * wd->entriesPerSecond;
+                overview = renderWaveformStrip (*wd, 0.0, entries / juce::jmax (1, pw), pw,
                                                 (int) std::lround (r.getHeight() * scale), o);
             }
             g.drawImage (overview, r);
@@ -283,8 +311,10 @@ void DeckPanel::paint (juce::Graphics& g)
             const double len = st.lengthSec.load();
             if (len > 0.0)
             {
-                auto xOf = [&] (double sec) { return r.getX() + (float) (sec / len) * r.getWidth(); };
-                const float px = xOf (st.positionSec.load());
+                const double dlen = juce::jmax (0.001, fold.displayLength (len));
+                fold.reference = fold.toDisplay (st.positionSec.load(), st.playSegment.load());
+                auto xOf = [&] (double sec) { return r.getX() + (float) juce::jlimit (0.0, 1.0, fold.toDisplay (sec) / dlen) * r.getWidth(); };
+                const float px = r.getX() + (float) juce::jlimit (0.0, 1.0, fold.reference / dlen) * r.getWidth();
 
                 g.setColour (juce::Colours::black.withAlpha (0.45f));
                 g.fillRect (juce::Rectangle<float> (r.getX(), r.getY(), px - r.getX(), r.getHeight()));
@@ -297,14 +327,15 @@ void DeckPanel::paint (juce::Graphics& g)
                 }
 
                 // Skipped sections shaded; then every mark (shared with PREP and the browser preview)
-                for (int i = 0; i < juce::jmin (st.numSkips.load(), Deck::maxSkips); ++i)
-                {
-                    const float x0 = xOf (st.skipFrom[(size_t) i].load()), x1 = xOf (st.skipTo[(size_t) i].load());
-                    if (x1 <= x0) continue;
-                    g.setColour (juce::Colours::black.withAlpha (st.skipsOn.load() ? 0.62f : 0.35f));
-                    g.fillRect (juce::Rectangle<float>::leftTopRightBottom (x0, r.getY(), x1, r.getBottom()));
-                }
-                paintOverviewMarks (g, r, TrackMarks::fromDeck (st, track->phrases));
+                if (fold.isEmpty())
+                    for (int i = 0; i < juce::jmin (st.numSkips.load(), Deck::maxSkips); ++i)
+                    {
+                        const float x0 = xOf (st.skipFrom[(size_t) i].load()), x1 = xOf (st.skipTo[(size_t) i].load());
+                        if (x1 <= x0) continue;
+                        g.setColour (juce::Colours::black.withAlpha (st.skipsOn.load() ? 0.62f : 0.35f));
+                        g.fillRect (juce::Rectangle<float>::leftTopRightBottom (x0, r.getY(), x1, r.getBottom()));
+                    }
+                paintOverviewMarks (g, r, TrackMarks::fromDeck (st, track->phrases, track.get()), false, &fold);
 
                 g.setColour (Theme::accent);
                 g.fillRect (xOf (st.cuePointSec.load()) - 0.5f, r.getY(), 1.0f, r.getHeight());
@@ -544,6 +575,75 @@ void DeckPanel::press (const juce::String& id, bool down)
     router.perform (id, v);
 }
 
+void DeckPanel::updateFold()
+{
+    const auto& st = engine.deck (deck).state();
+    std::vector<std::pair<double, double>> sk, map;
+    const bool on = editView && st.skipsOn.load() && track != nullptr;
+    if (on)
+    {
+        for (int i = 0; i < juce::jmin (st.numSkips.load(), Deck::maxSkips); ++i)
+            sk.push_back ({ st.skipFrom[(size_t) i].load(), st.skipTo[(size_t) i].load() });
+        for (auto& s : track->playMap) map.push_back ({ s.start, s.end });
+    }
+    if (on == foldOnKey && sk == foldSkipKey && map == foldMapKey) return;
+    foldOnKey = on; foldSkipKey = sk; foldMapKey = map;
+    fold.set (map, sk, track != nullptr && track->audio != nullptr ? track->audio->lengthSeconds() : 1.0e6);
+}
+
+const NoteLocator* DeckPanel::noteShowing (double pos) const
+{
+    // A note pops up a couple of seconds before playback reaches it and stays for eight seconds after.
+    if (track == nullptr) return nullptr;
+    const NoteLocator* found = nullptr;
+    for (auto& n : track->notes)
+        if (pos >= n.timeSec - 2.0 && pos <= n.timeSec + 8.0) found = &n;
+    return found;
+}
+
+void DeckPanel::paintNote (juce::Graphics& g)
+{
+    // Note locator: a banner over the track title while playback is at it
+    const auto& st = engine.deck (deck).state();
+    auto* n = noteShowing (st.positionSec.load());
+    if (n == nullptr) return;
+    const double until = n->timeSec - st.positionSec.load();
+    auto r = rowInfo.reduced (2.0f, 2.0f).withTrimmedLeft (rowInfo.getHeight() + 6.0f);
+    g.setColour (psyched::Colours::void_.withAlpha (0.92f));
+    g.fillRect (r);
+    g.setColour (n->colour);
+    g.fillRect (r.removeFromLeft (4.0f));
+    g.drawRect (r.expanded (4.0f, 0.0f).withTrimmedLeft (4.0f), 1.0f);
+    r.removeFromLeft (8.0f);
+    g.setFont (psyched::Fonts::mono (10.0f, true));
+    g.drawText (until > 0.05 ? "NOTE IN " + juce::String (until, 1) + "s" : juce::String ("NOTE"), r.removeFromLeft (84.0f), juce::Justification::centredLeft);
+    g.setColour (Theme::text);
+    g.setFont (Theme::font (14.0f, true));
+    g.drawFittedText (n->text, r.toNearestInt(), juce::Justification::centredLeft, 2);
+}
+
+void DeckPanel::showEditVersionMenu (juce::Rectangle<float> area)
+{
+    if (editor == nullptr || ! editor->hasTrack (deck)) return;
+    const auto names = editor->editVersionNames (deck);
+    const auto active = editor->activeEdit (deck);
+    juce::PopupMenu m;
+    m.addSectionHeader ("Edit version - what plays");
+    for (int i = 0; i < (int) names.size(); ++i)
+        m.addItem (10 + i, names[(size_t) i], true, names[(size_t) i] == active);
+    if (names.empty()) m.addItem (-1, "(none saved yet - make them on PREP)", false);
+    m.addSeparator();
+    m.addItem (1, "No edits (the track as recorded)", true, active.isEmpty() && ! editor->hasEdits (deck));
+    juce::Component::SafePointer<DeckPanel> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (localAreaToGlobal (area.toNearestInt())),
+                     [safe] (int r)
+    {
+        if (safe == nullptr || safe->editor == nullptr || r == 0) return;
+        if (r == 1) safe->editor->applyNoEdits (safe->deck);
+        else if (r >= 10) safe->editor->applyEditVersion (safe->deck, r - 10);
+    });
+}
+
 void DeckPanel::mouseDown (const juce::MouseEvent& e)
 {
     auto* r = regionAt (e.position);
@@ -552,7 +652,23 @@ void DeckPanel::mouseDown (const juce::MouseEvent& e)
 
     if (r->kind == 1)
     {
-        engine.deck (deck).post (Deck::Cmd::seekFraction, (e.position.x - r->r.getX()) / r->r.getWidth());
+        const double f = juce::jlimit (0.0, 1.0, (double) ((e.position.x - r->r.getX()) / r->r.getWidth()));
+        if (fold.isEmpty()) engine.deck (deck).post (Deck::Cmd::seekFraction, f);
+        else
+        {
+            const auto& st = engine.deck (deck).state();
+            engine.deck (deck).post (Deck::Cmd::seekSeconds, fold.toSource (f * fold.displayLength (st.lengthSec.load())));
+        }
+        return;
+    }
+    if (r->action.endsWith (".editview"))
+    {
+        if (onEditViewToggled) onEditViewToggled (deck);
+        return;
+    }
+    if (r->action.endsWith (".editver"))
+    {
+        showEditVersionMenu (r->r);
         return;
     }
     if (r->kind == 2)

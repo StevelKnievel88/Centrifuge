@@ -18,6 +18,20 @@ struct TrackVersion
     // Phrases you've edited (Centrifuge only). Unset = show rekordbox's own phrase analysis, if the track has one.
     std::optional<std::vector<Phrase>> phrases;
 
+    // Non-destructive edits (Centrifuge only)
+    std::vector<StemLocator> stemLocs;
+    std::vector<NoteLocator> notes;
+    std::vector<double> arrangement;                    // section rearrange: phrase start times in play order
+    std::vector<EditVersion> editVersions;              // named sets of edits
+    juce::String activeEdit;                            // name of the edit version last chosen ("" = none)
+
+    EditVersion snapshotEdit (const juce::String& name) const;
+    /** Makes this version's edits those of `e` (phrase repeats need `phrases` to be set). */
+    void applyEdit (const EditVersion& e);
+    /** No edits: no skips, stem locators, rearrangement or repeats; loop locators back to ordinary loops. */
+    void clearEdits();
+    bool editsMatch (const EditVersion& e) const;
+
     // What each library can hold.
     static constexpr int centrifugeMaxLocators = 32;
     static constexpr int rekordboxMaxMemoryCues = 10;

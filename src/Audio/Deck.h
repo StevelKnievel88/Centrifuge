@@ -28,6 +28,11 @@ struct LoadedTrack : public juce::ReferenceCountedObject
     // otherwise rekordbox's). Skips are Centrifuge-only. The deck holds the live, editable copies.
     std::vector<std::pair<double, double>> skips;
     std::vector<Phrase> phrases;         // shown under the waveform (rekordbox's analysis, or your own edit)
+    std::vector<StemLocator> stemLocs;   // stem locators, sorted (fade lengths worked out from the grid)
+    std::vector<NoteLocator> notes;      // note locators, sorted
+    std::vector<double> arrangement;     // section rearrange: phrase starts in play order (empty = as the track goes)
+    /** The order the track plays in (phrase repeats / rearrange). Empty = straight through. */
+    std::vector<PlaySegment> playMap;
     juce::String cueKey;                 // identifies the track in Centrifuge's cue store
     double cueShift = 0.0;               // MP3 offset applied to all cue times (removed again when saving)
 
@@ -152,8 +157,10 @@ public:
         std::atomic<int> autoLoopLocator { -1 };   // locator whose active / cycle loop is running (-1 = none)
         std::atomic<int> cyclesLeft { 0 };         // passes left in a running cycle loop (counting this one)
         std::array<std::atomic<double>, maxSkips> skipFrom, skipTo;
-        std::atomic<bool> skipsOn { true };
+        std::atomic<bool> skipsOn { true };          // edits on: skips, phrase order / repeats, stem locators
         std::atomic<double> skipPendingFrom { -1.0 };
+        std::atomic<int> playSegment { -1 };          // which stretch of the play map is playing (-1 = none)
+        std::array<std::atomic<float>, 4> stemAuto;   // stem locators' gain on each stem (1 = untouched)
         /** Counts edits to hot cues, locators and skips (so the app knows to save them). */
         std::atomic<int> cueEdits { 0 };
         /** Increases when the track's grid / cue data is swapped (e.g. switching rekordbox / Centrifuge version). */
@@ -172,6 +179,7 @@ public:
             for (auto& h : hotEnd) h = -1.0;
             for (auto& c : hotColour) c = 0;
             for (auto& g : stemGain) g = 1.0f;
+            for (auto& g : stemAuto) g = 1.0f;
         }
     };
 
@@ -279,6 +287,9 @@ private:
     std::array<float, 4> stemTarget { 1, 1, 1, 1 };
     std::array<float, 4> stemCurrent { 1, 1, 1, 1 };
     std::array<bool, 4> stemMuted { false, false, false, false };
+    std::array<float, 4> stemAutoNow { 1, 1, 1, 1 };
+    int playSeg = -1;                // current stretch of track->playMap
+    void stemAutomationAt (double sec, std::array<float, 4>& g) const noexcept;
     int64_t stemsValid = 0;
 
     // Key lock

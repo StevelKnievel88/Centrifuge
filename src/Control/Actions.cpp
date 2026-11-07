@@ -122,7 +122,7 @@ static std::vector<ActionDef> buildActions()
     add ("view.zoomin",     "Waveform zoom in",        "View", B, -1);
     add ("view.zoomout",    "Waveform zoom out",       "View", B, -1);
     add ("view.wavemode",   "Stem lanes: show stems / 3-band", "View", B, -1);
-    add ("view.fold",       "Fold skipped sections on / off", "View", B, -1);
+    add ("view.fold",       "Edited view on / off (skips folded out, phrases in play order)", "View", B, -1);
     return a;
 }
 

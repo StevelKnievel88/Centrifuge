@@ -55,6 +55,8 @@ void StemsView::resized()
 
     r.removeFromTop (40);
     matrixArea = r.removeFromTop (5 * 34 + 64).withWidth (juce::jmin (r.getWidth(), 560));
+    r.removeFromTop (12);
+    if (settingsPanel != nullptr) settingsPanel->setBounds (r.withTrimmedLeft (-20).withWidth (juce::jmin (r.getWidth() + 20, 880)));
     auto right = getLocalBounds().reduced (24).removeFromRight (juce::jmin (260, getWidth() / 4));
     rotor.setBounds (right.removeFromTop (right.getWidth()).reduced (20));
 }

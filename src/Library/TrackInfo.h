@@ -2,6 +2,7 @@
 #include <juce_core/juce_core.h>
 #include <juce_graphics/juce_graphics.h>
 #include <vector>
+#include <array>
 
 namespace orbit
 {
@@ -32,6 +33,44 @@ struct Phrase
     double endSec = -1.0;
     juce::String name;
     juce::Colour colour;
+    int repeats = 1;            // phrase repeat: plays this many times in a row (Centrifuge only)
+};
+
+/** Stem locator: from this point the stems change - each one switched on, off, or left as it is - either at
+    once or faded over a number of beats. Centrifuge only; needs the track's stems. */
+struct StemLocator
+{
+    double timeSec = 0.0;
+    std::array<int, 4> target { -1, -1, -1, -1 };   // drums, bass, inst, vocals: 1 on, 0 off, -1 unchanged
+    float fadeBeats = 0.0f;
+    double fadeSec = 0.0;                            // worked out from the beat grid when loaded
+    juce::String name;
+};
+
+/** Note locator: a reminder that pops up on the deck when playback reaches it. */
+struct NoteLocator
+{
+    double timeSec = 0.0;
+    juce::String text;
+    juce::Colour colour { 0xffffd339 };
+};
+
+/** One stretch of the track in the order it plays (section rearrange / phrase repeat). */
+struct PlaySegment
+{
+    double start = 0.0, end = 0.0;
+};
+
+/** A named set of edits - skips, loop modes, stem locators, phrase order and repeats - to pick when loading. */
+struct EditVersion
+{
+    struct LoopMode { double startSec; int mode, cycles; };
+    juce::String name;
+    std::vector<std::pair<double, double>> skips;
+    std::vector<StemLocator> stemLocs;
+    std::vector<double> arrangement;                 // phrase start times in play order (empty = as the track goes)
+    std::vector<std::pair<double, int>> repeats;     // phrase start -> times it plays (only the ones > 1)
+    std::vector<LoopMode> loopModes;                 // loop locators by start: mode and cycles
 };
 
 /** Colour for a phrase name (rekordbox's sections; anything else gets a neutral colour). */

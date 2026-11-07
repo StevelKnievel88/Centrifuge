@@ -42,6 +42,8 @@ struct AppSettings
     int overviewStyle = 1;             // deck overview: 1 = 3-band, 2 = RGB, 3 = single colour
     int overviewShape = 0;             // 0 = full, 1 = half
     juce::uint32 singleColour = 0xff3d9bff;
+    bool singleFollowsDeck = false;
+    std::array<bool, 3> editView { true, true, true };   // decks 1, 2 and PREP: show the edited version (as it will play)    // single-colour waveforms use each deck's colour instead
     std::array<int, 4> stemLayerOrder { 2, 1, 3, 0 };          // stems from back to front (0 drums, 1 bass, 2 inst, 3 vocals)
     std::array<float, 4> stemOpacity { 1.0f, 1.0f, 1.0f, 1.0f }; // per stem (drums, bass, inst, vocals)
     bool foldSkips = true;             // fold skipped sections out of the scrolling waveform

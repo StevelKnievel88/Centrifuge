@@ -20,6 +20,8 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseDown (const juce::MouseEvent&) override;
+    /** The stem settings (quality, models, GPU...) shown under the controls. */
+    void setSettingsPanel (juce::Component* c) { settingsPanel = c; if (c != nullptr) addAndMakeVisible (c); resized(); }
 
 private:
     void timerCallback() override;
@@ -35,6 +37,7 @@ private:
     std::function<std::array<int, 4>()> getMatrix;
     std::function<void (std::array<int, 4>)> setMatrix;
     juce::Rectangle<int> matrixArea;
+    juce::Component* settingsPanel = nullptr;
     CentrifugeRotor rotor;
     juce::Rectangle<int> cell (int control, int stem) const;
 };

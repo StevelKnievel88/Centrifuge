@@ -46,14 +46,19 @@ public:
     double getVisibleSeconds() const { return visibleSeconds; }
     void setMaxFps (int fps) { maxFps = juce::jlimit (15, 240, fps); }
     void setLanes (int deck, LaneConfig top, LaneConfig bottom);
-    void setSingleColour (juce::Colour c) { singleTint = c; needsRedraw = true; }
+    void setSingleColour (juce::Colour c, bool followDeck = false) { singleTint = c; singleFollowsDeck = followDeck; needsRedraw = true; }
     /** Stem layers from back to front, and each stem's opacity (0..1). */
     void setStemLayers (std::array<int, 4> backToFront, std::array<float, 4> opacity)
     {
         stemOrder = backToFront; stemOpacity = opacity; needsRedraw = true;
     }
-    void setFoldSkips (bool f) { foldSkips = f; needsRedraw = true; }
-    bool getFoldSkips() const { return foldSkips; }
+    /** Edited view (per deck): the waveform shows the track as it will play - skips folded out, phrases in their
+        rearranged order, repeats shown again. Off = the whole track as recorded, with every marker. */
+    void setFoldSkips (bool f) { editView = { f, f }; needsRedraw = true; }
+    void setEditView (int deck, bool on) { editView[(size_t) deck] = on; needsRedraw = true; }
+    bool getEditView (int deck) const { return editView[(size_t) deck]; }
+    /** Display time (edited view) of a deck's playhead, and the edited timeline's length. */
+    const TimeFold& foldFor (int deck) const { return decks[(size_t) deck].fold; }
     /** Stems each in their own row (true) instead of overlaid. */
     void setStemsSeparate (bool b) { if (b != stemsSeparate) { stemsSeparate = b; forceRedraw(); } }
     void setStemsHidden (bool h) { stemsHidden = h; needsRedraw = true; }
@@ -66,7 +71,7 @@ public:
     std::function<void (double newVisibleSeconds)> onZoomChanged;
     std::function<void (int deck, float share)> onLaneSplitChanged;
     std::function<void (float fraction)> onPlayheadMoved;
-    std::function<void (bool fold)> onFoldChanged;
+    std::function<void (int deck, bool editView)> onEditViewChanged;
     std::function<juce::String (int deck, bool hotCue, int index)> cueName;
     std::function<void (int deck, bool hotCue, int index, juce::String currentName)> onRenameCue;
 
@@ -94,6 +99,7 @@ private:
         std::shared_ptr<std::atomic<bool>> stemJobCancel;
         TimeFold fold;
         std::vector<std::pair<double, double>> lastSkips;
+        std::vector<std::pair<double, double>> lastMap;
         bool lastFoldActive = false;
         double uiSkipFrom = -1.0;   // skip started from the right-click menu
     };
@@ -128,9 +134,11 @@ private:
     std::array<std::array<LaneConfig, 2>, 2> lanes { { { LaneConfig { stems, 0 }, LaneConfig { threeBand, 0 } },
                                                        { LaneConfig { stems, 0 }, LaneConfig { threeBand, 0 } } } };
     juce::Colour singleTint { 0xff3d9bff };
+    bool singleFollowsDeck = false;
     std::array<int, 4> stemOrder { 2, 1, 3, 0 };
     std::array<float, 4> stemOpacity { 1.0f, 1.0f, 1.0f, 1.0f };
-    bool foldSkips = true, stemsHidden = false;
+    std::array<bool, 2> editView { true, true };
+    bool stemsHidden = false;
     float playhead = 0.5f;
     std::array<float, 2> laneSplit { 0.5f, 0.5f };
     double lastPaintTime = 0.0;

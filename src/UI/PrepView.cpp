@@ -110,9 +110,24 @@ void PrepView::paint (juce::Graphics& g)
                     psyched::paintLabel (g, "R/C differ", right.removeFromLeft (80.0f).withTrimmedLeft (6.0f), juce::Justification::centredLeft, Theme::accent);
                 else right.removeFromLeft (80.0f);
             }
-            else right.removeFromLeft (132.0f);
+            else
+            {
+                // Edited view on / off, and the edit version (choose, save, rename, delete)
+                auto ev = right.removeFromLeft (58.0f).reduced (1.0f, 9.0f);
+                chip (g, ev, "EDITED", editView, Theme::sync, "editview");
+                right.removeFromLeft (4.0f);
+                auto name = editor.activeEdit (deckIndex);
+                const bool any = editor.hasEdits (deckIndex);
+                juce::String text = name.isNotEmpty() ? name : (any ? juce::String ("UNSAVED EDITS") : juce::String ("NO EDITS"));
+                if (name.isNotEmpty() && editor.activeEditModified (deckIndex)) text << " *";
+                auto vc = right.removeFromLeft (70.0f).reduced (1.0f, 9.0f);
+                vc = vc.withLeft (vc.getRight() - juce::jlimit (90.0f, 210.0f, psyched::Fonts::label().getStringWidthFloat ("EDIT: " + text.toUpperCase()) + 30.0f));
+                vc = vc.withX (juce::jmax (r.getX() + 200.0f, vc.getX()));
+                chip (g, vc, "EDIT: " + text, name.isNotEmpty() || any, Theme::sync.brighter (0.3f), "editver");
+            }
 
-            const double pos = st.positionSec.load(), len = st.lengthSec.load();
+            updateFold();
+            const double pos = fold.toDisplay (st.positionSec.load(), st.playSegment.load()), len = fold.displayLength (st.lengthSec.load());
             g.setFont (Theme::mono (17.0f, true));
             g.setColour (Theme::text);
             g.drawText (formatTime (pos), right.removeFromLeft (80.0f), juce::Justification::centredRight);
@@ -160,28 +175,34 @@ void PrepView::paint (juce::Graphics& g)
         {
             const float scale = g.getInternalContext().getPhysicalPixelScaleFactor();
             const int pw = (int) std::lround (r.getWidth() * scale);
-            if (overviewWidth != pw || overview.isNull())
+            updateFold();
+            if (overviewWidth != pw || overview.isNull() || renderedFold != fold.version)
             {
                 overviewWidth = pw;
+                renderedFold = fold.version;
                 auto wd = track->waveform;
                 StripOptions o;
                 o.overview = true;
-                overview = renderWaveformStrip (*wd, 0.0, (double) wd->size() / juce::jmax (1, pw), pw, (int) std::lround (r.getHeight() * scale), o);
+                o.fold = &fold;
+                o.entriesPerSecond = wd->entriesPerSecond;
+                const double entries = fold.isEmpty() ? (double) wd->size() : fold.displayLength (wd->lengthSeconds()) * wd->entriesPerSecond;
+                overview = renderWaveformStrip (*wd, 0.0, entries / juce::jmax (1, pw), pw, (int) std::lround (r.getHeight() * scale), o);
             }
             g.drawImage (overview, r);
-            const double len = st.lengthSec.load();
+            const double len = fold.displayLength (st.lengthSec.load());
             if (len > 0.0)
             {
-                auto xOf = [&] (double sec) { return r.getX() + (float) (sec / len) * r.getWidth(); };
+                const double t = fold.toDisplay (st.positionSec.load(), st.playSegment.load());
+                fold.reference = t;
+                auto xOfD = [&] (double d) { return r.getX() + (float) juce::jlimit (0.0, 1.0, d / len) * r.getWidth(); };
                 g.setColour (juce::Colours::black.withAlpha (0.45f));
-                g.fillRect (r.withRight (xOf (st.positionSec.load())));
-                paintOverviewMarks (g, r, TrackMarks::fromDeck (st, track->phrases));
+                g.fillRect (r.withRight (xOfD (t)));
+                paintOverviewMarks (g, r, TrackMarks::fromDeck (st, track->phrases, track.get()), false, &fold);
                 // the part the zoomed waveform shows
-                const double t = st.positionSec.load();
                 g.setColour (Theme::accent.withAlpha (0.18f));
-                g.fillRect (juce::Rectangle<float>::leftTopRightBottom (xOf (t - visibleSeconds * 0.3), r.getY(), xOf (t + visibleSeconds * 0.7), r.getBottom()));
+                g.fillRect (juce::Rectangle<float>::leftTopRightBottom (xOfD (t - visibleSeconds * 0.3), r.getY(), xOfD (t + visibleSeconds * 0.7), r.getBottom()));
                 g.setColour (juce::Colours::white);
-                g.fillRect (xOf (t) - 1.0f, r.getY() - 2.0f, 2.0f, r.getHeight() + 4.0f);
+                g.fillRect (xOfD (t) - 1.0f, r.getY() - 2.0f, 2.0f, r.getHeight() + 4.0f);
             }
         }
     }
@@ -300,20 +321,53 @@ void PrepView::paint (juce::Graphics& g)
     }
 }
 
+void PrepView::updateFold()
+{
+    const auto& st = deck().state();
+    std::vector<std::pair<double, double>> sk, map;
+    const bool on = editView && st.skipsOn.load() && track != nullptr;
+    if (on)
+    {
+        for (int i = 0; i < juce::jmin (st.numSkips.load(), Deck::maxSkips); ++i)
+            sk.push_back ({ st.skipFrom[(size_t) i].load(), st.skipTo[(size_t) i].load() });
+        for (auto& s : track->playMap) map.push_back ({ s.start, s.end });
+    }
+    if (on == foldOnKey && sk == foldSkipKey && map == foldMapKey) return;
+    foldOnKey = on; foldSkipKey = sk; foldMapKey = map;
+    fold.set (map, sk, track != nullptr && track->audio != nullptr ? track->audio->lengthSeconds() : 1.0e6);
+    smoother = {};
+}
+
+double PrepView::displayNow() const
+{
+    const auto& st = engine.deck (deckIndex).state();
+    return fold.toDisplay (st.positionSec.load(), st.playSegment.load());
+}
+
+double PrepView::sourceAtX (float x) const
+{
+    const double pps = rowWave.getWidth() / visibleSeconds;
+    const float playX = (float) rowWave.getX() + (float) rowWave.getWidth() * 0.3f;
+    return juce::jmax (0.0, fold.toSource (displayNow() + (x - playX) / pps));
+}
+
 void PrepView::paintWaveArea (juce::Graphics& g, juce::Rectangle<int> area)
 {
     psyched::paintWell (g, area.toFloat(), false);
     regions.push_back ({ area.toFloat(), {}, 2 });
     if (track == nullptr || track->waveform == nullptr) return;
     const auto& st = deck().state();
+    updateFold();
 
     juce::Graphics::ScopedSaveState ss (g);
     g.reduceClipRegion (area.reduced (1));
     const auto now = juce::Time::getMillisecondCounterHiRes() / 1000.0;
-    const double t = smoother.update (st.positionSec.load(), st.playing.load(), st.tempoRatio.load(), now);
+    fold.reference = displayNow();
+    const double t = smoother.update (fold.reference, st.playing.load(), st.tempoRatio.load(), now);
     const double pps = area.getWidth() / visibleSeconds;
     const float playX = (float) area.getX() + (float) area.getWidth() * 0.3f;
-    auto xOf = [&] (double sec) { return playX + (float) ((sec - t) * pps); };
+    auto xOf = [&] (double sec) { return playX + (float) ((fold.toDisplay (sec) - t) * pps); };
+    auto onScreen = [&] (double sec) { const float x = xOf (sec); return ! fold.hidden (sec) && x > (float) area.getX() - 40.0f && x < (float) area.getRight() + 40.0f; };
     const double tStart = t - (playX - (float) area.getX()) / pps, tEnd = tStart + area.getWidth() / pps;
 
     auto wd = track->waveform;
@@ -321,7 +375,9 @@ void PrepView::paintWaveArea (juce::Graphics& g, juce::Rectangle<int> area)
     StripOptions o;
     o.entriesPerSecond = wd->entriesPerSecond;
     o.detail = detail.get();
-    tiles.configure (wd.get(), 1, wd->entriesPerSecond, wd->lengthSeconds(), pps, area.getHeight(), g.getInternalContext().getPhysicalPixelScaleFactor(),
+    o.fold = &fold;
+    tiles.configure (wd.get(), 1 + ((juce::int64) fold.version << 8), wd->entriesPerSecond, fold.displayLength (wd->lengthSeconds()), pps, area.getHeight(),
+                     g.getInternalContext().getPhysicalPixelScaleFactor(),
                      [wd, detail, o] (double first, double epp, int w, int h) { return renderWaveformStrip (*wd, first, epp, w, h, o); });
     tiles.draw (g, area, t, playX - (float) area.getX());
 
@@ -330,26 +386,51 @@ void PrepView::paintWaveArea (juce::Graphics& g, juce::Rectangle<int> area)
     const float phraseH = phrases.empty() ? 0.0f : 16.0f;
     const float h = (float) area.getHeight() - phraseH;
     if (! phrases.empty())
-        paintPhraseStrip (g, juce::Rectangle<float> ((float) area.getX(), top + h, (float) area.getWidth(), phraseH), phrases,
-                          st.lengthSec.load(), [&] (double sec) { return xOf (sec); }, phraseSelected);
+        paintPhraseStripFolded (g, juce::Rectangle<float> ((float) area.getX(), top + h, (float) area.getWidth(), phraseH), phrases,
+                                st.lengthSec.load(), fold, [&] (double d) { return playX + (float) ((d - t) * pps); }, phraseSelected);
+
+    // Each stretch of the track on screen (in the edited view a rearranged track isn't in time order)
+    struct Span { double s0, s1, d0; };
+    std::vector<Span> spans;
+    if (fold.isEmpty()) spans.push_back ({ tStart, tEnd, tStart });
+    else
+        for (auto& p : fold.pieces)
+        {
+            const double d1 = p.disp0 + (p.src1 - p.src0);
+            if (d1 < tStart || p.disp0 > tEnd) continue;
+            const double a = p.src0 + juce::jmax (0.0, tStart - p.disp0), b = p.src0 + (juce::jmin (tEnd, d1) - p.disp0);
+            spans.push_back ({ a, b, p.disp0 + (a - p.src0) });
+        }
 
     // Beat grid with bar numbers
     if (track->grid.isValid())
     {
         const auto& beats = track->grid.getBeats();
-        int bar = 0;
-        for (size_t i = 0; i < beats.size() && beats[i].timeSec <= tEnd; ++i)
+        for (auto& sp : spans)
         {
-            const auto& b = beats[i];
-            if (b.beatInBar == 1) ++bar;
-            if (b.timeSec < tStart) continue;
-            const float x = xOf (b.timeSec);
-            g.setColour (juce::Colours::white.withAlpha (b.beatInBar == 1 ? 0.55f : 0.18f));
-            g.fillRect (x, top, b.beatInBar == 1 ? 1.5f : 1.0f, h);
-            if (b.beatInBar == 1 && pps * track->grid.beatLengthAt (b.timeSec) * 4.0 > 28.0)
-                psyched::paintLabel (g, juce::String (bar), juce::Rectangle<float> (x + 3.0f, top + h - 14.0f, 40.0f, 12.0f),
-                                     juce::Justification::centredLeft, Theme::textFaint, 9.0f);
+            int bar = 0;
+            for (size_t i = 0; i < beats.size() && beats[i].timeSec <= sp.s1; ++i)
+            {
+                const auto& b = beats[i];
+                if (b.beatInBar == 1) ++bar;
+                if (b.timeSec < sp.s0) continue;
+                const float x = playX + (float) ((sp.d0 + (b.timeSec - sp.s0) - t) * pps);
+                g.setColour (juce::Colours::white.withAlpha (b.beatInBar == 1 ? 0.55f : 0.18f));
+                g.fillRect (x, top, b.beatInBar == 1 ? 1.5f : 1.0f, h);
+                if (b.beatInBar == 1 && pps * track->grid.beatLengthAt (b.timeSec) * 4.0 > 28.0)
+                    psyched::paintLabel (g, juce::String (bar), juce::Rectangle<float> (x + 3.0f, top + h - 14.0f, 40.0f, 12.0f),
+                                         juce::Justification::centredLeft, Theme::textFaint, 9.0f);
+            }
         }
+    }
+
+    // Edited view: where the track jumps (a rearranged or repeated phrase)
+    for (auto seam : fold.seams())
+    {
+        const float x = playX + (float) ((seam - t) * pps);
+        g.setColour (Theme::accent.withAlpha (0.85f));
+        for (float y = top; y < top + h; y += 8.0f)
+            g.fillRect (x - 1.0f, y, 2.0f, 4.0f);
     }
 
     // Loop
@@ -357,30 +438,31 @@ void PrepView::paintWaveArea (juce::Graphics& g, juce::Rectangle<int> area)
     if (li >= 0.0 && lo > li)
     {
         g.setColour (Theme::accent.withAlpha (st.loopActive.load() ? 0.22f : 0.08f));
-        g.fillRect (juce::Rectangle<float>::leftTopRightBottom (xOf (li), top, xOf (lo), top + h));
+        g.fillRect (juce::Rectangle<float>::leftTopRightBottom (xOf (li), top, juce::jmax (xOf (li) + 1.0f, xOf (lo)), top + h));
     }
 
-    // Skips
-    for (int i = 0; i < juce::jmin (st.numSkips.load(), Deck::maxSkips); ++i)
-    {
-        const double f = st.skipFrom[(size_t) i].load(), to = st.skipTo[(size_t) i].load();
-        if (to < tStart || f > tEnd) continue;
-        g.setColour (juce::Colours::black.withAlpha (0.55f));
-        g.fillRect (juce::Rectangle<float>::leftTopRightBottom (xOf (f), top, xOf (to), top + h));
-        g.setColour (skipColour);
-        g.fillRect (xOf (f) - 0.5f, top, 1.5f, h);
-        juce::Path p;
-        const float x = xOf (f);
-        p.addTriangle (x, top + 2.0f, x, top + 10.0f, x + 6.0f, top + 6.0f);
-        p.addTriangle (x + 5.0f, top + 2.0f, x + 5.0f, top + 10.0f, x + 11.0f, top + 6.0f);
-        g.fillPath (p);
-    }
+    // Skips (the edited view folds them out)
+    if (fold.isEmpty())
+        for (int i = 0; i < juce::jmin (st.numSkips.load(), Deck::maxSkips); ++i)
+        {
+            const double f = st.skipFrom[(size_t) i].load(), to = st.skipTo[(size_t) i].load();
+            if (to < tStart || f > tEnd) continue;
+            g.setColour (juce::Colours::black.withAlpha (0.55f));
+            g.fillRect (juce::Rectangle<float>::leftTopRightBottom (xOf (f), top, xOf (to), top + h));
+            g.setColour (skipColour);
+            g.fillRect (xOf (f) - 0.5f, top, 1.5f, h);
+            juce::Path p;
+            const float x = xOf (f);
+            p.addTriangle (x, top + 2.0f, x, top + 10.0f, x + 6.0f, top + 6.0f);
+            p.addTriangle (x + 5.0f, top + 2.0f, x + 5.0f, top + 10.0f, x + 11.0f, top + 6.0f);
+            g.fillPath (p);
+        }
 
     // Locators (loop locators: shaded, with a loop head, or the passes left for a cycle loop)
     for (int i = 0; i < juce::jmin (st.numLocators.load(), Deck::maxLocators); ++i)
     {
         const double s = st.locStart[(size_t) i].load(), e = st.locEnd[(size_t) i].load();
-        if ((e > s ? e : s) < tStart || s > tEnd) continue;
+        if (! onScreen (s) && ! (e > s && onScreen (e))) continue;
         const float x = xOf (s);
         const auto c = juce::Colour (st.locColour[(size_t) i].load());
         const int mode = st.locMode[(size_t) i].load();
@@ -389,10 +471,11 @@ void PrepView::paintWaveArea (juce::Graphics& g, juce::Rectangle<int> area)
         const float lineW = e > s && mode != 0 ? 2.0f : 1.0f;
         if (e > s)
         {
+            const float xe = x + (float) ((e - s) * pps);
             g.setColour (c.withAlpha (st.autoLoopLocator.load() == i ? 0.25f : 0.12f));
-            g.fillRect (juce::Rectangle<float>::leftTopRightBottom (x, top, xOf (e), top + h));
+            g.fillRect (juce::Rectangle<float>::leftTopRightBottom (x, top, xe, top + h));
             g.setColour (lineCol.withAlpha (0.6f));
-            g.fillRect (xOf (e) - lineW * 0.5f, top, lineW, h);
+            g.fillRect (xe - lineW * 0.5f, top, lineW, h);
         }
         g.setColour (lineCol);
         g.fillRect (x - lineW * 0.5f, top, lineW, h);
@@ -426,11 +509,34 @@ void PrepView::paintWaveArea (juce::Graphics& g, juce::Rectangle<int> area)
         }
     }
 
+    // Stem locators: a line with the four stems' state, and the fade drawn as a ramp
+    for (auto& l : track->stemLocs)
+    {
+        if (! onScreen (l.timeSec)) continue;
+        const float x = xOf (l.timeSec);
+        paintStemLocatorFlag (g, l, x, top + 16.0f, (float) (l.fadeSec * pps), h - 16.0f);
+    }
+
+    // Notes: a dashed line and the note's text
+    for (auto& n : track->notes)
+    {
+        if (! onScreen (n.timeSec)) continue;
+        const float x = xOf (n.timeSec);
+        g.setColour (n.colour.withAlpha (0.8f));
+        for (float y = top; y < top + h; y += 6.0f) g.fillRect (x - 0.5f, y, 1.5f, 3.0f);
+        auto box = juce::Rectangle<float> (x + 3.0f, top + h - 34.0f, 180.0f, 16.0f);
+        g.setColour (psyched::Colours::void_.withAlpha (0.8f));
+        g.fillRect (box.withWidth (juce::jmin (180.0f, Theme::font (11.0f).getStringWidthFloat (n.text) + 12.0f)));
+        g.setColour (n.colour);
+        g.setFont (Theme::font (11.0f, true));
+        g.drawText (n.text, box.withTrimmedLeft (4.0f), juce::Justification::centredLeft, true);
+    }
+
     // Hot cues
     for (int i = 0; i < 8; ++i)
     {
         const double hs = st.hotStart[(size_t) i].load();
-        if (hs < tStart - 1.0 || hs > tEnd || hs < 0.0) continue;
+        if (hs < 0.0 || ! onScreen (hs)) continue;
         const float x = xOf (hs);
         const auto col = juce::Colour (st.hotColour[(size_t) i].load());
         g.setColour (col.withAlpha (0.85f));
@@ -458,6 +564,10 @@ std::vector<PrepView::ListEntry> PrepView::listEntries() const
             v.push_back ({ st.locStart[(size_t) i].load(), 0, i });
         for (int i = 0; i < juce::jmin (st.numSkips.load(), Deck::maxSkips); ++i)
             v.push_back ({ st.skipFrom[(size_t) i].load(), 1, i });
+        const auto& sl = editor.stemLocators (deckIndex);
+        for (int i = 0; i < (int) sl.size(); ++i) v.push_back ({ sl[(size_t) i].timeSec, 5, i });
+        const auto& nl = editor.notes (deckIndex);
+        for (int i = 0; i < (int) nl.size(); ++i) v.push_back ({ nl[(size_t) i].timeSec, 6, i });
         std::stable_sort (v.begin(), v.end(), [] (auto& a, auto& b) { return a.time < b.time; });
     }
     else if (listTab == 1)
@@ -467,10 +577,23 @@ std::vector<PrepView::ListEntry> PrepView::listEntries() const
     }
     else
     {
-        const auto& ph = editor.phrases (deckIndex);
-        for (int i = 0; i < (int) ph.size(); ++i) v.push_back ({ ph[(size_t) i].startSec, 3, i });
+        // In play order: the rearranged order if there is one
+        for (int i : phrasePlayOrder()) v.push_back ({ editor.phrases (deckIndex)[(size_t) i].startSec, 3, i });
     }
     return v;
+}
+
+std::vector<int> PrepView::phrasePlayOrder() const
+{
+    const auto& ph = editor.phrases (deckIndex);
+    const auto& arr = editor.arrangement (deckIndex);
+    std::vector<int> order;
+    std::vector<bool> used (ph.size(), false);
+    for (auto a : arr)
+        for (int i = 0; i < (int) ph.size(); ++i)
+            if (! used[(size_t) i] && std::abs (ph[(size_t) i].startSec - a) < 0.05) { order.push_back (i); used[(size_t) i] = true; break; }
+    for (int i = 0; i < (int) ph.size(); ++i) if (! used[(size_t) i]) order.push_back (i);
+    return order;
 }
 
 void PrepView::paintList (juce::Graphics& g, juce::Rectangle<float> r)
@@ -491,22 +614,27 @@ void PrepView::paintList (juce::Graphics& g, juce::Rectangle<float> r)
         }
     }
     r.removeFromTop (6.0f);
-    const char* hints[] = { "click: go there - icon: colour - ctrl / shift: select",
-                            "click: go there - icon: colour - ctrl / shift: select",
-                            "click: go there - icon: colour - ctrl / shift: select" };
+    const char* hints[] = { "click: go there - icon: colour / stems - name: rename - ctrl / shift: select",
+                            "click: go there - icon: colour - name: rename - ctrl / shift: select",
+                            "drag the grip to rearrange - x1: repeat - icon: colour - name: rename" };
     psyched::paintLabel (g, hints[listTab], r.removeFromTop (14.0f), juce::Justification::centredLeft, Theme::textFaint, 9.0f);
     r.removeFromTop (6.0f);
 
     if (listTab == 2 && track != nullptr)
     {
         auto add = r.removeFromBottom (26.0f);
+        if (! editor.arrangement (deckIndex).empty())
+        {
+            chip (g, add.removeFromRight (juce::jmin (120.0f, add.getWidth() * 0.4f)), "RESET ORDER", true, Theme::sync, "phrase.resetorder");
+            add.removeFromRight (4.0f);
+        }
         chip (g, add, "+ ADD PHRASE AT PLAYHEAD", false, Theme::warn, "phrase.add");
         r.removeFromBottom (6.0f);
     }
     else if (listTab == 0 && track != nullptr)
     {
         auto add = r.removeFromBottom (26.0f);
-        chip (g, add, "+ ADD LOCATOR AT PLAYHEAD", false, Theme::bad, "locator.add");
+        chip (g, add, "+ ADD AT PLAYHEAD...", false, Theme::bad, "locator.addmenu");
         r.removeFromBottom (6.0f);
     }
 
@@ -535,6 +663,9 @@ void PrepView::paintList (juce::Graphics& g, juce::Rectangle<float> r)
     const double now = st.positionSec.load();
     const double bpm = editor.currentBpm (deckIndex);
     const auto& phrases = editor.phrases (deckIndex);
+    listRowsTop = r.getY();
+    listRowH = rowH;
+    shownEntries = entries;
 
     for (int k = listScroll; k < (int) entries.size() && r.getHeight() >= rowH; ++k)
     {
@@ -569,8 +700,18 @@ void PrepView::paintList (juce::Graphics& g, juce::Rectangle<float> r)
             g.drawLine (c.x - d, c.y + d, c.x + d, c.y - d, hover ? 1.8f : 1.3f);
         }
 
+        if (e.kind == 3)
+        {
+            // grip: drag to rearrange the phrases
+            auto grip = row.removeFromLeft (12.0f);
+            regions.push_back ({ grip, key, 10 });
+            g.setColour (grip.contains (getMouseXYRelative().toFloat()) || dragPhrase == e.index ? Theme::sync : Theme::textFaint);
+            for (int gy = 0; gy < 3; ++gy)
+                for (int gx = 0; gx < 2; ++gx)
+                    g.fillRect (grip.getX() + 3.0f + (float) gx * 4.0f, grip.getCentreY() - 5.0f + (float) gy * 4.0f, 2.0f, 2.0f);
+        }
         auto icon = row.removeFromLeft (28.0f).reduced (4.0f, 4.0f);
-        if (e.kind != 1) regions.push_back ({ icon.expanded (3.0f), key, 6 });   // click the icon: colour
+        if (e.kind != 1) regions.push_back ({ icon.expanded (3.0f), key, 6 });   // click the icon: colour (stem locators: which stems)
         juce::String detail, name;
         if (e.kind == 1)
         {
@@ -610,6 +751,36 @@ void PrepView::paintList (juce::Graphics& g, juce::Rectangle<float> r)
                              : (p.endSec > p.startSec ? p.endSec : st.lengthSec.load());
             const double bars = bpm > 0.0 ? (end - p.startSec) * bpm / 240.0 : 0.0;
             detail = bars > 0.0 ? juce::String (juce::roundToInt (bars)) + " bars" : formatTime (end - p.startSec);
+            // phrase repeat: click to step x1 > x2 > x3 > x4 > x8
+            auto rep = row.removeFromRight (30.0f).reduced (2.0f, 4.0f);
+            row.removeFromRight (2.0f);
+            const bool lit = p.repeats > 1;
+            chip (g, rep, "x" + juce::String (p.repeats), lit, Theme::sync, {});
+            regions.push_back ({ rep, key, 11 });
+        }
+        else if (e.kind == 5)
+        {
+            const auto& l = editor.stemLocators (deckIndex)[(size_t) e.index];
+            for (int s = 0; s < 4; ++s)
+            {
+                auto b = juce::Rectangle<float> (icon.getX() + (float) (s % 2) * icon.getWidth() * 0.5f, icon.getY() + (float) (s / 2) * icon.getHeight() * 0.5f,
+                                                 icon.getWidth() * 0.5f - 1.0f, icon.getHeight() * 0.5f - 1.0f);
+                const int t = l.target[(size_t) s];
+                g.setColour (Theme::stemColour (s).withAlpha (t > 0 ? 1.0f : t == 0 ? 0.25f : 0.0f));
+                g.fillRect (b);
+                g.setColour (Theme::stemColour (s).withAlpha (0.6f));
+                g.drawRect (b, 1.0f);
+            }
+            name = l.name.isNotEmpty() ? l.name : stemLocatorSummary (l);
+            detail = l.fadeBeats > 0.0f ? "fade " + juce::String (l.fadeBeats, l.fadeBeats < 1.0f ? 2 : 0) + " beats" : juce::String ("cut");
+        }
+        else if (e.kind == 6)
+        {
+            const auto& n = editor.notes (deckIndex)[(size_t) e.index];
+            g.setColour (n.colour);
+            g.fillEllipse (icon.reduced (3.0f));
+            name = n.text.isNotEmpty() ? n.text : juce::String ("Note");
+            detail = "note";
         }
         else
         {
@@ -680,6 +851,14 @@ void PrepView::paintList (juce::Graphics& g, juce::Rectangle<float> r)
         if (renaming != EntryKey { e.kind, e.index })
             g.drawText (name, row, juce::Justification::centredLeft, true);
     }
+
+    // While dragging a phrase: where it will go
+    if (dragPhrase >= 0 && dragTarget >= 0)
+    {
+        const float y = listRowsTop + (float) (dragTarget - listScroll) * listRowH;
+        g.setColour (Theme::sync);
+        g.fillRect (listArea.toFloat().reduced (10.0f, 0.0f).withY (y - 1.0f).withHeight (2.0f));
+    }
 }
 
 //==============================================================================
@@ -712,6 +891,8 @@ void PrepView::action (const juce::String& id, bool down)
         return;
     }
     if (id == "phrase.add") { showPhraseAddMenu(); return; }
+    if (id == "phrase.resetorder") { editor.setArrangement (deckIndex, {}); return; }
+    if (id == "editview") { if (onEditViewToggled) onEditViewToggled(); return; }
 
     if (id == "play") post (C::playToggle);
     else if (id == "loop.toggle") { if (st.loopActive.load()) post (C::loopOff); else post (C::beatLoop, loopBeats); }
@@ -756,7 +937,8 @@ void PrepView::mouseDown (const juce::MouseEvent& e)
 
     if (r->kind == 1)   // overview: seek
     {
-        post (Deck::Cmd::seekFraction, (e.position.x - r->r.getX()) / r->r.getWidth());
+        const double f = juce::jlimit (0.0, 1.0, (double) ((e.position.x - r->r.getX()) / r->r.getWidth()));
+        post (Deck::Cmd::seekSeconds, fold.toSource (f * fold.displayLength (st.lengthSec.load())));
         return;
     }
     if (r->kind == 2)   // zoomed waveform: drag to scrub, right-click for a menu
@@ -764,7 +946,8 @@ void PrepView::mouseDown (const juce::MouseEvent& e)
         if (track == nullptr) return;
         const double pps = rowWave.getWidth() / visibleSeconds;
         const float playX = (float) rowWave.getX() + (float) rowWave.getWidth() * 0.3f;
-        const double at = st.positionSec.load() + (e.position.x - playX) / pps;
+        const double at = sourceAtX (e.position.x);
+        juce::ignoreUnused (pps, playX);
         if (e.mods.isPopupMenu())
         {
             juce::PopupMenu m;
@@ -791,11 +974,34 @@ void PrepView::mouseDown (const juce::MouseEvent& e)
             return;
         }
         scrubbing = true;
-        scrubStartTime = st.positionSec.load();
+        scrubStartTime = displayNow();
         scrubStartX = e.position.x;
         return;
     }
-    if (r->kind == 4 || r->kind == 6 || r->kind == 7 || r->kind == 8 || r->kind == 9)
+    if (r->kind == 10 && ! e.mods.isPopupMenu())
+    {
+        // start dragging a phrase to a new place in the play order
+        dragPhrase = r->action.fromFirstOccurrenceOf (":", false, false).getIntValue();
+        dragTarget = -1;
+        return;
+    }
+    if (r->kind == 11 && ! e.mods.isPopupMenu())
+    {
+        const int idx = r->action.fromFirstOccurrenceOf (":", false, false).getIntValue();
+        if (idx < (int) editor.phrases (deckIndex).size())
+        {
+            const int steps[] = { 1, 2, 3, 4, 8 };
+            const int cur = editor.phrases (deckIndex)[(size_t) idx].repeats;
+            int next = 1;
+            for (int k = 0; k < 5; ++k) if (steps[k] == cur) next = steps[(k + 1) % 5];
+            if (cur > 8) next = 1;
+            editor.setPhraseRepeats (deckIndex, idx, next);
+        }
+        return;
+    }
+    if (r->action == "editver") { showEditVersionMenu (r->r); return; }
+    if (r->action == "locator.addmenu" && ! e.mods.isPopupMenu()) { showAddMenu (r->r); return; }
+    if (r->kind == 4 || r->kind == 6 || r->kind == 7 || r->kind == 8 || r->kind == 9 || r->kind == 11)
     {
         grabKeyboardFocus();
         const int kind = r->action.upToFirstOccurrenceOf (":", false, false).getIntValue();
@@ -816,6 +1022,14 @@ void PrepView::mouseDown (const juce::MouseEvent& e)
             deck().post (Deck::Command { Deck::Cmd::locatorLoopMode, (double) mode, idx, true, nullptr, 0, (double) st.locCycles[(size_t) idx].load() });
             return;
         }
+        if (kind == 5 && (r->kind == 6 || e.mods.isPopupMenu()) && ! e.mods.isCtrlDown() && ! e.mods.isShiftDown())
+        {
+            selection = { { kind, idx } };
+            anchor = { kind, idx };
+            showStemEditor (idx, r->r);
+            return;
+        }
+        if (kind == 6 && e.mods.isPopupMenu() && selection.size() <= 1) { showNoteMenu (idx, r->r); return; }
         if (r->kind == 6 && ! e.mods.isPopupMenu() && ! e.mods.isCtrlDown() && ! e.mods.isShiftDown())
         {
             if (selection.count ({ kind, idx }) == 0) { selection = { { kind, idx } }; anchor = { kind, idx }; }
@@ -853,6 +1067,14 @@ void PrepView::mouseDown (const juce::MouseEvent& e)
 
 void PrepView::mouseDrag (const juce::MouseEvent& e)
 {
+    if (dragPhrase >= 0)
+    {
+        // where the dragged phrase would land in the play order (row boundary nearest the mouse)
+        const int n = (int) shownEntries.size();
+        dragTarget = juce::jlimit (0, n, listScroll + (int) std::round ((e.position.y - listRowsTop) / listRowH));
+        repaint (listArea);
+        return;
+    }
     if (resizingList)
     {
         listWidth = juce::jlimit (200, juce::jmax (200, getWidth() - 520), resizeStartWidth - (e.x - resizeStartX));
@@ -864,15 +1086,39 @@ void PrepView::mouseDrag (const juce::MouseEvent& e)
     if (scrubbing && track != nullptr)
     {
         const double pps = rowWave.getWidth() / visibleSeconds;
-        post (Deck::Cmd::seekSeconds, juce::jmax (0.0, scrubStartTime - (e.position.x - scrubStartX) / pps));
+        post (Deck::Cmd::seekSeconds, juce::jmax (0.0, fold.toSource (scrubStartTime - (e.position.x - scrubStartX) / pps)));
         return;
     }
     if (auto* r = regionAt (e.getMouseDownPosition().toFloat()); r != nullptr && r->kind == 1)
-        post (Deck::Cmd::seekFraction, juce::jlimit (0.0f, 1.0f, (e.position.x - r->r.getX()) / r->r.getWidth()));
+        post (Deck::Cmd::seekSeconds, fold.toSource (juce::jlimit (0.0, 1.0, (double) ((e.position.x - r->r.getX()) / r->r.getWidth()))
+                                                     * fold.displayLength (deck().state().lengthSec.load())));
 }
 
 void PrepView::mouseUp (const juce::MouseEvent&)
 {
+    if (dragPhrase >= 0)
+    {
+        const int dragged = dragPhrase, target = dragTarget;
+        dragPhrase = dragTarget = -1;
+        repaint (listArea);
+        if (target < 0) return;
+        auto order = phrasePlayOrder();
+        const auto it = std::find (order.begin(), order.end(), dragged);
+        if (it == order.end()) return;
+        const int from = (int) (it - order.begin());
+        int to = target > from ? target - 1 : target;
+        if (to == from) return;
+        order.erase (it);
+        order.insert (order.begin() + juce::jlimit (0, (int) order.size(), to), dragged);
+        // Saved as the phrases' start times in play order (back to "as the track goes" if that's what it is)
+        bool natural = true;
+        for (int i = 0; i < (int) order.size(); ++i) natural = natural && order[(size_t) i] == i;
+        std::vector<double> times;
+        if (! natural)
+            for (int i : order) times.push_back (editor.phrases (deckIndex)[(size_t) i].startSec);
+        editor.setArrangement (deckIndex, times);
+        return;
+    }
     if (resizingList)
     {
         resizingList = false;
@@ -1116,6 +1362,8 @@ PrepView::ListEntry PrepView::entryFor (int kind, int idx) const
     if (kind == 0) time = st.locStart[(size_t) idx].load();
     else if (kind == 1) time = st.skipFrom[(size_t) idx].load();
     else if (kind == 2) time = st.hotStart[(size_t) idx].load();
+    else if (kind == 5) { if (idx < (int) editor.stemLocators (deckIndex).size()) time = editor.stemLocators (deckIndex)[(size_t) idx].timeSec; }
+    else if (kind == 6) { if (idx < (int) editor.notes (deckIndex).size()) time = editor.notes (deckIndex)[(size_t) idx].timeSec; }
     else if (idx < (int) editor.phrases (deckIndex).size()) time = editor.phrases (deckIndex)[(size_t) idx].startSec;
     return { time, kind, idx };
 }
@@ -1169,6 +1417,7 @@ juce::Colour PrepView::colourOf (const ListEntry& e) const
     if (e.kind == 0) return juce::Colour (st.locColour[(size_t) e.index].load());
     if (e.kind == 2) return juce::Colour (st.hotColour[(size_t) e.index].load());
     if (e.kind == 3 && e.index < (int) editor.phrases (deckIndex).size()) return editor.phrases (deckIndex)[(size_t) e.index].colour;
+    if (e.kind == 6 && e.index < (int) editor.notes (deckIndex).size()) return editor.notes (deckIndex)[(size_t) e.index].colour;
     return {};
 }
 
@@ -1188,6 +1437,13 @@ void PrepView::applyColour (const std::vector<ListEntry>& targets, juce::Colour 
             phraseChanges.push_back ({ t.index, p });
         }
     if (! phraseChanges.empty()) editor.setPhrases (deckIndex, phraseChanges);
+    for (auto& t : targets)
+        if (t.kind == 6 && t.index < (int) editor.notes (deckIndex).size())
+        {
+            auto n = editor.notes (deckIndex)[(size_t) t.index];
+            n.colour = c;
+            editor.setNote (deckIndex, t.index, n);
+        }
     repaint();
 }
 
@@ -1201,6 +1457,8 @@ void PrepView::deleteEntries (std::vector<ListEntry> targets)
         else if (t.kind == 1) deck().post (Deck::Cmd::skipDelete, 0.0, t.index);
         else if (t.kind == 2) deck().post (Deck::Cmd::hotCueDelete, 0.0, t.index);
         else if (t.kind == 3) editor.deletePhrase (deckIndex, t.index);
+        else if (t.kind == 5) editor.deleteStemLocator (deckIndex, t.index);
+        else if (t.kind == 6) editor.deleteNote (deckIndex, t.index);
     }
     selection.clear();
     anchor = { -1, -1 };
@@ -1211,7 +1469,7 @@ void PrepView::showColourMenu (const ListEntry& e, juce::Rectangle<float> area)
 {
     const auto targets = targetsFor (e);
     std::vector<ListEntry> colourable;
-    for (auto& t : targets) if (t.kind != 1) colourable.push_back (t);
+    for (auto& t : targets) if (t.kind != 1 && t.kind != 5) colourable.push_back (t);
     juce::PopupMenu m;
     m.addSectionHeader (targets.size() > 1 ? juce::String ((int) targets.size()) + " selected" : juce::String ("Colour"));
     const auto current = colourable.empty() ? juce::Colour() : colourOf (colourable.front());
@@ -1238,6 +1496,8 @@ juce::String PrepView::nameOf (const ListEntry& e) const
     if (e.kind == 0) return editor.cueName (deckIndex, false, e.index);
     if (e.kind == 2) return editor.cueName (deckIndex, true, e.index);
     if (e.kind == 3 && e.index < (int) editor.phrases (deckIndex).size()) return editor.phrases (deckIndex)[(size_t) e.index].name;
+    if (e.kind == 5 && e.index < (int) editor.stemLocators (deckIndex).size()) return editor.stemLocators (deckIndex)[(size_t) e.index].name;
+    if (e.kind == 6 && e.index < (int) editor.notes (deckIndex).size()) return editor.notes (deckIndex)[(size_t) e.index].text;
     return {};
 }
 
@@ -1266,7 +1526,7 @@ void PrepView::startRename (const ListEntry& e)
     t.setColour (juce::TextEditor::focusedOutlineColourId, Theme::sync);
     t.setIndents (4, 3);
     t.setText (nameOf (e), false);
-    t.setTextToShowWhenEmpty (e.kind == 3 ? "Phrase name" : "Name", Theme::textFaint);
+    t.setTextToShowWhenEmpty (e.kind == 3 ? "Phrase name" : e.kind == 6 ? "Note text" : "Name", Theme::textFaint);
     t.onReturnKey = [this] { finishRename (true); };
     t.onEscapeKey = [this] { finishRename (false); };
     t.onFocusLost = [this] { finishRename (true); };
@@ -1300,6 +1560,18 @@ void PrepView::finishRename (bool apply)
                 p.name = text;
                 editor.setPhrase (deckIndex, e.index, p);
             }
+            else if (e.kind == 5 && e.index < (int) editor.stemLocators (deckIndex).size())
+            {
+                auto l = editor.stemLocators (deckIndex)[(size_t) e.index];
+                l.name = text;
+                editor.setStemLocator (deckIndex, e.index, l);
+            }
+            else if (e.kind == 6 && e.index < (int) editor.notes (deckIndex).size())
+            {
+                auto n = editor.notes (deckIndex)[(size_t) e.index];
+                n.text = text;
+                editor.setNote (deckIndex, e.index, n);
+            }
         }
     }
     grabKeyboardFocus();
@@ -1324,6 +1596,245 @@ bool PrepView::keyPressed (const juce::KeyPress& k)
         return true;
     }
     return false;
+}
+
+
+juce::String PrepView::stemLocatorSummary (const StemLocator& l)
+{
+    const char* names[] = { "Drums", "Bass", "Inst", "Vocals" };
+    juce::StringArray on, off;
+    for (int s = 0; s < 4; ++s)
+    {
+        if (l.target[(size_t) s] > 0) on.add (names[s]);
+        else if (l.target[(size_t) s] == 0) off.add (names[s]);
+    }
+    juce::String t;
+    if (! off.isEmpty()) t << off.joinIntoString (", ") << " off";
+    if (! on.isEmpty()) t << (t.isNotEmpty() ? " - " : "") << on.joinIntoString (", ") << " on";
+    return t.isNotEmpty() ? t : juce::String ("Stems (no change)");
+}
+
+namespace
+{
+    /** Edits a stem locator: each stem on / off / unchanged, how long the change takes, and a name. */
+    class StemLocatorEditor : public juce::Component
+    {
+    public:
+        StemLocatorEditor (StemLocator l, std::function<void (const StemLocator&)> changed, std::function<void()> deleted)
+            : loc (std::move (l)), onChange (std::move (changed)), onDelete (std::move (deleted))
+        {
+            const char* names[] = { "DRUMS", "BASS", "INST", "VOCALS" };
+            for (int s = 0; s < 4; ++s)
+            {
+                auto& b = buttons[(size_t) s];
+                addAndMakeVisible (b);
+                b.onClick = [this, s]
+                {
+                    auto& t = loc.target[(size_t) s];
+                    t = t < 0 ? 0 : t == 0 ? 1 : -1;   // unchanged > off > on > unchanged
+                    refresh();
+                    if (onChange) onChange (loc);
+                };
+                labels[(size_t) s] = names[s];
+            }
+            addAndMakeVisible (fade);
+            const float steps[] = { 0.0f, 1.0f, 2.0f, 4.0f, 8.0f, 16.0f, 32.0f };
+            for (int i = 0; i < 7; ++i)
+                fade.addItem (steps[i] == 0.0f ? juce::String ("Cut (no fade)") : "Fade over " + juce::String ((int) steps[i]) + (steps[i] == 1.0f ? " beat" : " beats"), i + 1);
+            int sel = 1;
+            for (int i = 0; i < 7; ++i) if (std::abs (steps[i] - loc.fadeBeats) < 0.01f) sel = i + 1;
+            fade.setSelectedId (sel, juce::dontSendNotification);
+            fade.onChange = [this, steps]
+            {
+                loc.fadeBeats = steps[juce::jlimit (0, 6, fade.getSelectedId() - 1)];
+                if (onChange) onChange (loc);
+            };
+            addAndMakeVisible (del);
+            del.onClick = [this]
+            {
+                if (onDelete) onDelete();
+                if (auto* box = findParentComponentOfClass<juce::CallOutBox>()) box->dismiss();
+            };
+            refresh();
+            setSize (300, 132);
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            g.fillAll (juce::Colour (0xff141221));
+            psyched::paintLabel (g, "Stem locator - from here: click a stem for off / on / no change", getLocalBounds().removeFromTop (20).reduced (8, 0).toFloat(),
+                                 juce::Justification::centredLeft, Theme::textDim, 9.0f);
+        }
+
+        void resized() override
+        {
+            auto r = getLocalBounds().reduced (8);
+            r.removeFromTop (16);
+            auto row = r.removeFromTop (34);
+            const int w = (row.getWidth() - 3 * 4) / 4;
+            for (auto& b : buttons) { b.setBounds (row.removeFromLeft (w)); row.removeFromLeft (4); }
+            r.removeFromTop (8);
+            auto bottom = r.removeFromTop (28);
+            del.setBounds (bottom.removeFromRight (70));
+            bottom.removeFromRight (6);
+            fade.setBounds (bottom);
+        }
+
+    private:
+        void refresh()
+        {
+            for (int s = 0; s < 4; ++s)
+            {
+                auto& b = buttons[(size_t) s];
+                const int t = loc.target[(size_t) s];
+                b.setButtonText (juce::String (labels[(size_t) s]) + "\n" + (t > 0 ? "ON" : t == 0 ? "OFF" : "-"));
+                b.setColour (juce::TextButton::buttonColourId, t > 0 ? Theme::stemColour (s) : t == 0 ? Theme::stemColour (s).withAlpha (0.25f) : juce::Colour (0xff1d1a2e));
+                b.setColour (juce::TextButton::textColourOffId, t > 0 ? juce::Colours::black : Theme::text);
+            }
+        }
+
+        StemLocator loc;
+        std::function<void (const StemLocator&)> onChange;
+        std::function<void()> onDelete;
+        std::array<juce::TextButton, 4> buttons;
+        std::array<const char*, 4> labels {};
+        juce::ComboBox fade;
+        juce::TextButton del { "DELETE" };
+    };
+}
+
+void PrepView::showStemEditor (int index, juce::Rectangle<float> area)
+{
+    if (index < 0 || index >= (int) editor.stemLocators (deckIndex).size()) return;
+    const auto l = editor.stemLocators (deckIndex)[(size_t) index];
+    const double at = l.timeSec;
+    juce::Component::SafePointer<PrepView> safe (this);
+    // Finds the locator again by its time (indexes move when others are added or removed)
+    auto indexOf = [safe, at]
+    {
+        if (safe == nullptr) return -1;
+        const auto& list = safe->editor.stemLocators (deckIndex);
+        for (int i = 0; i < (int) list.size(); ++i) if (std::abs (list[(size_t) i].timeSec - at) < 0.01) return i;
+        return -1;
+    };
+    auto content = std::make_unique<StemLocatorEditor> (l,
+        [safe, indexOf] (const StemLocator& nl) { if (safe != nullptr) if (const int i = indexOf(); i >= 0) safe->editor.setStemLocator (deckIndex, i, nl); },
+        [safe, indexOf] { if (safe != nullptr) if (const int i = indexOf(); i >= 0) safe->editor.deleteStemLocator (deckIndex, i); });
+    juce::CallOutBox::launchAsynchronously (std::move (content), localAreaToGlobal (area.toNearestInt()), nullptr);
+}
+
+void PrepView::showNoteMenu (int index, juce::Rectangle<float> area)
+{
+    if (index < 0 || index >= (int) editor.notes (deckIndex).size()) return;
+    const auto n = editor.notes (deckIndex)[(size_t) index];
+    juce::PopupMenu m;
+    m.addSectionHeader ("Note");
+    addCueColourItems (m, 100, n.colour);
+    m.addSeparator();
+    m.addItem (2, "Edit text");
+    m.addItem (1, "Delete");
+    const auto screen = localAreaToGlobal (area.toNearestInt());
+    juce::Component::SafePointer<PrepView> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (screen), [safe, index, n, screen] (int r)
+    {
+        if (safe == nullptr || r == 0) return;
+        if (r == 1) { safe->editor.deleteNote (deckIndex, index); return; }
+        if (r == 2) { safe->startRename (safe->entryFor (6, index)); return; }
+        auto set = [safe] (juce::Colour c) { if (safe != nullptr) safe->applyColour ({ safe->entryFor (6, safe->selection.empty() ? -1 : safe->selection.begin()->second) }, c); };
+        auto setOne = [safe, index] (juce::Colour c) { if (safe != nullptr) safe->applyColour ({ safe->entryFor (6, index) }, c); };
+        juce::ignoreUnused (set);
+        if (handleCueColourMenu (r, 100, screen, n.colour, setOne)) {}
+    });
+}
+
+void PrepView::showAddMenu (juce::Rectangle<float> area)
+{
+    if (track == nullptr) return;
+    juce::PopupMenu m;
+    m.addSectionHeader ("Add at the playhead");
+    m.addItem (1, "Locator  (a loop locator if a loop is set here)");
+    m.addItem (2, "Stem locator - change the stems from here...");
+    m.addItem (3, "Note - a reminder that pops up on the deck...");
+    juce::Component::SafePointer<PrepView> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (localAreaToGlobal (area.toNearestInt())),
+                     [safe, area] (int r)
+    {
+        if (safe == nullptr || safe->track == nullptr || r == 0) return;
+        double at = safe->deck().state().positionSec.load();
+        // snap to the nearest beat
+        if (safe->track->grid.isValid()) at = safe->track->grid.timeAtBeat (std::round (safe->track->grid.beatPosition (at)));
+        if (r == 1) safe->post (Deck::Cmd::locatorAdd, -1.0);
+        else if (r == 2)
+        {
+            StemLocator l;
+            l.timeSec = at;
+            l.target = { -1, -1, -1, 0 };   // a start: vocals off
+            safe->editor.addStemLocator (deckIndex, l);
+            const auto& list = safe->editor.stemLocators (deckIndex);
+            for (int i = 0; i < (int) list.size(); ++i)
+                if (std::abs (list[(size_t) i].timeSec - at) < 0.01) { safe->listTab = 0; safe->showStemEditor (i, area); break; }
+        }
+        else if (r == 3)
+            safe->askText ("Note at " + formatTime (at), {}, [safe, at] (juce::String text)
+            {
+                if (safe == nullptr || text.isEmpty()) return;
+                NoteLocator n;
+                n.timeSec = at;
+                n.text = text;
+                safe->editor.addNote (deckIndex, n);
+            });
+    });
+}
+
+void PrepView::showEditVersionMenu (juce::Rectangle<float> area)
+{
+    if (track == nullptr) return;
+    const auto names = editor.editVersionNames (deckIndex);
+    const auto active = editor.activeEdit (deckIndex);
+    juce::PopupMenu m;
+    m.addSectionHeader ("Edit versions - skips, loop modes, stem locators, phrase order and repeats");
+    for (int i = 0; i < (int) names.size(); ++i)
+        m.addItem (10 + i, names[(size_t) i], true, names[(size_t) i] == active);
+    m.addItem (1, "No edits (the track as recorded)", true, active.isEmpty() && ! editor.hasEdits (deckIndex));
+    m.addSeparator();
+    m.addItem (2, "Save the current edits as a new version...");
+    if (active.isNotEmpty())
+        m.addItem (3, "Update \"" + active + "\" with the current edits", editor.activeEditModified (deckIndex));
+    if (! names.empty())
+    {
+        juce::PopupMenu ren, del;
+        for (int i = 0; i < (int) names.size(); ++i)
+        {
+            ren.addItem (100 + i, names[(size_t) i]);
+            del.addItem (200 + i, names[(size_t) i]);
+        }
+        m.addSubMenu ("Rename", ren);
+        m.addSubMenu ("Delete", del);
+    }
+    juce::Component::SafePointer<PrepView> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (localAreaToGlobal (area.toNearestInt())),
+                     [safe, names, active] (int r)
+    {
+        if (safe == nullptr || r == 0) return;
+        auto& ed = safe->editor;
+        if (r == 1) ed.applyNoEdits (deckIndex);
+        else if (r == 2)
+            safe->askText ("Name this edit version (e.g. Radio edit, Extended, Peak-time)", {}, [safe] (juce::String n)
+            {
+                if (safe != nullptr && n.isNotEmpty()) safe->editor.saveEditVersion (deckIndex, n);
+            });
+        else if (r == 3) ed.saveEditVersion (deckIndex, active);
+        else if (r >= 200) ed.deleteEditVersion (deckIndex, r - 200);
+        else if (r >= 100)
+        {
+            const int i = r - 100;
+            safe->askText ("Rename edit version", names[(size_t) i], [safe, i] (juce::String n)
+            {
+                if (safe != nullptr && n.isNotEmpty()) safe->editor.renameEditVersion (deckIndex, i, n);
+            });
+        }
+        else if (r >= 10) ed.applyEditVersion (deckIndex, r - 10);
+    });
 }
 
 } // namespace orbit

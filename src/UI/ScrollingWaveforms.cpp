@@ -153,19 +153,26 @@ void ScrollingWaveforms::onVBlank (double t)
         const int ns = juce::jmin (st.numSkips.load(), Deck::maxSkips);
         for (int i = 0; i < ns; ++i)
             sk.push_back ({ st.skipFrom[(size_t) i].load(), st.skipTo[(size_t) i].load() });
-        const bool foldActive = foldSkips && st.skipsOn.load();
-        if (sk != dv.lastSkips || foldActive != dv.lastFoldActive)
+        const bool foldActive = editView[(size_t) d] && st.skipsOn.load();
+        std::vector<std::pair<double, double>> map;
+        if (dv.track != nullptr)
+            for (auto& s : dv.track->playMap) map.push_back ({ s.start, s.end });
+        if (sk != dv.lastSkips || foldActive != dv.lastFoldActive || map != dv.lastMap)
         {
             dv.lastSkips = sk;
+            dv.lastMap = map;
             dv.lastFoldActive = foldActive;
-            dv.fold.set (foldActive ? sk : std::vector<std::pair<double, double>>());
+            const double len = dv.track != nullptr && dv.track->audio != nullptr ? dv.track->audio->lengthSeconds() : 1.0e6;
+            if (foldActive) dv.fold.set (map, sk, len);
+            else dv.fold.set ({}, {}, len);
             dv.smoother = {};
             needsRedraw = true;
         }
 
         const bool playing = st.playing.load();
         const double rate = st.tempoRatio.load();
-        const double raw = dv.fold.toDisplay (st.positionSec.load() - (playing ? latency * rate : 0.0));
+        dv.fold.reference = dv.shownPos;
+        const double raw = dv.fold.toDisplay (st.positionSec.load() - (playing ? latency * rate : 0.0), st.playSegment.load());
         const double prev = dv.shownPos;
         dv.shownPos = dv.smoother.update (raw, playing, rate, t);
         if (std::abs (dv.shownPos - prev) > 1.0e-6) moving = true;
@@ -272,8 +279,8 @@ void ScrollingWaveforms::paintDeck (juce::Graphics& g, int d, juce::Rectangle<in
         const double pps = (double) r.getWidth() / visibleSeconds;
         const float px0 = playheadX (r);
         auto strip = bottomLane.toFloat().removeFromBottom (12.0f);
-        paintPhraseStrip (g, strip, tr->phrases, tr->audio != nullptr ? tr->audio->lengthSeconds() : tr->info.durationSec,
-                          [&] (double sec) { return px0 + (float) ((dv.fold.toDisplay (sec) - dv.shownPos) * pps); });
+        paintPhraseStripFolded (g, strip, tr->phrases, tr->audio != nullptr ? tr->audio->lengthSeconds() : tr->info.durationSec,
+                                dv.fold, [&] (double disp) { return px0 + (float) ((disp - dv.shownPos) * pps); });
     }
 
     // Divider with a small grip
@@ -380,7 +387,7 @@ void ScrollingWaveforms::paintLane (juce::Graphics& g, int d, int lane, juce::Re
     StripOptions opts;
     opts.shape = cfg.shape;
     opts.fold = &dv.fold;
-    const double skipped = fold.skippedTotal();
+    const auto displayLen = [&fold] (double len) { return fold.displayLength (len); };
 
     const bool showStems = cfg.style == stems && ! stemsHidden && dv.stemWave != nullptr && dv.stemWave->computed.load() > 0;
     if (showStems)
@@ -396,7 +403,7 @@ void ScrollingWaveforms::paintLane (juce::Graphics& g, int d, int lane, juce::Re
                 o.entriesPerSecond = wd->entriesPerSecond;
                 auto& tc = dv.underTiles[(size_t) lane];
                 tc.configure (wd.get(), styleKeyFor (threeBand, cfg.shape, {}, fold.version), wd->entriesPerSecond,
-                              wd->lengthSeconds() - skipped, pps, wave.getHeight(), scale,
+                              displayLen (wd->lengthSeconds()), pps, wave.getHeight(), scale,
                               [wd, o] (double first, double epp, int w, int h) { return renderWaveformStrip (*wd, first, epp, w, h, o); });
                 juce::Graphics::ScopedSaveState ss (g);
                 g.excludeClipRegion (wave.withRight ((int) xOf (valid / sw->entriesPerSecond)));
@@ -419,7 +426,7 @@ void ScrollingWaveforms::paintLane (juce::Graphics& g, int d, int lane, juce::Re
             }
             auto& tc = dv.stemTiles[(size_t) lane][(size_t) s];
             const auto col = Theme::stemColour (s);
-            tc.configure (sw.get(), styleKeyFor (s, stemsSeparate ? 7 : cfg.shape, {}, fold.version), sw->entriesPerSecond, sw->lengthSeconds() - skipped,
+            tc.configure (sw.get(), styleKeyFor (s, stemsSeparate ? 7 : cfg.shape, {}, fold.version), sw->entriesPerSecond, displayLen (sw->lengthSeconds()),
                           pps, area.getHeight(), scale,
                           [sw, s, col, o] (double first, double epp, int w, int h)
                           { return renderStemStrip (*sw, s, col, sw->computed.load(), first, epp, w, h, o); });
@@ -438,12 +445,12 @@ void ScrollingWaveforms::paintLane (juce::Graphics& g, int d, int lane, juce::Re
         {
             auto o = opts;
             o.entriesPerSecond = wd->entriesPerSecond;
-            o.tint = style == singleColour ? singleTint : juce::Colour();
+            o.tint = style == singleColour ? (singleFollowsDeck ? Theme::deckColour (d) : singleTint) : juce::Colour();
             auto detail = dv.track->detail;
             o.detail = detail.get();
             auto& tc = dv.laneTiles[(size_t) lane];
             tc.configure (wd.get(), styleKeyFor (style, cfg.shape, o.tint, fold.version), wd->entriesPerSecond,
-                          wd->lengthSeconds() - skipped, pps, wave.getHeight(), scale,
+                          displayLen (wd->lengthSeconds()), pps, wave.getHeight(), scale,
                           [wd, detail, o] (double first, double epp, int w, int h) { return renderWaveformStrip (*wd, first, epp, w, h, o); });
             tc.draw (g, wave, t, px);
         }
@@ -478,29 +485,54 @@ void ScrollingWaveforms::paintOverlays (juce::Graphics& g, int d, juce::Rectangl
     const auto& fold = dv.fold;
     const double tStart = t - (playX - (float) r.getX()) / pps;
     const double tEnd = tStart + (double) r.getWidth() / pps;
-    const double srcStart = fold.toSource (tStart), srcEnd = fold.toSource (tEnd);
     auto xOf = [&] (double sec) { return playX + (float) ((fold.toDisplay (sec) - t) * pps); };
-    auto visible = [&] (double sec) { return sec >= srcStart - 0.5 && sec <= srcEnd + 0.5 && ! fold.hidden (sec); };
+    // On screen and played (in the edited view, a rearranged track's times aren't in order on screen)
+    auto visible = [&] (double sec) { const float x = xOf (sec); return ! fold.hidden (sec) && x >= (float) r.getX() - 30.0f && x <= (float) r.getRight() + 30.0f; };
+    const double srcStart = fold.isEmpty() ? tStart : 0.0, srcEnd = fold.isEmpty() ? tEnd : 1.0e9;
     auto& track = dv.track;
     const float flagTop = (float) r.getY() + 1.0f;
+
+    // Each stretch of the track on screen: source range and where it starts on the display timeline
+    struct Span { double s0, s1, d0; };
+    std::vector<Span> spans;
+    if (fold.isEmpty()) spans.push_back ({ tStart, tEnd, tStart });
+    else
+        for (auto& p : fold.pieces)
+        {
+            const double d1 = p.disp0 + (p.src1 - p.src0);
+            if (d1 < tStart || p.disp0 > tEnd) continue;
+            const double a = p.src0 + juce::jmax (0.0, tStart - p.disp0), b = p.src0 + (juce::jmin (tEnd, d1) - p.disp0);
+            spans.push_back ({ a, b, p.disp0 + (a - p.src0) });
+        }
 
     // Beat grid
     if (track->grid.isValid())
     {
         const auto& beats = track->grid.getBeats();
-        int i = juce::jmax (0, track->grid.beatIndexAt (srcStart));
         const bool dense = pps * track->grid.beatLengthAt (fold.toSource (t)) < 7.0;
-        for (; i < (int) beats.size() && beats[(size_t) i].timeSec <= srcEnd; ++i)
-        {
-            const auto& b = beats[(size_t) i];
-            const bool bar = b.beatInBar == 1;
-            if ((dense && ! bar) || fold.hidden (b.timeSec)) continue;
-            const float x = xOf (b.timeSec);
-            g.setColour (bar ? juce::Colours::white.withAlpha (0.55f) : juce::Colours::white.withAlpha (0.18f));
-            g.fillRect (x, (float) wave.getY(), bar ? 1.5f : 1.0f, (float) wave.getHeight());
-            if (withFlags)
-                g.fillRect (x - (bar ? 1.5f : 1.0f), (float) r.getY() + markerBand - 5.0f, bar ? 4.5f : 3.0f, 4.0f);
-        }
+        for (auto& sp : spans)
+            for (int i = juce::jmax (0, track->grid.beatIndexAt (sp.s0)); i < (int) beats.size() && beats[(size_t) i].timeSec <= sp.s1; ++i)
+            {
+                const auto& b = beats[(size_t) i];
+                if (b.timeSec < sp.s0) continue;
+                const bool bar = b.beatInBar == 1;
+                if (dense && ! bar) continue;
+                const float x = playX + (float) ((sp.d0 + (b.timeSec - sp.s0) - t) * pps);
+                g.setColour (bar ? juce::Colours::white.withAlpha (0.55f) : juce::Colours::white.withAlpha (0.18f));
+                g.fillRect (x, (float) wave.getY(), bar ? 1.5f : 1.0f, (float) wave.getHeight());
+                if (withFlags)
+                    g.fillRect (x - (bar ? 1.5f : 1.0f), (float) r.getY() + markerBand - 5.0f, bar ? 4.5f : 3.0f, 4.0f);
+            }
+    }
+
+    // Edited view: where the track jumps (a rearranged or repeated phrase) - a dashed seam
+    for (auto seam : fold.seams())
+    {
+        const float x = playX + (float) ((seam - t) * pps);
+        if (x < (float) r.getX() || x > (float) r.getRight()) continue;
+        g.setColour (Theme::accent.withAlpha (0.8f));
+        for (float y = (float) wave.getY(); y < (float) wave.getBottom(); y += 8.0f)
+            g.fillRect (x - 1.0f, y, 2.0f, 4.0f);
     }
 
     // Loop borders
@@ -518,7 +550,7 @@ void ScrollingWaveforms::paintOverlays (juce::Graphics& g, int d, juce::Rectangl
     for (int i = 0; i < ns; ++i)
     {
         const double f = st.skipFrom[(size_t) i].load(), to = st.skipTo[(size_t) i].load();
-        if (f > srcEnd + 0.5 || to < srcStart - 0.5) continue;
+        if (fold.isEmpty() ? (f > srcEnd + 0.5 || to < srcStart - 0.5) : ! visible (f)) continue;
         const float x = xOf (f);
         const auto c = st.skipsOn.load() ? skipColour : skipColour.withSaturation (0.0f).withAlpha (0.6f);
         g.setColour (c.withAlpha (0.85f));
@@ -533,8 +565,7 @@ void ScrollingWaveforms::paintOverlays (juce::Graphics& g, int d, juce::Rectangl
         for (int i = 0; i < ns; ++i)
         {
             const double f = st.skipFrom[(size_t) i].load();
-            if (! visible (f) && fold.isEmpty()) continue;
-            if (f < srcStart - 0.5 || f > srcEnd + 0.5) continue;
+            if (fold.isEmpty() ? (f < srcStart - 0.5 || f > srcEnd + 0.5) : ! visible (f)) continue;
             const float x = xOf (f);
             const auto c = st.skipsOn.load() ? skipColour : skipColour.withSaturation (0.0f);
             drawSkipFlag (g, x, flagTop, (float) markerBand - 3.0f, c);
@@ -624,6 +655,28 @@ void ScrollingWaveforms::paintOverlays (juce::Graphics& g, int d, juce::Rectangl
         }
     }
 
+    // Stem locators (the four stems' state from here) and notes
+    for (auto& l : track->stemLocs)
+        if (visible (l.timeSec))
+            paintStemLocatorFlag (g, l, xOf (l.timeSec), withFlags ? flagTop + markerBand : (float) wave.getY(), (float) (l.fadeSec * pps),
+                                  (float) wave.getBottom() - (withFlags ? flagTop + markerBand : (float) wave.getY()));
+    for (auto& n : track->notes)
+        if (visible (n.timeSec))
+        {
+            const float x = xOf (n.timeSec);
+            g.setColour (n.colour.withAlpha (0.8f));
+            for (float y = (float) wave.getY(); y < (float) wave.getBottom(); y += 6.0f) g.fillRect (x - 0.5f, y, 1.5f, 3.0f);
+            if (withFlags)
+            {
+                auto box = juce::Rectangle<float> (x + 3.0f, (float) wave.getY() + 2.0f, juce::jmin (220.0f, Theme::font (11.0f).getStringWidthFloat (n.text) + 12.0f), 15.0f);
+                g.setColour (psyched::Colours::void_.withAlpha (0.8f));
+                g.fillRect (box);
+                g.setColour (n.colour);
+                g.setFont (Theme::font (11.0f, true));
+                g.drawText (n.text, box.withTrimmedLeft (4.0f), juce::Justification::centredLeft, true);
+            }
+        }
+
     // Hot cues
     g.setFont (Theme::font (10.5f, true));
     for (int i = 0; i < 8; ++i)
@@ -706,7 +759,7 @@ void ScrollingWaveforms::showMarkerMenu (const Marker& m)
     {
         menu.addSectionHeader ("Skip");
         menu.addItem (2, "Skips on (this deck)", true, st.skipsOn.load());
-        menu.addItem (3, "Fold skipped sections in the waveform", true, foldSkips);
+        menu.addItem (3, "Edited view - as it will play (this deck)", true, editView[(size_t) m.deck]);
         menu.addSeparator();
     }
 
@@ -744,7 +797,7 @@ void ScrollingWaveforms::showMarkerMenu (const Marker& m)
         };
         if (result == 1) deleteMarker (marker);
         else if (result == 2) deck.post (Deck::Cmd::skipsToggle);
-        else if (result == 3) { foldSkips = ! foldSkips; needsRedraw = true; if (onFoldChanged) onFoldChanged (foldSkips); }
+        else if (result == 3) { auto& ev = editView[(size_t) marker.deck]; ev = ! ev; needsRedraw = true; if (onEditViewChanged) onEditViewChanged (marker.deck, ev); }
         else if (result == 4 && onRenameCue)
             onRenameCue (marker.deck, marker.kind == markerHot, marker.index,
                          cueName ? cueName (marker.deck, marker.kind == markerHot, marker.index) : juce::String());
@@ -771,7 +824,7 @@ void ScrollingWaveforms::showDeckMenu (int d, double sourceTime)
     }
     menu.addSeparator();
     menu.addItem (5, "Skips on (this deck)", true, st.skipsOn.load());
-    menu.addItem (6, "Fold skipped sections in the waveform", true, foldSkips);
+    menu.addItem (6, "Edited view - as it will play (skips folded out, phrases in play order)", true, editView[(size_t) d]);
     menu.addItem (7, "Show stems in stem lanes", true, ! stemsHidden);
 
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withMousePosition(),
@@ -786,7 +839,7 @@ void ScrollingWaveforms::showDeckMenu (int d, double sourceTime)
             case 3: deck.post2 (Deck::Cmd::skipAdd, v.uiSkipFrom, sourceTime); v.uiSkipFrom = -1.0; break;
             case 4: v.uiSkipFrom = -1.0; needsRedraw = true; break;
             case 5: deck.post (Deck::Cmd::skipsToggle); break;
-            case 6: foldSkips = ! foldSkips; needsRedraw = true; if (onFoldChanged) onFoldChanged (foldSkips); break;
+            case 6: editView[(size_t) d] = ! editView[(size_t) d]; needsRedraw = true; if (onEditViewChanged) onEditViewChanged (d, editView[(size_t) d]); break;
             case 7: stemsHidden = ! stemsHidden; needsRedraw = true; break;
             default: break;
         }

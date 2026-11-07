@@ -39,7 +39,7 @@ Stems
   stems fill in from the start of the track. With a graphics card this takes
   seconds; on CPU only it can take a minute or two per track.
 - With every stem at full volume you hear the original file, untouched.
-- Settings > STEMS > Quality: one setting for tracks separated as they load,
+- STEMS page > settings (under the matrix) > Quality: one setting for tracks separated as they load,
   another for pre-analysis (STEMS page). Pre-analysis upgrades stems made at
   a lower quality; a loaded track always uses whatever stems it already has.
     Fast    HTDemucs, one pass (quickest)
@@ -104,9 +104,35 @@ Hot cues, locators and skips
   jumps over it (snapped to the beat grid with QUANTIZE on) and the
   waveform folds it out. Your audio files are never changed.
 - Right-click the waveform for: add locator here, start/end skip here,
-  skips on/off, fold on/off.
+  skips on/off, edited view on/off.
 - Your edits are saved in %APPDATA%\Centrifuge\cues.json. rekordbox's
   library is never changed.
+
+Non-destructive edits
+---------------------
+All made on the PREP page, saved with the track in Centrifuge's library; the
+audio file is never touched. The SKIP button (skips on/off) switches every
+edit below on or off live.
+- STEM LOCATORS: + ADD AT PLAYHEAD... > Stem locator. From that point each
+  stem is switched off, on, or left alone - cut, or faded over 1-32 beats.
+  Click its icon in the list to change it. Needs the track's stems (decks
+  separate them; PREP uses stems already made).
+- PHRASE REPEAT: the x1 chip on a phrase (PHRASES tab) steps x1 > x2 > x3 >
+  x4 > x8 - the phrase plays that many times in a row.
+- SECTION REARRANGE: drag a phrase by its grip in the PHRASES tab to change
+  the order the track plays in (RESET ORDER puts it back). Playback jumps at
+  the joins; with a rearrangement the track ends when the last section ends.
+- NOTE LOCATORS: + ADD AT PLAYHEAD... > Note. A reminder that pops up over
+  the deck's title from 2 seconds before to 8 seconds after its point.
+- EDIT VERSIONS: the EDIT chip (PREP header and every deck) picks a named set
+  of skips, loop modes, stem locators, phrase order and repeats ("Radio
+  edit", "Extended"...). On PREP: save the current edits as a new version,
+  update, rename or delete. "No edits" plays the track as recorded. The
+  version chosen last is what loads next time.
+- EDITED VIEW: the EDITED chip on each deck and on PREP. On: overviews,
+  scrolling waveforms, times and the phrase meter show the track as it will
+  play (skips folded out, phrases in play order, repeats shown again, a
+  dashed line at each join). Off: the whole track as recorded, every marker.
 
 PREP page (F5)
 --------------
@@ -174,6 +200,8 @@ Library
 - GRID on a deck opens the beat grid editor: nudge, anchor a beat to the
   playhead, set the downbeat, BPM up/down/set, halve/double, tap, undo, reset.
 - Right-click a hot cue or locator to rename it or change its colour.
+- Settings > WAVEFORMS > "Single colour follows each deck's colour": single-
+  colour waveforms take the colour of the deck they're on.
 - Settings > WAVEFORMS > Stems in the waveform: Overlaid, or Separate (a
   row each: drums, bass, inst, vocals).
 

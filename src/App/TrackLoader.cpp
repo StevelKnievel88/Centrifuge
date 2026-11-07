@@ -52,6 +52,57 @@ void TrackLoader::applyVersion (LoadedTrack& t, const TrackVersion& v)
             t.phrases.push_back (p);
         }
     }
+    t.stemLocs.clear();
+    for (auto l : v.stemLocs)
+    {
+        l.timeSec += shift;
+        // fade length in seconds at the tempo where it starts
+        const double beatLen = t.grid.isValid() ? t.grid.beatLengthAt (l.timeSec) : (t.info.bpm > 0 ? 60.0 / t.info.bpm : 0.5);
+        l.fadeSec = juce::jmax (0.0, (double) l.fadeBeats * beatLen);
+        t.stemLocs.push_back (l);
+    }
+    std::sort (t.stemLocs.begin(), t.stemLocs.end(), [] (auto& a, auto& b) { return a.timeSec < b.timeSec; });
+    t.notes.clear();
+    for (auto n : v.notes) { n.timeSec += shift; t.notes.push_back (n); }
+    t.arrangement.clear();
+    for (auto a : v.arrangement) t.arrangement.push_back (a + shift);
+    t.playMap = compilePlayMap (t.phrases, t.arrangement, length);
+}
+
+std::vector<PlaySegment> TrackLoader::compilePlayMap (const std::vector<Phrase>& phrasesIn, const std::vector<double>& arrangement, double length)
+{
+    std::vector<PlaySegment> map;
+    auto phrases = phrasesIn;
+    std::sort (phrases.begin(), phrases.end(), [] (auto& a, auto& b) { return a.startSec < b.startSec; });
+    const int n = (int) phrases.size();
+    if (n == 0 || length <= 0.0) return map;
+
+    bool anyRepeat = false;
+    for (auto& p : phrases) anyRepeat = anyRepeat || p.repeats > 1;
+    if (arrangement.empty() && ! anyRepeat) return map;
+
+    // Play order: the arrangement (by phrase start), then any phrase it leaves out, in track order.
+    std::vector<int> order;
+    std::vector<bool> used ((size_t) n, false);
+    for (auto a : arrangement)
+        for (int i = 0; i < n; ++i)
+            if (! used[(size_t) i] && std::abs (phrases[(size_t) i].startSec - a) < 0.05) { order.push_back (i); used[(size_t) i] = true; break; }
+    for (int i = 0; i < n; ++i) if (! used[(size_t) i]) order.push_back (i);
+
+    auto endOf = [&] (int i) { return i + 1 < n ? phrases[(size_t) i + 1].startSec : length; };
+    if (phrases[0].startSec > 0.01) map.push_back ({ 0.0, phrases[0].startSec });   // anything before the first phrase
+    for (int i : order)
+    {
+        const double s = juce::jlimit (0.0, length, phrases[(size_t) i].startSec), e = juce::jlimit (0.0, length, endOf (i));
+        if (e <= s + 0.01) continue;
+        for (int r = 0; r < juce::jlimit (1, 64, phrases[(size_t) i].repeats); ++r)
+        {
+            if (! map.empty() && std::abs (map.back().end - s) < 0.001) map.back().end = e;   // carries straight on
+            else map.push_back ({ s, e });
+        }
+    }
+    if (map.size() == 1 && map[0].start < 0.01 && map[0].end > length - 0.01) map.clear();   // nothing changed
+    return map;
 }
 
 LoadedTrack::Ptr TrackLoader::withVersion (const LoadedTrack& b, const TrackVersion& v)
@@ -229,7 +280,9 @@ void TrackLoader::load (int deck, const TrackInfo& info, bool fromPc, std::optio
             c.ptr = track.get();
             d.post (c);
 
-            if (deck < AudioEngine::maxDecks)   // PREP / previews don't separate stems
+            // PREP uses stems already made (so stem locators can be heard there); it never starts a separation.
+            // Browser previews never use stems.
+            if (deck < AudioEngine::maxDecks || (deck == AudioEngine::prepDeck && stemManager.hasCachedStems (track->info)))
             stemManager.requestForDeck (deck, track->info, track->audio, serial, [this, deck, serial] (StemAudio::Ptr stems)
             {
                 if (pending[(size_t) deck].load() != serial || stems == nullptr) return;

@@ -15,6 +15,7 @@ MainComponent::MainComponent()
                  [this] { return router.getStemMatrix(); },
                  [this] (std::array<int, 4> m) { settings.stemMatrix = m; router.setStemMatrix (m); settings.save(); }),
       settingsView (settings, engine, [this] { applySettings(); }, [this] { library.reloadPcLibrary(); }),
+      stemSettingsView (settings, engine, [this] { applySettings(); }, [this] { library.reloadPcLibrary(); }, true),
       exportView (centrifugeLibrary, fileLoader, stems,
                   { [this] { return browser.getVisibleTracks(); }, [this] { return browser.getSelectedTracks(); },
                     [this] { return browser.getCurrentListName(); },
@@ -86,11 +87,14 @@ MainComponent::MainComponent()
             deck1.repaint(); deck2.repaint(); waves.repaint(); phaseMeter.repaint();
         };
         dp->onTrackDropped = [this] (int d) { loadDragged (d); };
+        dp->onEditViewToggled = [this] (int d) { settings.editView[(size_t) d] = ! settings.editView[(size_t) d]; settings.save(); applySettings(); };
     }
     waves.onTrackDropped = [this] (int d) { loadDragged (d); };
     prepView.onTrackDropped = [this] { loadDragged (AudioEngine::prepDeck); };
     prepView.onRenameCue = [this] (int d, bool hot, int i, juce::String cur) { askRename (d, hot, i, cur); };
     prepView.onSetBpm = [this] (int d) { askBpm (d); };
+    prepView.onEditViewToggled = [this] { settings.editView[2] = ! settings.editView[2]; settings.save(); applySettings(); };
+    phaseMeter.foldFor = [this] (int d) -> const TimeFold* { return d < 2 ? &waves.foldFor (d) : nullptr; };
     prepView.setListWidth (settings.prepListWidth);
     prepView.onListWidthChanged = [this] (int w) { settings.prepListWidth = w; settings.save(); };
     browser.versionFor = [this] (const TrackInfo& t) { return editor.versionToLoad (0, t); };
@@ -126,13 +130,14 @@ MainComponent::MainComponent()
     waves.onZoomChanged = [this] (double s) { settings.visibleSeconds = s; settings.save(); };
     waves.onLaneSplitChanged = [this] (int d, float share) { settings.laneSplit[(size_t) d] = share; settings.save(); };
     waves.onPlayheadMoved = [this] (float f) { settings.playheadPosition = f; settings.save(); };
-    waves.onFoldChanged = [this] (bool f) { settings.foldSkips = f; settings.save(); };
+    waves.onEditViewChanged = [this] (int d, bool on) { settings.editView[(size_t) d] = on; settings.save(); applySettings(); };
     engine.onDeviceChanged = [this] { settingsView.refreshRouting(); };
 
     // --- UI --------------------------------------------------------------------
     for (auto* c : std::initializer_list<juce::Component*> { &deck1, &deck2, &waves, &browser, &mapping, &stemsView, &settingsView, &prepView })
         addChildComponent (c);
     addAndMakeVisible (phaseMeter);
+    stemsView.setSettingsPanel (&stemSettingsView);
 
     // Tabs in screen order, with their page ids (PREP is page 4)
     const std::pair<juce::TextButton*, int> tabList[] = { { &tabPlay, 0 }, { &tabPrep, 4 }, { &tabMapping, 1 }, { &tabStems, 2 }, { &tabSettings, 3 } };
@@ -200,13 +205,17 @@ void MainComponent::applySettings()
                            { settings.laneStyle[(size_t) d][1], settings.laneShape[(size_t) d][1] });
         waves.setLaneSplit (d, settings.laneSplit[(size_t) d]);
     }
-    waves.setSingleColour (juce::Colour (settings.singleColour));
+    waves.setSingleColour (juce::Colour (settings.singleColour), settings.singleFollowsDeck);
     waves.setStemLayers (settings.stemLayerOrder, settings.stemOpacity);
     waves.setStemsSeparate (settings.stemsSeparate);
-    waves.setFoldSkips (settings.foldSkips);
+    for (int d = 0; d < 2; ++d) waves.setEditView (d, settings.editView[(size_t) d]);
+    deck1.setEditView (settings.editView[0]);
+    deck2.setEditView (settings.editView[1]);
+    prepView.setEditView (settings.editView[2]);
     waves.setPlayheadPosition (settings.playheadPosition);
     for (auto* dp : { &deck1, &deck2 })
-        dp->setOverviewStyle (settings.overviewStyle, settings.overviewShape == 1, juce::Colour (settings.singleColour));
+        dp->setOverviewStyle (settings.overviewStyle, settings.overviewShape == 1,
+                              settings.singleFollowsDeck ? Theme::deckColour (dp == &deck1 ? 0 : 1) : juce::Colour (settings.singleColour));
     router.setStemMatrix (settings.stemMatrix);
 
     // Quantize: applied at start-up and when the setting changes (each deck's button can still toggle it).
@@ -279,7 +288,7 @@ void MainComponent::handleAppAction (const juce::String& id, int deck, const Act
     else if (id == "view.zoomin")    { if (v.down) waves.setVisibleSeconds (waves.getVisibleSeconds() / 1.25); }
     else if (id == "view.zoomout")   { if (v.down) waves.setVisibleSeconds (waves.getVisibleSeconds() * 1.25); }
     else if (id == "view.wavemode")  { if (v.down) waves.setStemsHidden (! waves.getStemsHidden()); }
-    else if (id == "view.fold")      { if (v.down) { settings.foldSkips = ! settings.foldSkips; waves.setFoldSkips (settings.foldSkips); settings.save(); } }
+    else if (id == "view.fold")      { if (v.down) { const bool on = ! settings.editView[0]; settings.editView = { on, on, on }; settings.save(); applySettings(); } }
 }
 
 void MainComponent::showPage (int p)
@@ -289,6 +298,7 @@ void MainComponent::showPage (int p)
     for (int i = 0; i < 5; ++i)
         tabs[i]->setToggleState (i == p, juce::dontSendNotification);
     if (p == 3) settingsView.refreshValues();
+    if (p == 2) stemSettingsView.refreshValues();
 
     deck1.setVisible (p == 0);
     deck2.setVisible (p == 0);

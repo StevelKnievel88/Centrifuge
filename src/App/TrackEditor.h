@@ -41,6 +41,33 @@ public:
     void setPhrase (int deck, int index, const Phrase& p);   // p in deck time
     void deletePhrase (int deck, int index);
 
+    void setPhraseRepeats (int deck, int index, int repeats);
+
+    /** Section rearrange: phrase starts (deck time) in the order they should play; empty = as the track goes. */
+    const std::vector<double>& arrangement (int deck) const;
+    void setArrangement (int deck, const std::vector<double>& phraseStartsInPlayOrder);
+
+    /** Stem locators and note locators (deck time). */
+    const std::vector<StemLocator>& stemLocators (int deck) const;
+    void addStemLocator (int deck, const StemLocator& l);
+    void setStemLocator (int deck, int index, const StemLocator& l);
+    void deleteStemLocator (int deck, int index);
+    const std::vector<NoteLocator>& notes (int deck) const;
+    void addNote (int deck, const NoteLocator& n);
+    void setNote (int deck, int index, const NoteLocator& n);
+    void deleteNote (int deck, int index);
+
+    /** Edit versions: named sets of skips, loop modes, stem locators, phrase order and repeats. */
+    std::vector<juce::String> editVersionNames (int deck) const;
+    juce::String activeEdit (int deck) const;        // "" when none chosen
+    bool activeEditModified (int deck) const;        // edits changed since it was chosen / saved
+    bool hasEdits (int deck) const;
+    void saveEditVersion (int deck, const juce::String& name);   // a new one, or replaces one with that name
+    void applyEditVersion (int deck, int index);
+    void applyNoEdits (int deck);
+    void renameEditVersion (int deck, int index, const juce::String& name);
+    void deleteEditVersion (int deck, int index);
+
     void renameCue (int deck, bool hotCue, int index, const juce::String& name);
     juce::String cueName (int deck, bool hotCue, int index) const;
 
@@ -80,6 +107,8 @@ private:
     void save (Session& s, bool rb, bool cf);
     void swapDeck (int deck, const TrackVersion& v);
     void editPhrases (int deck, const std::function<void (std::vector<Phrase>&)>& fn);
+    /** Changes the saved version(s) (times without the MP3 shift) and updates the deck. */
+    void editVersion (int deck, const std::function<void (TrackVersion&)>& fn, bool seedPhrases = false);
 public:
     /** Several phrases changed in one go (one save, one deck update). */
     void setPhrases (int deck, const std::vector<std::pair<int, Phrase>>& changes);

@@ -209,6 +209,7 @@ void Deck::setHotCueAt (int idx, double sec)
 void Deck::loadTrack (LoadedTrack* t)
 {
     track = t;
+    playSeg = -1;
     stems = nullptr;
     playing = cuePreview = scratching = false;
     hotPreview = -1;
@@ -335,6 +336,7 @@ void Deck::apply (const Command& c)
             auto* t = static_cast<LoadedTrack*> (c.ptr);
             if (t == nullptr || track == nullptr || t->audio != track->audio) break;
             track = t;
+            if (playSeg >= (int) t->playMap.size()) playSeg = -1;   // the play map may have changed
             hot = t->hotCues;
             hotSet = t->hotCueSet;
             numLocs = 0;
@@ -895,6 +897,25 @@ inline void Deck::sampleAt (double p, float& l, float& r, const float* g) const 
     r = hermite (r0, r1, r2, r3, t);
 }
 
+void Deck::stemAutomationAt (double sec, std::array<float, 4>& g) const noexcept
+{
+    // Each stem's gain at this point: every stem locator up to here applied in turn (fades part-way if we're inside one).
+    g = { 1, 1, 1, 1 };
+    for (auto& l : track->stemLocs)
+    {
+        if (l.timeSec > sec) break;
+        for (size_t s = 0; s < 4; ++s)
+        {
+            if (l.target[s] < 0) continue;
+            const float to = l.target[s] > 0 ? 1.0f : 0.0f;
+            if (l.fadeSec > 0.001 && sec < l.timeSec + l.fadeSec)
+                g[s] = g[s] + (to - g[s]) * (float) ((sec - l.timeSec) / l.fadeSec);
+            else
+                g[s] = to;
+        }
+    }
+}
+
 void Deck::readResampled (float* outL, float* outR, int n, double step)
 {
     const auto& a = *track->audio;
@@ -928,12 +949,40 @@ void Deck::readResampled (float* outL, float* outR, int n, double step)
     };
     findNextAuto();
 
-    // Stem gain ramp across this block
+    // Play map (phrase repeats / section rearrange): the stretch of the track playing now, and where it ends.
+    const auto& map = track->playMap;
+    const int numSeg = (int) map.size();
+    const bool mapping = skipsOn && numSeg > 0 && step > 0.0 && ! scratching;
+    double segEndF = -1.0;
+    if (mapping)
+    {
+        const double p = pos / srcRate;
+        auto inside = [&] (int k) { return k >= 0 && k < numSeg && p >= map[(size_t) k].start - 0.002 && p < map[(size_t) k].end; };
+        if (! inside (playSeg))
+        {
+            // After a seek (or the first time): the next stretch that holds this position, else any that does.
+            int found = -1;
+            for (int j = 1; j <= numSeg && found < 0; ++j)
+            {
+                const int k = ((playSeg < 0 ? -1 : playSeg) + j + numSeg) % numSeg;
+                if (inside (k)) found = k;
+            }
+            playSeg = found;
+        }
+        if (playSeg >= 0) segEndF = map[(size_t) playSeg].end * srcRate;
+    }
+    else if (numSeg == 0) playSeg = -1;
+
+    // Stem gain ramp across this block (stem locators set their own gain on top of the stem controls)
     std::array<float, 4> target;
     bool stemsActive = false;
+    std::array<float, 4> autoG { 1, 1, 1, 1 };
+    if (skipsOn && ! track->stemLocs.empty())
+        stemAutomationAt ((pos + n * std::abs (step)) / srcRate, autoG);
+    stemAutoNow = autoG;
     for (size_t s = 0; s < 4; ++s)
     {
-        target[s] = stemMuted[s] ? 0.0f : stemTarget[s];
+        target[s] = (stemMuted[s] ? 0.0f : stemTarget[s]) * autoG[s];
         stemsActive = stemsActive || target[s] < 0.999f || stemCurrent[s] < 0.999f;
     }
     stemsActive = stemsActive && stems != nullptr && stems->numFrames == a.numFrames;
@@ -941,7 +990,7 @@ void Deck::readResampled (float* outL, float* outR, int n, double step)
 
     // Fast path: straight copy (no resampling, no stems, no loop or skip crossing, no cross-fade running)
     const bool skipInBlock = (nextSkip >= 0 && skipFromF < pos + n + 1.0) || (autoNext >= 0 && autoStartF < pos + n * step + 1.0)
-                          || (autoLoc >= 0 && looping);
+                          || (autoLoc >= 0 && looping) || (segEndF >= 0.0 && segEndF < pos + n * step + 1.0);
     if (! stemsActive && step == 1.0 && pos == std::floor (pos) && pos >= 0 && xfRemain == 0 && ! skipInBlock
         && (int64_t) pos + n < a.numFrames && (! looping || pos + n < loopOutF || pos >= loopOutF))
     {
@@ -988,6 +1037,35 @@ void Deck::readResampled (float* outL, float* outR, int n, double step)
                 jumpedFrom = pos;
                 pos = loopInF + std::fmod (pos - loopInF, loopOutF - loopInF);
             }
+        }
+        if (segEndF >= 0.0 && pos >= segEndF)
+        {
+            // End of this stretch of the play map: on to the next (a repeat jumps back, a rearrange jumps anywhere).
+            const double over = pos - segEndF;
+            if (playSeg + 1 < numSeg)
+            {
+                ++playSeg;
+                const double ns = map[(size_t) playSeg].start * srcRate;
+                if (std::abs (ns - segEndF) > 1.0)
+                {
+                    if (jumpedFrom < 0.0) jumpedFrom = pos;
+                    pos = ns + over;
+                }
+                segEndF = map[(size_t) playSeg].end * srcRate;
+            }
+            else
+            {
+                // The plan has played out: that's the end of the track.
+                if (map.back().end * srcRate < (double) a.numFrames - srcRate * 0.05)
+                {
+                    if (jumpedFrom < 0.0) jumpedFrom = pos;
+                    pos = (double) a.numFrames - 1.0;
+                }
+                playSeg = -1;
+                segEndF = -1.0;
+            }
+            if (skipping) findNextSkip();
+            findNextAuto();
         }
         if (nextSkip >= 0 && pos >= skipFromF)
         {
@@ -1225,6 +1303,8 @@ void Deck::publish()
     }
     for (size_t s = 0; s < 4; ++s)
         pub.stemGain[s] = stemMuted[s] ? 0.0f : stemTarget[s];
+    for (size_t s = 0; s < 4; ++s) pub.stemAuto[s] = stemAutoNow[s];
+    pub.playSegment = playSeg;
 
     for (int i = 0; i < maxLocators; ++i)
     {

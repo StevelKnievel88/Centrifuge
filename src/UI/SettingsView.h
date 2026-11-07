@@ -9,8 +9,10 @@ namespace orbit
 class SettingsView : public juce::Component
 {
 public:
+    /** stemsOnly: just the STEMS section (shown on the Stems page); otherwise everything else. */
     SettingsView (AppSettings& settings, AudioEngine& engine, std::function<void()> onChanged,
-                  std::function<void()> onReloadLibrary);
+                  std::function<void()> onReloadLibrary, bool stemsOnly = false);
+    int preferredHeight() const;
     ~SettingsView() override;
 
     void resized() override;

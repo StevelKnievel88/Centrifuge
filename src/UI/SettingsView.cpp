@@ -11,8 +11,8 @@ namespace orbit
 class SettingsView::Content : public juce::Component, private juce::ChangeListener
 {
 public:
-    Content (AppSettings& s, AudioEngine& e, std::function<void()> changed, std::function<void()> reload)
-        : settings (s), engine (e), onChanged (std::move (changed)), onReload (std::move (reload)),
+    Content (AppSettings& s, AudioEngine& e, std::function<void()> changed, std::function<void()> reload, bool stemsPage)
+        : settings (s), engine (e), onChanged (std::move (changed)), onReload (std::move (reload)), stemsOnly (stemsPage),
           deviceSelector (e.getDeviceManager(), 0, 0, 2, 12, false, false, true, false)
     {
         addSection ("AUDIO OUTPUT");
@@ -89,6 +89,10 @@ public:
                 safe->onChanged();
             });
         };
+        add (&followDeck, 28, {});
+        followDeck.setButtonText ("Single colour follows each deck's colour (click a deck's number to change it)");
+        followDeck.setToggleState (settings.singleFollowsDeck, juce::dontSendNotification);
+        followDeck.onClick = [this] { settings.singleFollowsDeck = followDeck.getToggleState(); onChanged(); };
         add (&stemLayout, 28, "Stems in the waveform");
         stemLayout.addItemList ({ "Overlaid (one waveform)", "Separate (a row each: drums, bass, inst, vocals)" }, 1);
         stemLayout.setSelectedId (settings.stemsSeparate ? 2 : 1, juce::dontSendNotification);
@@ -125,9 +129,9 @@ public:
             sl.onValueChange = [this, st] { settings.stemOpacity[(size_t) st] = (float) stemOpacity[(size_t) st].getValue() / 100.0f; onChanged(); };
         }
         add (&foldSkips, 28, {});
-        foldSkips.setButtonText ("Fold skipped sections out of the scrolling waveform");
-        foldSkips.setToggleState (settings.foldSkips, juce::dontSendNotification);
-        foldSkips.onClick = [this] { settings.foldSkips = foldSkips.getToggleState(); onChanged(); };
+        foldSkips.setButtonText ("Edited view on every deck: waveforms show the track as it will play (each deck's EDITED chip switches its own)");
+        foldSkips.setToggleState (settings.editView[0] && settings.editView[1] && settings.editView[2], juce::dontSendNotification);
+        foldSkips.onClick = [this] { const bool on = foldSkips.getToggleState(); settings.editView = { on, on, on }; onChanged(); };
         add (&playhead, 28, "Playhead position (%)");
         setupSlider (playhead, 10.0, 90.0, 1.0, settings.playheadPosition * 100.0);
         playhead.onValueChange = [this] { settings.playheadPosition = (float) playhead.getValue() / 100.0f; onChanged(); };
@@ -163,6 +167,7 @@ public:
         add (&stemThreads, 28, "CPU threads (0 = auto)");
         add (&modelPath, 28, "Model file");
         add (&cachePath, 28, "Stem folder");
+        addSection ("LIBRARY (MORE)");
         add (&mp3Offset, 28, "MP3 grid offset (ms)");
 
         // --- values -------------------------------------------------------------
@@ -239,7 +244,7 @@ public:
     /** Values that can also be changed from the play page. */
     void refreshValues()
     {
-        foldSkips.setToggleState (settings.foldSkips, juce::dontSendNotification);
+        foldSkips.setToggleState (settings.editView[0] && settings.editView[1] && settings.editView[2], juce::dontSendNotification);
         playhead.setValue (settings.playheadPosition * 100.0, juce::dontSendNotification);
         zoom.setValue (settings.visibleSeconds, juce::dontSendNotification);
     }
@@ -325,9 +330,18 @@ public:
 private:
     struct Row { juce::Component* comp; int height; juce::String label; juce::Rectangle<int> labelBounds; };
 
-    void addSection (const juce::String& title) { rows.push_back ({ nullptr, 0, title, {} }); }
+    // The Stems page shows only the STEMS section; the Settings page everything else.
+    bool stemsOnly = false;
+    bool inStems = false;
+    bool showing() const { return inStems == stemsOnly; }
+    void addSection (const juce::String& title)
+    {
+        inStems = title == "STEMS";
+        if (showing()) rows.push_back ({ nullptr, 0, title, {} });
+    }
     void add (juce::Component* c, int h, const juce::String& label)
     {
+        if (! showing()) return;
         addAndMakeVisible (c);
         rows.push_back ({ c, h, label, {} });
         if (auto* t = dynamic_cast<juce::TextEditor*> (c)) t->setFont (Theme::font (13.5f));
@@ -387,7 +401,7 @@ private:
     PairRow overviewRow;
     juce::TextButton colourButton;
     juce::ComboBox deck1Out, deck2Out, previewOut, fps, analysisRange, keyNotation, stemLayout;
-    juce::ToggleButton sumToMaster, leds, stemsOnLoad, stemsGpu, foldSkips, quantize;
+    juce::ToggleButton sumToMaster, leds, stemsOnLoad, stemsGpu, foldSkips, quantize, followDeck;
     juce::TextEditor dbPath, dbKey, usbFolder, modelPath, cachePath;
     Resizer dbButtons;
     juce::ComboBox qualityOnLoad, qualityBatch;
@@ -474,9 +488,9 @@ private:
     std::unique_ptr<juce::FileChooser> chooser;
 };
 
-SettingsView::SettingsView (AppSettings& s, AudioEngine& e, std::function<void()> changed, std::function<void()> reload)
+SettingsView::SettingsView (AppSettings& s, AudioEngine& e, std::function<void()> changed, std::function<void()> reload, bool stemsOnly)
 {
-    content = std::make_unique<Content> (s, e, std::move (changed), std::move (reload));
+    content = std::make_unique<Content> (s, e, std::move (changed), std::move (reload), stemsOnly);
     viewport.setViewedComponent (content.get(), false);
     viewport.setScrollBarsShown (true, false);
     addAndMakeVisible (viewport);
@@ -488,6 +502,11 @@ void SettingsView::refreshRouting() { content->refreshRouting(); }
 void SettingsView::refreshValues() { content->refreshValues(); }
 
 void SettingsView::paint (juce::Graphics&) {}
+
+int SettingsView::preferredHeight() const
+{
+    return content->layout (juce::jmax (400, getWidth() - 40)) + 20;
+}
 
 void SettingsView::resized()
 {

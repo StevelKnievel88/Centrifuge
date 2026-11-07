@@ -101,6 +101,11 @@ void AppSettings::load()
         for (int i = 0; i < juce::jmin (4, arr->size()); ++i) laneShape[(size_t) i / 2][(size_t) i % 2] = juce::jlimit (0, 2, (int) (*arr)[i]);
     num ("overviewStyle", overviewStyle);
     num ("overviewShape", overviewShape);
+    if (auto* ev = v["editView"].getArray())
+        for (int i = 0; i < juce::jmin (3, ev->size()); ++i) editView[(size_t) i] = (bool) (*ev)[i];
+    else if (v.hasProperty ("foldSkips"))
+        editView = { (bool) v["foldSkips"], (bool) v["foldSkips"], (bool) v["foldSkips"] };
+    if (v.hasProperty ("singleFollowsDeck")) singleFollowsDeck = (bool) v["singleFollowsDeck"];
     if (v.hasProperty ("singleColour")) singleColour = (juce::uint32) juce::Colour::fromString (v["singleColour"].toString()).getARGB();
     if (auto* arr = v["stemLayerOrder"].getArray(); arr != nullptr && arr->size() == 4)
     {
@@ -178,6 +183,8 @@ void AppSettings::save() const
     o->setProperty ("overviewStyle", overviewStyle);
     o->setProperty ("overviewShape", overviewShape);
     o->setProperty ("singleColour", juce::Colour (singleColour).toString());
+    o->setProperty ("singleFollowsDeck", singleFollowsDeck);
+    o->setProperty ("editView", juce::Array<juce::var> { editView[0], editView[1], editView[2] });
     o->setProperty ("stemLayerOrder", juce::Array<juce::var> { stemLayerOrder[0], stemLayerOrder[1], stemLayerOrder[2], stemLayerOrder[3] });
     o->setProperty ("stemOpacity", juce::Array<juce::var> { stemOpacity[0], stemOpacity[1], stemOpacity[2], stemOpacity[3] });
     o->setProperty ("foldSkips", foldSkips);

@@ -507,6 +507,72 @@ private:
                 for (int i = 0; i < 4; ++i) ed.addPhrase (AudioEngine::prepDeck, 4.0 + i * 15.0, nm[i], juce::Colours::red);
                 stage = 20;
             }
+            if (juce::SystemStats::getEnvironmentVariable ("CENTRIFUGE_EDITTEST", {}).isNotEmpty())
+            {
+                // Phrases Intro 0-15, Verse 15-30, Chorus 30-45, Outro 45-end; play Intro, Chorus x2, Verse, Outro;
+                // a stem locator (vocals off) at 20 s, a note at 8 s, and an edit version saved.
+                auto& ed = main.getEditor();
+                const int D = AudioEngine::prepDeck;
+                while (! ed.phrases (D).empty()) ed.deletePhrase (D, (int) ed.phrases (D).size() - 1);
+                const char* nm[] = { "Intro", "Verse", "Chorus", "Outro" };
+                for (int i = 0; i < 4; ++i) ed.addPhrase (D, i * 15.0, nm[i], defaultPhraseColour (nm[i]));
+                ed.setPhraseRepeats (D, 2, 2);
+                ed.setArrangement (D, { 0.0, 30.0, 15.0, 45.0 });
+                StemLocator l; l.timeSec = 20.0; l.target = { -1, -1, -1, 0 }; l.fadeBeats = 4.0f;
+                ed.addStemLocator (D, l);
+                NoteLocator n; n.timeSec = 8.0; n.text = "Big vocal sample - kill the bass"; ed.addNote (D, n);
+                ed.saveEditVersion (D, "Extended");
+                const auto& map = main.getEngine().deck (D).getLoadedTrack()->playMap;
+                std::printf ("playmap:");
+                for (auto& sgm : map) std::printf (" [%.1f-%.1f]", sgm.start, sgm.end);
+                std::printf ("\nedit versions: %d active '%s' modified %d\n", (int) ed.editVersionNames (D).size(),
+                             ed.activeEdit (D).toRawUTF8(), (int) ed.activeEditModified (D));
+                std::fflush (stdout);
+                main.getEngine().deck (D).post (Deck::Cmd::seekSeconds, 14.0);
+                main.getEngine().deck (D).post (Deck::Cmd::play);
+                stage = 30;
+                t0 = ticks;
+            }
+        }
+        else if (stage >= 30 && stage < 40)
+        {
+            // Seek just before each join and check where playback goes (ticks are 250 ms)
+            auto& d = main.getEngine().deck (AudioEngine::prepDeck);
+            const auto& st = d.state();
+            const int k = ticks - t0;
+            if (k == 8)
+            {
+                std::printf ("after Intro end -> %.2f s (seg %d), expect ~31 (Chorus, seg 1)\n", st.positionSec.load(), st.playSegment.load());
+                d.post (Deck::Cmd::seekSeconds, 44.0);
+            }
+            if (k == 16)
+            {
+                std::printf ("after Chorus pass 1 -> %.2f s (seg %d), expect ~31 (Chorus again, seg 2)\n", st.positionSec.load(), st.playSegment.load());
+                d.post (Deck::Cmd::seekSeconds, 44.0);
+            }
+            if (k == 24)
+            {
+                std::printf ("after Chorus pass 2 -> %.2f s (seg %d), expect ~16 (Verse, seg 3)\n", st.positionSec.load(), st.playSegment.load());
+                d.post (Deck::Cmd::seekSeconds, 21.0);
+            }
+            if (k == 32)
+            {
+                std::printf ("stem auto at %.2f s: vocals %.2f (expect 0 after the 4-beat fade)\n", st.positionSec.load(), st.stemAuto[3].load());
+                d.post (Deck::Cmd::seekSeconds, 7.5);
+                d.post (Deck::Cmd::pause);
+                main.showPage (4);
+            }
+            if (k == 36)
+            {
+                snap ("11_edits_prep.png");
+                main.showPage (0);
+                // deck 1 has the same track: it takes the edits too; stand just before the note
+                main.getEngine().deck (0).post (Deck::Cmd::pause);
+                main.getEngine().deck (0).post (Deck::Cmd::seekSeconds, 7.6);
+            }
+            if (k == 39) snap ("12_edits_play.png");
+            if (k == 40) main.showPage (2);
+            if (k == 42) { snap ("13_stems_page.png"); std::printf ("edit test done\n"); std::fflush (stdout); stage = 40; }
         }
         else if (stage == 20)
         {

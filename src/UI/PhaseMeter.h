@@ -1,6 +1,7 @@
 #pragma once
 #include "Theme.h"
 #include "../Audio/AudioEngine.h"
+#include "../Audio/TimeFold.h"
 
 namespace orbit
 {
@@ -57,9 +58,25 @@ private:
     {
         auto t = engine.deck (d).getLoadedTrack();
         if (t == nullptr || ! t->grid.isValid()) return -1.0;
-        const double pos = engine.deck (d).state().positionSec.load();
+        const auto& st = engine.deck (d).state();
+        const double pos = st.positionSec.load();
         const auto& beats = t->grid.getBeats();
-        const double b = t->grid.beatPosition (pos);
+        double b = t->grid.beatPosition (pos);
+        // Edited view: count the beats as the track plays (rearranged / repeated phrases, skips left out)
+        if (foldFor)
+            if (auto* f = foldFor (d); f != nullptr && ! f->isEmpty())
+            {
+                const double disp = f->toDisplay (pos, st.playSegment.load());
+                double sum = t->grid.beatPosition (f->pieces.front().src0);
+                for (auto& p : f->pieces)
+                {
+                    const double len = p.src1 - p.src0;
+                    if (disp >= p.disp0 + len) { sum += t->grid.beatPosition (p.src1) - t->grid.beatPosition (p.src0); continue; }
+                    if (disp >= p.disp0) sum += t->grid.beatPosition (p.src0 + (disp - p.disp0)) - t->grid.beatPosition (p.src0);
+                    break;
+                }
+                b = sum;
+            }
         if (b < 0.0) return -1.0;
         return b + (double) (beats.front().beatInBar - 1);   // count from a downbeat
     }
@@ -108,6 +125,10 @@ private:
     }
 
     AudioEngine& engine;
+public:
+    /** The edited view's time map for a deck (or nullptr): the meter then counts beats as the track plays. */
+    std::function<const TimeFold* (int deck)> foldFor;
+private:
     std::array<int, 3> last { -2, -2, -2 }, lastFlash { -1, -1, -1 };
     bool prepOnly = false;
 };

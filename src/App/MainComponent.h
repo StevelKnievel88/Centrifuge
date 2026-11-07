@@ -110,6 +110,7 @@ private:
     MappingView mapping;
     StemsView stemsView;
     SettingsView settingsView;
+    SettingsView stemSettingsView;   // the STEMS settings, on the Stems page
 
     juce::TextButton tabPlay { "PLAY" }, tabMapping { "MAPPING" }, tabStems { "STEMS" }, tabSettings { "SETTINGS" };
     int page = 0;

@@ -32,6 +32,7 @@ public:
     void itemDropped (const SourceDetails&) override { dropHover = false; repaint(); if (onTrackDropped) onTrackDropped (deck); }
     void paintOverChildren (juce::Graphics& g) override
     {
+        paintNote (g);
         if (! dropHover) return;
         g.setColour (psyched::Colours::void_.withAlpha (0.7f));
         g.fillRect (getLocalBounds());
@@ -46,6 +47,9 @@ public:
     std::function<void (int deck, bool hotCue, int index, juce::String currentName)> onRenameCue;
     std::function<void (int deck)> onSetBpm;
     std::function<void (int deck, juce::Colour)> onDeckColour;
+    /** Edited view: the overview (and times) show the track as it will play. */
+    void setEditView (bool on) { if (on != editView) { editView = on; overviewWidth = 0; repaint(); } }
+    std::function<void (int deck)> onEditViewToggled;
 
     /** Overview waveform: style 1 = 3-band, 2 = RGB, 3 = single colour; half = bars from the bottom only. */
     void setOverviewStyle (int style, bool half, juce::Colour single)
@@ -86,6 +90,15 @@ private:
     void showPadMenu (int pad, juce::Rectangle<float> area);
     TrackEditor* editor = nullptr;
     bool gridMode = false;
+    bool editView = true;
+    TimeFold fold;
+    std::vector<std::pair<double, double>> foldMapKey, foldSkipKey;
+    bool foldOnKey = false;
+    int renderedFold = -1;
+    void updateFold();
+    void showEditVersionMenu (juce::Rectangle<float> area);
+    void paintNote (juce::Graphics& g);
+    const NoteLocator* noteShowing (double pos) const;
     bool dropHover = false;
     bool tempoDrag = false;
     double tempoDragStart = 1.0;

@@ -20,6 +20,42 @@ namespace
         return juce::var (o);
     }
 
+    juce::var stemLocVar (const StemLocator& l)
+    {
+        auto* o = new juce::DynamicObject();
+        o->setProperty ("s", r3 (l.timeSec));
+        o->setProperty ("t", juce::Array<juce::var> { l.target[0], l.target[1], l.target[2], l.target[3] });
+        if (l.fadeBeats > 0.0f) o->setProperty ("f", l.fadeBeats);
+        if (l.name.isNotEmpty()) o->setProperty ("n", l.name);
+        return juce::var (o);
+    }
+
+    StemLocator varStemLoc (const juce::var& v)
+    {
+        StemLocator l;
+        l.timeSec = (double) v.getProperty ("s", 0.0);
+        if (auto* t = v["t"].getArray())
+            for (int i = 0; i < juce::jmin (4, t->size()); ++i) l.target[(size_t) i] = juce::jlimit (-1, 1, (int) (*t)[i]);
+        l.fadeBeats = (float) (double) v.getProperty ("f", 0.0);
+        l.name = v.getProperty ("n", {}).toString();
+        return l;
+    }
+
+    juce::var timesVar (const std::vector<double>& v)
+    {
+        juce::Array<juce::var> a;
+        for (auto x : v) a.add (r3 (x));
+        return a;
+    }
+
+    std::vector<double> varTimes (const juce::var& v)
+    {
+        std::vector<double> r;
+        if (auto* a = v.getArray())
+            for (auto& x : *a) r.push_back ((double) x);
+        return r;
+    }
+
     CuePoint varCue (const juce::var& v, CuePoint::Type type, int hot)
     {
         CuePoint c;
@@ -70,10 +106,56 @@ juce::var TrackVersion::toVar() const
             if (p.endSec > p.startSec) po->setProperty ("e", r3 (p.endSec));
             po->setProperty ("n", p.name);
             po->setProperty ("c", p.colour.toString());
+            if (p.repeats > 1) po->setProperty ("r", p.repeats);
             ph.add (juce::var (po));
         }
         o->setProperty ("phr", ph);
     }
+    if (! stemLocs.empty())
+    {
+        juce::Array<juce::var> a;
+        for (auto& l : stemLocs) a.add (stemLocVar (l));
+        o->setProperty ("stl", a);
+    }
+    if (! notes.empty())
+    {
+        juce::Array<juce::var> a;
+        for (auto& n : notes)
+        {
+            auto* no = new juce::DynamicObject();
+            no->setProperty ("s", r3 (n.timeSec));
+            no->setProperty ("t", n.text);
+            no->setProperty ("c", n.colour.toString());
+            a.add (juce::var (no));
+        }
+        o->setProperty ("note", a);
+    }
+    if (! arrangement.empty()) o->setProperty ("arr", timesVar (arrangement));
+    if (! editVersions.empty())
+    {
+        juce::Array<juce::var> a;
+        for (auto& e : editVersions)
+        {
+            auto* eo = new juce::DynamicObject();
+            eo->setProperty ("n", e.name);
+            juce::Array<juce::var> sk;
+            for (auto& k : e.skips) sk.add (juce::Array<juce::var> { r3 (k.first), r3 (k.second) });
+            eo->setProperty ("skip", sk);
+            juce::Array<juce::var> sl;
+            for (auto& l : e.stemLocs) sl.add (stemLocVar (l));
+            eo->setProperty ("stl", sl);
+            eo->setProperty ("arr", timesVar (e.arrangement));
+            juce::Array<juce::var> rp;
+            for (auto& r : e.repeats) rp.add (juce::Array<juce::var> { r3 (r.first), r.second });
+            eo->setProperty ("rep", rp);
+            juce::Array<juce::var> lm;
+            for (auto& m : e.loopModes) lm.add (juce::Array<juce::var> { r3 (m.startSec), m.mode, m.cycles });
+            eo->setProperty ("lm", lm);
+            a.add (juce::var (eo));
+        }
+        o->setProperty ("edits", a);
+    }
+    if (activeEdit.isNotEmpty()) o->setProperty ("edit", activeEdit);
     return juce::var (o);
 }
 
@@ -102,19 +184,119 @@ TrackVersion TrackVersion::fromVar (const juce::var& v)
             x.endSec = p.hasProperty ("e") ? (double) p["e"] : -1.0;
             x.name = p.getProperty ("n", {}).toString();
             x.colour = p.hasProperty ("c") ? juce::Colour::fromString (p["c"].toString()) : defaultPhraseColour (x.name);
+            x.repeats = juce::jlimit (1, 64, (int) p.getProperty ("r", 1));
             list.push_back (x);
         }
         std::sort (list.begin(), list.end(), [] (auto& a, auto& b) { return a.startSec < b.startSec; });
         t.phrases = list;
     }
+    if (auto* a = v["stl"].getArray())
+        for (auto& l : *a) t.stemLocs.push_back (varStemLoc (l));
+    std::sort (t.stemLocs.begin(), t.stemLocs.end(), [] (auto& a, auto& b) { return a.timeSec < b.timeSec; });
+    if (auto* a = v["note"].getArray())
+        for (auto& n : *a)
+        {
+            NoteLocator x;
+            x.timeSec = (double) n.getProperty ("s", 0.0);
+            x.text = n.getProperty ("t", {}).toString();
+            if (n.hasProperty ("c")) x.colour = juce::Colour::fromString (n["c"].toString());
+            t.notes.push_back (x);
+        }
+    std::sort (t.notes.begin(), t.notes.end(), [] (auto& a, auto& b) { return a.timeSec < b.timeSec; });
+    t.arrangement = varTimes (v["arr"]);
+    if (auto* a = v["edits"].getArray())
+        for (auto& ev : *a)
+        {
+            EditVersion e;
+            e.name = ev.getProperty ("n", {}).toString();
+            if (auto* sk = ev["skip"].getArray())
+                for (auto& k : *sk)
+                    if (auto* p = k.getArray(); p != nullptr && p->size() == 2) e.skips.push_back ({ (double) (*p)[0], (double) (*p)[1] });
+            if (auto* sl = ev["stl"].getArray())
+                for (auto& l : *sl) e.stemLocs.push_back (varStemLoc (l));
+            e.arrangement = varTimes (ev["arr"]);
+            if (auto* rp = ev["rep"].getArray())
+                for (auto& r : *rp)
+                    if (auto* p = r.getArray(); p != nullptr && p->size() == 2) e.repeats.push_back ({ (double) (*p)[0], (int) (*p)[1] });
+            if (auto* lm = ev["lm"].getArray())
+                for (auto& m : *lm)
+                    if (auto* p = m.getArray(); p != nullptr && p->size() == 3) e.loopModes.push_back ({ (double) (*p)[0], (int) (*p)[1], (int) (*p)[2] });
+            t.editVersions.push_back (e);
+        }
+    t.activeEdit = v.getProperty ("edit", {}).toString();
     std::sort (t.memory.begin(), t.memory.end(), [] (auto& a, auto& b) { return a.startSec < b.startSec; });
     return t;
+}
+
+namespace
+{
+    bool closeTo (double a, double b) { return std::abs (a - b) < 0.05; }
+}
+
+EditVersion TrackVersion::snapshotEdit (const juce::String& name) const
+{
+    EditVersion e;
+    e.name = name;
+    e.skips = skips;
+    e.stemLocs = stemLocs;
+    e.arrangement = arrangement;
+    if (phrases)
+        for (auto& p : *phrases)
+            if (p.repeats > 1) e.repeats.push_back ({ p.startSec, p.repeats });
+    for (auto& m : memory)
+        if (m.isLoop() && m.loopMode != 0) e.loopModes.push_back ({ m.startSec, m.loopMode, m.cycles });
+    return e;
+}
+
+void TrackVersion::applyEdit (const EditVersion& e)
+{
+    skips = e.skips;
+    stemLocs = e.stemLocs;
+    arrangement = e.arrangement;
+    if (phrases)
+        for (auto& p : *phrases)
+        {
+            p.repeats = 1;
+            for (auto& r : e.repeats) if (closeTo (r.first, p.startSec)) p.repeats = r.second;
+        }
+    for (auto& m : memory)
+    {
+        if (! m.isLoop()) continue;
+        m.loopMode = 0;
+        for (auto& l : e.loopModes) if (closeTo (l.startSec, m.startSec)) { m.loopMode = l.mode; m.cycles = l.cycles; }
+    }
+    activeEdit = e.name;
+}
+
+void TrackVersion::clearEdits()
+{
+    EditVersion none;
+    applyEdit (none);
+    activeEdit = {};
+}
+
+bool TrackVersion::editsMatch (const EditVersion& e) const
+{
+    auto a = snapshotEdit (e.name);
+    auto toJ = [] (const EditVersion& x)
+    {
+        TrackVersion t;
+        t.editVersions.push_back (x);
+        return juce::JSON::toString (t.toVar()["edits"], true);
+    };
+    return toJ (a) == toJ (e);
 }
 
 TrackVersion TrackVersion::limitedForRekordbox() const
 {
     TrackVersion r = *this;
     r.skips.clear();
+    r.stemLocs.clear();
+    r.notes.clear();
+    r.arrangement.clear();
+    r.editVersions.clear();
+    r.activeEdit = {};
+    if (r.phrases) for (auto& p : *r.phrases) p.repeats = 1;
     for (auto& h : r.hot)
         if (h && ! h->colour.isTransparent())
             h->colour = rekordboxHotCueColour (nearestRekordboxHotCueCode (h->colour));

@@ -42,6 +42,7 @@ public:
     static LoadedTrack::Ptr withVersion (const LoadedTrack& base, const TrackVersion& v);
     /** The grid and cues a loaded track carries, as a library version. */
     static TrackVersion versionOf (const LoadedTrack& t);
+    static std::vector<PlaySegment> compilePlayMap (const std::vector<Phrase>& phrases, const std::vector<double>& arrangement, double length);
 
 private:
     AudioEngine& engine;
