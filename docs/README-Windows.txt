@@ -115,12 +115,18 @@ PREP page (F5)
   editor, hot cues A-H, loops, locators, skips and beat jumps.
 - On the right, three tabs:
     LOCATORS  every locator, loop locator and skip, in track order. Click
-              the loop icon to step normal > active > cycle.
+              a loop locator's mode text (loop / active / cycle) to step
+              through the three.
     HOT CUES  A-H with their names.
     PHRASES   the track's sections. + ADD PHRASE AT PLAYHEAD (Intro, Verse,
               Build, Drop, Breakdown, Chorus, Bridge, Outro or your own
               name); right-click to rename, recolour, move or delete.
-  Click any entry to go there; right-click for more.
+  In every tab: click an entry to go there; click its name to rename it
+  right there (Enter keeps it, Esc cancels); click its icon to change its
+  colour; the x on the far right deletes it; right-click for more.
+  Select several like in Windows Explorer - ctrl + click adds / removes
+  one, shift + click selects a range, ctrl + A selects all - then click an
+  icon (or right-click) to colour them all at once, or press Delete.
 - The phrase meter in the top bar shows just PREP while you're on PREP.
 - Load a track: double-click it while on PREP, drag it onto PREP, or
   right-click it in the browser > Load into PREP.
@@ -195,3 +201,10 @@ Files
 Settings and mapping:  %APPDATA%\Centrifuge\
 Library:               %APPDATA%\Centrifuge\library.db
 Stem cache:            %LOCALAPPDATA%\Centrifuge\Stems (about 25 MB per track)
+
+Stems: if the graphics card resets
+----------------------------------
+- If Windows resets the graphics card during Best (it took too long or ran
+  out of graphics memory - "GPU device instance has been suspended"),
+  Centrifuge now finishes the track at High and uses High for the rest of
+  the session. If the card resets again, it carries on with the CPU.

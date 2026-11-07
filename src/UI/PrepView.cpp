@@ -25,6 +25,7 @@ namespace
 PrepView::PrepView (AudioEngine& e, TrackEditor& ed) : engine (e), editor (ed)
 {
     setOpaque (true);
+    setWantsKeyboardFocus (true);   // Delete / Esc / Ctrl+A act on the list selection
     startTimerHz (30);
 }
 
@@ -58,7 +59,7 @@ void PrepView::timerCallback()
     const int s = st.trackSerial.load();
     if (s != serial || st.trackDataVersion.load() != dataVersion)
     {
-        if (s != serial) { overviewWidth = 0; listScroll = 0; }
+        if (s != serial) { overviewWidth = 0; listScroll = 0; selection.clear(); anchor = { -1, -1 }; }
         serial = s;
         dataVersion = st.trackDataVersion.load();
         track = s != 0 ? deck().getLoadedTrack() : nullptr;
@@ -482,9 +483,9 @@ void PrepView::paintList (juce::Graphics& g, juce::Rectangle<float> r)
         }
     }
     r.removeFromTop (6.0f);
-    const char* hints[] = { "locators, loops & skips in track order - click to go there, right-click for more",
-                            "click to go there, right-click to rename / recolour / delete",
-                            "click to go there, right-click to rename / recolour / move / delete" };
+    const char* hints[] = { "click: go there - icon: colour - ctrl / shift: select",
+                            "click: go there - icon: colour - ctrl / shift: select",
+                            "click: go there - icon: colour - ctrl / shift: select" };
     psyched::paintLabel (g, hints[listTab], r.removeFromTop (14.0f), juce::Justification::centredLeft, Theme::textFaint, 9.0f);
     r.removeFromTop (6.0f);
 
@@ -497,6 +498,11 @@ void PrepView::paintList (juce::Graphics& g, juce::Rectangle<float> r)
 
     const auto& st = deck().state();
     const auto entries = listEntries();
+    nameRects.clear();
+    // forget selected entries that no longer exist
+    for (auto it = selection.begin(); it != selection.end();)
+        it = std::any_of (entries.begin(), entries.end(), [&] (auto& e) { return e.kind == it->first && e.index == it->second; })
+           ? std::next (it) : selection.erase (it);
     if (entries.empty())
     {
         const char* empty[] = { "Nothing yet. LOCATOR adds a locator (or a loop locator when a loop is set at the playhead); "
@@ -526,11 +532,31 @@ void PrepView::paintList (juce::Graphics& g, juce::Rectangle<float> r)
             const double end = e.index + 1 < (int) phrases.size() ? phrases[(size_t) e.index + 1].startSec : st.lengthSec.load();
             here = now >= e.time && now < end;
         }
-        g.setColour (here ? Theme::accent.withAlpha (0.12f) : (k % 2 ? Theme::panel : juce::Colour (0xff0d0c17)));
+        const bool sel = selection.count ({ e.kind, e.index }) > 0;
+        g.setColour (sel ? Theme::sync.withAlpha (0.28f) : here ? Theme::accent.withAlpha (0.12f) : (k % 2 ? Theme::panel : juce::Colour (0xff0d0c17)));
         g.fillRect (row);
-        regions.push_back ({ row, juce::String (e.kind) + ":" + juce::String (e.index), 4 });
+        if (sel)
+        {
+            g.setColour (Theme::sync);
+            g.fillRect (row.getX(), row.getY(), 2.0f, row.getHeight());
+        }
+        const auto key = juce::String (e.kind) + ":" + juce::String (e.index);
+        regions.push_back ({ row, key, 4 });
+
+        // x on the far right deletes the entry
+        {
+            auto xr = row.removeFromRight (22.0f);
+            regions.push_back ({ xr, key, 7 });
+            const bool hover = xr.contains (getMouseXYRelative().toFloat());
+            g.setColour (hover ? Theme::bad : Theme::textFaint);
+            const auto c = xr.getCentre();
+            const float d = 3.5f;
+            g.drawLine (c.x - d, c.y - d, c.x + d, c.y + d, hover ? 1.8f : 1.3f);
+            g.drawLine (c.x - d, c.y + d, c.x + d, c.y - d, hover ? 1.8f : 1.3f);
+        }
 
         auto icon = row.removeFromLeft (28.0f).reduced (4.0f, 4.0f);
+        if (e.kind != 1) regions.push_back ({ icon.expanded (3.0f), key, 6 });   // click the icon: colour
         juce::String detail, name;
         if (e.kind == 1)
         {
@@ -578,8 +604,6 @@ void PrepView::paintList (juce::Graphics& g, juce::Rectangle<float> r)
             const int mode = st.locMode[(size_t) e.index].load();
             if (en > s)
             {
-                // The loop icon is a button: click it to step normal -> active -> cycle
-                regions.push_back ({ icon.expanded (3.0f), "loopmode." + juce::String (e.index), 0 });
                 if (mode == 2)
                 {
                     g.setColour (c);
@@ -617,10 +641,30 @@ void PrepView::paintList (juce::Graphics& g, juce::Rectangle<float> r)
         g.drawText (formatTime (e.time), row.removeFromLeft (58.0f), juce::Justification::centredLeft);
         g.setColour (Theme::textDim);
         g.setFont (psyched::Fonts::value (10.5f));
-        g.drawText (detail, row.removeFromRight (110.0f).withTrimmedRight (4.0f), juce::Justification::centredRight, true);
+        auto detailArea = row.removeFromRight (104.0f).withTrimmedRight (4.0f);
+        if (e.kind == 0 && st.locEnd[(size_t) e.index].load() > st.locStart[(size_t) e.index].load())
+        {
+            // a loop locator's mode ("loop / active / cycle"): click it to step through the three
+            regions.push_back ({ detailArea, key, 8 });
+            if (detailArea.contains (getMouseXYRelative().toFloat())) g.setColour (Theme::text);
+        }
+        g.drawText (detail, detailArea, juce::Justification::centredRight, true);
         g.setColour (Theme::text);
         g.setFont (Theme::font (12.5f, true));
-        g.drawText (name, row, juce::Justification::centredLeft, true);
+        if (e.kind != 1)
+        {
+            // the name is editable: click it to rename here
+            nameRects[{ e.kind, e.index }] = row;
+            regions.push_back ({ row, key, 9 });
+            if (row.contains (getMouseXYRelative().toFloat()) && renaming != EntryKey { e.kind, e.index })
+            {
+                g.setColour (Theme::line);
+                g.drawRect (row.reduced (0.0f, 3.0f).withTrimmedLeft (-4.0f), 1.0f);
+                g.setColour (Theme::text);
+            }
+        }
+        if (renaming != EntryKey { e.kind, e.index })
+            g.drawText (name, row, juce::Justification::centredLeft, true);
     }
 }
 
@@ -644,7 +688,7 @@ void PrepView::action (const juce::String& id, bool down)
         return;
     }
     if (! down) return;
-    if (id.startsWith ("tab.")) { listTab = id.getTrailingIntValue(); listScroll = 0; repaint(); return; }
+    if (id.startsWith ("tab.")) { listTab = id.getTrailingIntValue(); listScroll = 0; selection.clear(); anchor = { -1, -1 }; repaint(); return; }
     if (track == nullptr && ! id.startsWith ("zoom.")) return;
     if (id.startsWith ("loopmode."))
     {
@@ -725,24 +769,44 @@ void PrepView::mouseDown (const juce::MouseEvent& e)
         scrubStartX = e.position.x;
         return;
     }
-    if (r->kind == 4)
+    if (r->kind == 4 || r->kind == 6 || r->kind == 7 || r->kind == 8 || r->kind == 9)
     {
+        grabKeyboardFocus();
         const int kind = r->action.upToFirstOccurrenceOf (":", false, false).getIntValue();
         const int idx = r->action.fromFirstOccurrenceOf (":", false, false).getIntValue();
-        double time = 0.0;
-        if (kind == 0) time = st.locStart[(size_t) idx].load();
-        else if (kind == 1) time = st.skipFrom[(size_t) idx].load();
-        else if (kind == 2) time = st.hotStart[(size_t) idx].load();
-        else if (idx < (int) editor.phrases (deckIndex).size()) time = editor.phrases (deckIndex)[(size_t) idx].startSec;
-        const ListEntry entry { time, kind, idx };
+        const auto entry = entryFor (kind, idx);
         if (kind == 3) phraseSelected = idx;
+        if (r->kind == 7 && ! e.mods.isPopupMenu()) { deleteEntries ({ entry }); return; }
+        if (r->kind == 9 && ! e.mods.isPopupMenu() && ! e.mods.isCtrlDown() && ! e.mods.isShiftDown())
+        {
+            selection = { { kind, idx } };
+            anchor = { kind, idx };
+            startRename (entry);
+            return;
+        }
+        if (r->kind == 8 && ! e.mods.isPopupMenu())
+        {
+            const int mode = (st.locMode[(size_t) idx].load() + 1) % 3;
+            deck().post (Deck::Command { Deck::Cmd::locatorLoopMode, (double) mode, idx, true, nullptr, 0, (double) st.locCycles[(size_t) idx].load() });
+            return;
+        }
+        if (r->kind == 6 && ! e.mods.isPopupMenu() && ! e.mods.isCtrlDown() && ! e.mods.isShiftDown())
+        {
+            if (selection.count ({ kind, idx }) == 0) { selection = { { kind, idx } }; anchor = { kind, idx }; }
+            repaint();
+            showColourMenu (entry, r->r);
+            return;
+        }
         if (e.mods.isPopupMenu())
         {
+            if (selection.count ({ kind, idx }) == 0) { selection = { { kind, idx } }; anchor = { kind, idx }; repaint(); }
+            if (selection.size() > 1) { showColourMenu (entry, r->r); return; }   // several selected: colour / delete them all
             if (kind == 2) showPadMenu (idx, r->r);
             else if (kind == 3) showPhraseMenu (idx, r->r);
             else showEntryMenu (entry, r->r);
+            return;
         }
-        else post (Deck::Cmd::seekSeconds, juce::jmax (0.0, entry.time));
+        clickEntry (entry, e.mods);
         return;
     }
     if (r->kind == 5) { if (onSetBpm) onSetBpm (deckIndex); return; }
@@ -787,6 +851,7 @@ void PrepView::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheel
 {
     if (listArea.contains (e.getPosition()))
     {
+        if (nameEditor != nullptr) finishRename (true);
         listScroll += w.deltaY < 0 ? 1 : -1;
         repaint (listArea);
         return;
@@ -828,7 +893,7 @@ void PrepView::showEntryMenu (const ListEntry& entry, juce::Rectangle<float> are
         if (safe == nullptr || r == 0) return;
         auto& d = safe->deck();
         if (r == 1) { d.post (entry.kind == 1 ? Deck::Cmd::skipDelete : Deck::Cmd::locatorDelete, 0.0, entry.index); return; }
-        if (r == 2 && safe->onRenameCue) { safe->onRenameCue (deckIndex, false, entry.index, safe->editor.cueName (deckIndex, false, entry.index)); return; }
+        if (r == 2) { safe->startRename (entry); return; }
         if (auto [mode, n] = loopModeFromMenu (r, 200, cycles); mode >= 0)
         {
             d.post (Deck::Command { Deck::Cmd::locatorLoopMode, (double) mode, entry.index, true, nullptr, 0, (double) n });
@@ -858,7 +923,7 @@ void PrepView::showPadMenu (int pad, juce::Rectangle<float> area)
         if (safe == nullptr || r == 0) return;
         auto setColour = [safe, pad] (juce::Colour c) { if (safe != nullptr) safe->deck().post (Deck::Cmd::hotCueColour, (double) c.getARGB(), pad); };
         if (r == 1) safe->deck().post (Deck::Cmd::hotCueDelete, 0.0, pad);
-        else if (r == 2 && safe->onRenameCue) safe->onRenameCue (deckIndex, true, pad, safe->editor.cueName (deckIndex, true, pad));
+        else if (r == 2) safe->startRename (safe->entryFor (2, pad));
         else if (r >= 100 && r < 116) setColour (juce::Colour (rekordboxCueColours()[(size_t) (r - 100)].argb));
         else if (r == 116) ColourPickerBubble::show (screen, current, setColour);
     });
@@ -920,18 +985,226 @@ void PrepView::showPhraseMenu (int index, juce::Rectangle<float> area)
         auto& ed = safe->editor;
         auto setColour = [safe, index, p] (juce::Colour c) { if (safe != nullptr) { auto q = p; q.colour = c; safe->editor.setPhrase (deckIndex, index, q); } };
         if (r == 1) ed.deletePhrase (deckIndex, index);
-        else if (r == 2)
-            safe->askText ("Rename phrase", p.name, [safe, index, p] (juce::String n)
-            {
-                if (safe == nullptr || n.isEmpty()) return;
-                auto q = p;
-                q.name = n;
-                safe->editor.setPhrase (deckIndex, index, q);
-            });
+        else if (r == 2) safe->startRename (safe->entryFor (3, index));
         else if (r == 3) { auto q = p; q.startSec = safe->deck().state().positionSec.load(); ed.setPhrase (deckIndex, index, q); }
         else if (r >= 100 && r < 116) setColour (juce::Colour (rekordboxCueColours()[(size_t) (r - 100)].argb));
         else if (r == 116) ColourPickerBubble::show (screen, p.colour, setColour);
     });
+}
+
+PrepView::ListEntry PrepView::entryFor (int kind, int idx) const
+{
+    const auto& st = engine.deck (deckIndex).state();
+    double time = 0.0;
+    if (kind == 0) time = st.locStart[(size_t) idx].load();
+    else if (kind == 1) time = st.skipFrom[(size_t) idx].load();
+    else if (kind == 2) time = st.hotStart[(size_t) idx].load();
+    else if (idx < (int) editor.phrases (deckIndex).size()) time = editor.phrases (deckIndex)[(size_t) idx].startSec;
+    return { time, kind, idx };
+}
+
+void PrepView::clickEntry (const ListEntry& e, const juce::ModifierKeys& mods)
+{
+    const EntryKey key { e.kind, e.index };
+    if (mods.isShiftDown() && anchor.first >= 0)
+    {
+        // everything from the anchor to here, in list order
+        const auto list = listEntries();
+        int a = -1, b = -1;
+        for (int i = 0; i < (int) list.size(); ++i)
+        {
+            if (list[(size_t) i].kind == anchor.first && list[(size_t) i].index == anchor.second) a = i;
+            if (list[(size_t) i].kind == e.kind && list[(size_t) i].index == e.index) b = i;
+        }
+        if (a >= 0 && b >= 0)
+        {
+            if (! mods.isCtrlDown()) selection.clear();
+            for (int i = juce::jmin (a, b); i <= juce::jmax (a, b); ++i)
+                selection.insert ({ list[(size_t) i].kind, list[(size_t) i].index });
+            repaint();
+            return;
+        }
+    }
+    if (mods.isCtrlDown() || mods.isCommandDown())
+    {
+        if (selection.count (key)) selection.erase (key); else selection.insert (key);
+        anchor = key;
+        repaint();
+        return;
+    }
+    selection = { key };
+    anchor = key;
+    post (Deck::Cmd::seekSeconds, juce::jmax (0.0, e.time));
+    repaint();
+}
+
+std::vector<PrepView::ListEntry> PrepView::targetsFor (const ListEntry& e) const
+{
+    if (selection.count ({ e.kind, e.index }) == 0) return { e };
+    std::vector<ListEntry> v;
+    for (auto& k : selection) v.push_back (entryFor (k.first, k.second));
+    return v;
+}
+
+juce::Colour PrepView::colourOf (const ListEntry& e) const
+{
+    const auto& st = engine.deck (deckIndex).state();
+    if (e.kind == 0) return juce::Colour (st.locColour[(size_t) e.index].load());
+    if (e.kind == 2) return juce::Colour (st.hotColour[(size_t) e.index].load());
+    if (e.kind == 3 && e.index < (int) editor.phrases (deckIndex).size()) return editor.phrases (deckIndex)[(size_t) e.index].colour;
+    return {};
+}
+
+void PrepView::applyColour (const std::vector<ListEntry>& targets, juce::Colour c)
+{
+    for (auto& t : targets)
+    {
+        if (t.kind == 0) deck().post (Deck::Cmd::locatorColour, (double) c.getARGB(), t.index);
+        else if (t.kind == 2) deck().post (Deck::Cmd::hotCueColour, (double) c.getARGB(), t.index);
+        else if (t.kind == 3 && t.index < (int) editor.phrases (deckIndex).size())
+        {
+            auto p = editor.phrases (deckIndex)[(size_t) t.index];
+            p.colour = c;
+            editor.setPhrase (deckIndex, t.index, p);
+        }
+    }
+    repaint();
+}
+
+void PrepView::deleteEntries (std::vector<ListEntry> targets)
+{
+    // Highest index first, so deleting one doesn't move the others
+    std::sort (targets.begin(), targets.end(), [] (auto& a, auto& b) { return a.kind != b.kind ? a.kind < b.kind : a.index > b.index; });
+    for (auto& t : targets)
+    {
+        if (t.kind == 0) deck().post (Deck::Cmd::locatorDelete, 0.0, t.index);
+        else if (t.kind == 1) deck().post (Deck::Cmd::skipDelete, 0.0, t.index);
+        else if (t.kind == 2) deck().post (Deck::Cmd::hotCueDelete, 0.0, t.index);
+        else if (t.kind == 3) editor.deletePhrase (deckIndex, t.index);
+    }
+    selection.clear();
+    anchor = { -1, -1 };
+    repaint();
+}
+
+void PrepView::showColourMenu (const ListEntry& e, juce::Rectangle<float> area)
+{
+    const auto targets = targetsFor (e);
+    std::vector<ListEntry> colourable;
+    for (auto& t : targets) if (t.kind != 1) colourable.push_back (t);
+    juce::PopupMenu m;
+    m.addSectionHeader (targets.size() > 1 ? juce::String ((int) targets.size()) + " selected" : juce::String ("Colour"));
+    const auto current = colourable.empty() ? juce::Colour() : colourOf (colourable.front());
+    if (! colourable.empty()) addCueColourItems (m, 100, current);
+    if (targets.size() > 1)
+    {
+        m.addSeparator();
+        m.addItem (1, "Delete all " + juce::String ((int) targets.size()) + "   (Delete key)");
+    }
+    const auto screen = localAreaToGlobal (area.toNearestInt());
+    juce::Component::SafePointer<PrepView> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (screen),
+                     [safe, targets, colourable, screen, current] (int r)
+    {
+        if (safe == nullptr || r == 0) return;
+        if (r == 1) { safe->deleteEntries (targets); return; }
+        auto set = [safe, colourable] (juce::Colour c) { if (safe != nullptr) safe->applyColour (colourable, c); };
+        if (r >= 100 && r < 116) set (juce::Colour (rekordboxCueColours()[(size_t) (r - 100)].argb));
+        else if (r == 116) ColourPickerBubble::show (screen, current, set);
+    });
+}
+
+juce::String PrepView::nameOf (const ListEntry& e) const
+{
+    if (e.kind == 0) return editor.cueName (deckIndex, false, e.index);
+    if (e.kind == 2) return editor.cueName (deckIndex, true, e.index);
+    if (e.kind == 3 && e.index < (int) editor.phrases (deckIndex).size()) return editor.phrases (deckIndex)[(size_t) e.index].name;
+    return {};
+}
+
+void PrepView::startRename (const ListEntry& e)
+{
+    if (e.kind == 1) return;
+    if (nameEditor != nullptr) finishRename (true);
+    // make sure the row is visible, so there's a place to type
+    if (nameRects.find ({ e.kind, e.index }) == nameRects.end())
+    {
+        const auto list = listEntries();
+        for (int i = 0; i < (int) list.size(); ++i)
+            if (list[(size_t) i].kind == e.kind && list[(size_t) i].index == e.index) listScroll = i;
+        repaint();
+        juce::Component::SafePointer<PrepView> safe (this);
+        juce::MessageManager::callAsync ([safe, e] { if (safe != nullptr && safe->nameRects.count ({ e.kind, e.index })) safe->startRename (e); });
+        return;
+    }
+    renaming = { e.kind, e.index };
+    nameEditor = std::make_unique<juce::TextEditor>();
+    auto& t = *nameEditor;
+    t.setFont (Theme::font (12.5f, true));
+    t.setColour (juce::TextEditor::backgroundColourId, psyched::Colours::void_);
+    t.setColour (juce::TextEditor::textColourId, Theme::text);
+    t.setColour (juce::TextEditor::outlineColourId, Theme::sync);
+    t.setColour (juce::TextEditor::focusedOutlineColourId, Theme::sync);
+    t.setIndents (4, 3);
+    t.setText (nameOf (e), false);
+    t.setTextToShowWhenEmpty (e.kind == 3 ? "Phrase name" : "Name", Theme::textFaint);
+    t.onReturnKey = [this] { finishRename (true); };
+    t.onEscapeKey = [this] { finishRename (false); };
+    t.onFocusLost = [this] { finishRename (true); };
+    addAndMakeVisible (t);
+    t.setBounds (nameRects[{ e.kind, e.index }].reduced (0.0f, 2.0f).withTrimmedLeft (-4.0f).withTrimmedRight (-2.0f).toNearestInt());
+    t.grabKeyboardFocus();
+    t.selectAll();
+    repaint (listArea);
+}
+
+void PrepView::finishRename (bool apply)
+{
+    if (nameEditor == nullptr) return;
+    const auto key = renaming;
+    const auto text = nameEditor->getText().trim();
+    renaming = { -1, -1 };
+    // removed later: we may be inside one of the editor's own callbacks
+    auto old = std::shared_ptr<juce::TextEditor> (nameEditor.release());
+    old->setVisible (false);
+    juce::MessageManager::callAsync ([old] {});
+    if (apply && key.first >= 0)
+    {
+        const auto e = entryFor (key.first, key.second);
+        if (text != nameOf (e))
+        {
+            if (e.kind == 0) editor.renameCue (deckIndex, false, e.index, text);
+            else if (e.kind == 2) editor.renameCue (deckIndex, true, e.index, text);
+            else if (e.kind == 3 && e.index < (int) editor.phrases (deckIndex).size())
+            {
+                auto p = editor.phrases (deckIndex)[(size_t) e.index];
+                p.name = text;
+                editor.setPhrase (deckIndex, e.index, p);
+            }
+        }
+    }
+    grabKeyboardFocus();
+    repaint (listArea);
+}
+
+bool PrepView::keyPressed (const juce::KeyPress& k)
+{
+
+    if ((k == juce::KeyPress::deleteKey || k == juce::KeyPress::backspaceKey) && ! selection.empty())
+    {
+        std::vector<ListEntry> v;
+        for (auto& s : selection) v.push_back (entryFor (s.first, s.second));
+        deleteEntries (v);
+        return true;
+    }
+    if (k == juce::KeyPress::escapeKey && ! selection.empty()) { selection.clear(); repaint(); return true; }
+    if (k == juce::KeyPress ('a', juce::ModifierKeys::commandModifier, 0))
+    {
+        for (auto& e : listEntries()) selection.insert ({ e.kind, e.index });
+        repaint();
+        return true;
+    }
+    return false;
 }
 
 } // namespace orbit

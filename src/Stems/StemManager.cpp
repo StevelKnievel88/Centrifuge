@@ -187,7 +187,7 @@ bool StemManager::ensureModel (StemQuality quality, juce::String& error)
     o.modelFile = s.modelFile;
     o.findModel = s.findModel;
     o.quality = quality;
-    o.useGpu = s.useGpu;
+    o.useGpu = s.useGpu && ! gpuFailed;
     o.cpuThreads = s.cpuThreads;
 
     {
@@ -196,7 +196,7 @@ bool StemManager::ensureModel (StemQuality quality, juce::String& error)
     }
     const bool ok = separator.load (o, error);
     const juce::ScopedLock sl (statusLock);
-    status.backend = ok ? separator.getBackendDescription() : juce::String ("unavailable");
+    status.backend = ok ? separator.getBackendDescription() + gpuNote : juce::String ("unavailable");
     status.modelAvailable = ok;
     if (! ok) status.lastError = error;
     return ok;
@@ -269,7 +269,8 @@ bool StemManager::processJob (Job& job)
 
     const auto name = job.info.displayArtistTitle();
 
-    const auto wanted = job.kind == Job::Kind::batch ? getSettings().qualityBatch : getSettings().qualityOnLoad;
+    auto wanted = job.kind == Job::Kind::batch ? getSettings().qualityBatch : getSettings().qualityOnLoad;
+    if (bestGpuFailed && wanted == StemQuality::best) wanted = StemQuality::high;
     // Pre-analysis upgrades stems made at a lower quality; anything already as good is left alone.
     if (job.kind == Job::Kind::batch && cachedQuality (job.info) >= (int) achievable (wanted))
         return true;
@@ -302,11 +303,35 @@ bool StemManager::processJob (Job& job)
     }
 
     const juce::String prefix = job.kind == Job::Kind::deck ? "Deck " + juce::String (job.deck + 1) + ": separating " : "Pre-analysing ";
-    const bool ok = separator.separate (*job.audio, *stems, [&] (double p)
+    auto run = [&]
     {
-        setActivity (prefix + name, p);
-        return ! cancelCurrent.load() && ! threadShouldExit();
-    }, error);
+        return separator.separate (*job.audio, *stems, [&] (double p)
+        {
+            setActivity (prefix + name, p);
+            return ! cancelCurrent.load() && ! threadShouldExit();
+        }, error);
+    };
+    bool ok = run();
+
+    // The graphics card was reset by Windows (it took too long or ran out of memory): step down and go again.
+    for (int attempt = 0; ! ok && attempt < 2 && ! cancelCurrent.load() && isGpuDeviceLost (error); ++attempt)
+    {
+        if (separator.getQuality() == StemQuality::best && ! bestGpuFailed)
+        {
+            bestGpuFailed = true;
+            gpuNote = " - Best stopped: the graphics card was reset, so High is used this session";
+            wanted = StemQuality::high;
+        }
+        else
+        {
+            gpuFailed = true;
+            gpuNote = " - the graphics card was reset, so the CPU is used this session";
+        }
+        modelTried = false;
+        error = {};
+        if (! ensureModel (wanted, error)) break;
+        ok = run();
+    }
 
     if (! ok)
     {
@@ -322,6 +347,13 @@ bool StemManager::processJob (Job& job)
     writeCache (job.info, *stems, separator.getQuality());
     setActivity ({}, 0.0);
     return true;
+}
+
+bool StemManager::isGpuDeviceLost (const juce::String& error)
+{
+    // DXGI_ERROR_DEVICE_REMOVED / _HUNG / _RESET, as DirectML reports them
+    return error.containsIgnoreCase ("887A0005") || error.containsIgnoreCase ("887A0006") || error.containsIgnoreCase ("887A0007")
+        || error.containsIgnoreCase ("device instance has been suspended") || error.containsIgnoreCase ("GetDeviceRemovedReason");
 }
 
 //==============================================================================

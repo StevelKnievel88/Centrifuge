@@ -84,6 +84,11 @@ private:
     AudioFileLoader& loader;
     DemucsSeparator separator;
     bool modelTried = false;
+    // The graphics card was reset mid-separation (Windows' driver timeout / out of graphics memory):
+    // Best then runs as High for the rest of the session, and if that resets the card too, the CPU is used.
+    bool bestGpuFailed = false, gpuFailed = false;
+    juce::String gpuNote;
+    static bool isGpuDeviceLost (const juce::String& error);
     StemQuality loadedFor = StemQuality::fast;
 
     mutable juce::CriticalSection lock;
