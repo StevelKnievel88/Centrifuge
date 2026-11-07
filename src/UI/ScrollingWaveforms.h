@@ -34,15 +34,22 @@ public:
     }
     std::function<void (int deck)> onTrackDropped;
     int dropDeck = -1;
-    bool stemsSeparate = false;
-
-    enum LaneStyle { stems = 0, threeBand = 1, rgb = 2, singleColour = 3 };
+    enum LaneStyle { laneOff = -1, stems = 0, threeBand = 1, rgb = 2, singleColour = 3, stemsSplit = 4 };
     struct LaneConfig { int style = threeBand; int shape = StripOptions::full; };
 
-    explicit ScrollingWaveforms (AudioEngine& engine);
+    /** deckIds: the engine decks shown, top to bottom ({ 0, 1 } on the play page, { prepDeck } on PREP). */
+    explicit ScrollingWaveforms (AudioEngine& engine, std::vector<int> deckIds = { 0, 1 });
+    int numSlots() const { return (int) ids.size(); }
     ~ScrollingWaveforms() override;
 
     void setVisibleSeconds (double s);
+    void setZoomRange (double minSeconds, double maxSeconds) { zoomMin = minSeconds; zoomMax = maxSeconds; setVisibleSeconds (visibleSeconds); }
+    /** Dragging the waveform scrubs even while the deck plays (PREP). */
+    void setScrubWhilePlaying (bool b) { scrubWhilePlaying = b; }
+    /** Highlighted phrase in the phrase strip (PREP's list selection); -1 = none. */
+    std::function<int()> selectedPhrase;
+    /** Size for "Add loop locator here" (beats). */
+    std::function<double()> loopBeatsForMenu;
     double getVisibleSeconds() const { return visibleSeconds; }
     void setMaxFps (int fps) { maxFps = juce::jlimit (15, 240, fps); }
     void setLanes (int deck, LaneConfig top, LaneConfig bottom);
@@ -59,8 +66,6 @@ public:
     bool getEditView (int deck) const { return editView[(size_t) deck]; }
     /** Display time (edited view) of a deck's playhead, and the edited timeline's length. */
     const TimeFold& foldFor (int deck) const { return decks[(size_t) deck].fold; }
-    /** Stems each in their own row (true) instead of overlaid. */
-    void setStemsSeparate (bool b) { if (b != stemsSeparate) { stemsSeparate = b; forceRedraw(); } }
     void setStemsHidden (bool h) { stemsHidden = h; needsRedraw = true; }
     bool getStemsHidden() const { return stemsHidden; }
     void setPlayheadPosition (float fraction) { playhead = juce::jlimit (0.1f, 0.9f, fraction); needsRedraw = true; }
@@ -126,7 +131,12 @@ private:
     juce::String laneName (int deck, int lane) const;
 
     AudioEngine& engine;
+    std::vector<int> ids;
     std::array<DeckView, 2> decks;
+    double zoomMin = 1.0, zoomMax = 60.0;
+    bool scrubWhilePlaying = false;
+    int engineDeck (int slot) const { return ids[(size_t) slot]; }
+    bool hasBottomLane (int slot) const { return lanes[(size_t) slot][1].style != laneOff; }
     juce::ThreadPool stemWavePool { 2 };
 
     double visibleSeconds = 10.0;

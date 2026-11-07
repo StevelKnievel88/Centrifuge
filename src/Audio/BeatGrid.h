@@ -92,6 +92,23 @@ public:
         return timeAtBeat (std::round (beatPosition (t)));
     }
 
+    /** Calls fn (timeSec, beatInBar, beatIndex) for every beat from t0 to t1 - carried on at the first / last tempo
+        before the track's first beat and after its last, so the grid also shows where the track is silent. */
+    template <typename Fn>
+    void forEachBeat (double t0, double t1, Fn&& fn) const
+    {
+        if (! isValid() || t1 < t0) return;
+        const int n = (int) beats.size();
+        const int k0 = (int) std::ceil (beatPosition (t0) - 1.0e-6), k1 = (int) std::floor (beatPosition (t1) + 1.0e-6);
+        auto wrap = [] (int v) { return ((v % 4) + 4) % 4 + 1; };
+        for (int k = k0; k <= k1 && k - k0 < 50000; ++k)
+        {
+            if (k >= 0 && k < n) fn (beats[(size_t) k].timeSec, beats[(size_t) k].beatInBar, k);
+            else if (k < 0) fn (timeAtBeat (k), wrap (beats[0].beatInBar - 1 + k), k);
+            else fn (timeAtBeat (k), wrap (beats[(size_t) n - 1].beatInBar - 1 + (k - (n - 1))), k);
+        }
+    }
+
     /** 1..4 position in the bar for the beat containing t. */
     int beatInBarAt (double t) const noexcept
     {

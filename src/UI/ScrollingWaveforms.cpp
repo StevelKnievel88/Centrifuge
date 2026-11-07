@@ -68,8 +68,8 @@ namespace
     }
 }
 
-ScrollingWaveforms::ScrollingWaveforms (AudioEngine& e)
-    : engine (e), vblank (this, [this] (double t) { onVBlank (t); })
+ScrollingWaveforms::ScrollingWaveforms (AudioEngine& e, std::vector<int> deckIds)
+    : engine (e), ids (std::move (deckIds)), vblank (this, [this] (double t) { onVBlank (t); })
 {
     setOpaque (true);
 }
@@ -81,13 +81,13 @@ ScrollingWaveforms::~ScrollingWaveforms()
 
 void ScrollingWaveforms::setVisibleSeconds (double s)
 {
-    visibleSeconds = juce::jlimit (1.0, 60.0, s);
+    visibleSeconds = juce::jlimit (zoomMin, zoomMax, s);
     needsRedraw = true;
 }
 
 void ScrollingWaveforms::setLanes (int deck, LaneConfig top, LaneConfig bottom)
 {
-    if (deck < 0 || deck > 1) return;
+    if (deck < 0 || deck >= numSlots()) return;
     lanes[(size_t) deck] = { top, bottom };
     needsRedraw = true;
 }
@@ -97,9 +97,9 @@ void ScrollingWaveforms::onVBlank (double t)
     bool moving = false;
     const double latency = engine.getOutputLatencySeconds();
 
-    for (int d = 0; d < 2; ++d)
+    for (int d = 0; d < numSlots(); ++d)
     {
-        auto& deck = engine.deck (d);
+        auto& deck = engine.deck (engineDeck (d));
         auto& dv = decks[(size_t) d];
         const auto& st = deck.state();
 
@@ -193,6 +193,7 @@ void ScrollingWaveforms::onVBlank (double t)
 juce::Rectangle<int> ScrollingWaveforms::deckBounds (int deck) const
 {
     auto r = getLocalBounds();
+    if (numSlots() == 1) return r;
     const int h = (r.getHeight() - 2) / 2;
     return deck == 0 ? r.withHeight (h) : r.withTrimmedTop (h + 2);
 }
@@ -200,14 +201,15 @@ juce::Rectangle<int> ScrollingWaveforms::deckBounds (int deck) const
 juce::Rectangle<int> ScrollingWaveforms::dividerBounds (int deck) const
 {
     auto r = deckBounds (deck);
+    if (! hasBottomLane (deck)) return { r.getX(), r.getBottom(), r.getWidth(), 0 };
     const int topH = (int) std::round ((r.getHeight() - dividerH) * laneSplit[(size_t) deck]);
     return { r.getX(), r.getY() + topH, r.getWidth(), dividerH };
 }
 
 int ScrollingWaveforms::dividerAt (juce::Point<int> p) const
 {
-    for (int d = 0; d < 2; ++d)
-        if (dividerBounds (d).expanded (0, 3).contains (p))
+    for (int d = 0; d < numSlots(); ++d)
+        if (hasBottomLane (d) && dividerBounds (d).expanded (0, 3).contains (p))
             return d;
     return -1;
 }
@@ -232,8 +234,9 @@ juce::String ScrollingWaveforms::laneName (int deck, int lane) const
     switch (cfg.style)
     {
         case stems:
+        case stemsSplit:
             if (stemsHidden) return "3-BAND (STEMS HIDDEN)";
-            return dv.stemWave != nullptr ? "STEMS" : "3-BAND (NO STEMS YET)";
+            return dv.stemWave != nullptr ? (cfg.style == stemsSplit ? "STEMS (A ROW EACH)" : "STEMS") : "3-BAND (NO STEMS YET)";
         case rgb:          return "RGB";
         case singleColour: return "SINGLE COLOUR";
         default:           return "3-BAND";
@@ -244,8 +247,8 @@ void ScrollingWaveforms::paint (juce::Graphics& g)
 {
     markers.clear();
     g.fillAll (Theme::line);
-    paintDeck (g, 0, deckBounds (0));
-    paintDeck (g, 1, deckBounds (1));
+    for (int d = 0; d < numSlots(); ++d)
+        paintDeck (g, d, deckBounds (d));
 }
 
 void ScrollingWaveforms::drawLabel (juce::Graphics& g, juce::Rectangle<int> lane, const juce::String& text, bool atTop)
@@ -265,12 +268,13 @@ void ScrollingWaveforms::drawLabel (juce::Graphics& g, juce::Rectangle<int> lane
 
 void ScrollingWaveforms::paintDeck (juce::Graphics& g, int d, juce::Rectangle<int> r)
 {
+    const bool two = hasBottomLane (d);
     auto div = dividerBounds (d);
-    auto topLane = r.withBottom (div.getY());
-    auto bottomLane = r.withTop (div.getBottom());
+    auto topLane = two ? r.withBottom (div.getY()) : r;
+    auto bottomLane = two ? r.withTop (div.getBottom()) : r;
 
     paintLane (g, d, 0, topLane);
-    paintLane (g, d, 1, bottomLane);
+    if (two) paintLane (g, d, 1, bottomLane);
 
     // Phrase bars along the bottom of the deck's waveforms
     if (auto& tr = decks[(size_t) d].track; tr != nullptr && ! tr->phrases.empty() && bottomLane.getHeight() > 30)
@@ -278,19 +282,23 @@ void ScrollingWaveforms::paintDeck (juce::Graphics& g, int d, juce::Rectangle<in
         const auto& dv = decks[(size_t) d];
         const double pps = (double) r.getWidth() / visibleSeconds;
         const float px0 = playheadX (r);
-        auto strip = bottomLane.toFloat().removeFromBottom (12.0f);
+        auto strip = bottomLane.toFloat().removeFromBottom (two ? 12.0f : 15.0f);
         paintPhraseStripFolded (g, strip, tr->phrases, tr->audio != nullptr ? tr->audio->lengthSeconds() : tr->info.durationSec,
-                                dv.fold, [&] (double disp) { return px0 + (float) ((disp - dv.shownPos) * pps); });
+                                dv.fold, [&] (double disp) { return px0 + (float) ((disp - dv.shownPos) * pps); },
+                                selectedPhrase ? selectedPhrase() : -1);
     }
 
     // Divider with a small grip
-    g.setColour (Theme::panel);
-    g.fillRect (div);
-    g.setColour (psyched::Colours::edge2);
-    g.fillRect (div.withSizeKeepingCentre (36, 2).toFloat());
+    if (two)
+    {
+        g.setColour (Theme::panel);
+        g.fillRect (div);
+        g.setColour (psyched::Colours::edge2);
+        g.fillRect (div.withSizeKeepingCentre (36, 2).toFloat());
+    }
 
     // Playhead through both lanes (drag it left/right to see more of what's coming)
-    const auto& st = engine.deck (d).state();
+    const auto& st = engine.deck (engineDeck (d)).state();
     const float playX = playheadX (r);
     g.setColour (st.playing.load() ? juce::Colour (0xffff2d2d) : juce::Colours::white);
     g.fillRect (playX - 1.0f, (float) r.getY(), 2.0f, (float) r.getHeight());
@@ -300,36 +308,16 @@ void ScrollingWaveforms::paintDeck (juce::Graphics& g, int d, juce::Rectangle<in
 
     // Deck badge + lane labels (dark backing so they read over any waveform)
     auto badge = juce::Rectangle<float> ((float) r.getX() + 6.0f, (float) r.getY() + 4.0f, 22.0f, 18.0f);
-    g.setColour (Theme::deckColour (d));
+    const int id = engineDeck (d);
+    g.setColour (Theme::deckColour (id));
     g.fillRect (badge);
     g.setColour (psyched::Colours::onSolid);
     g.setFont (Theme::display (11.0f, true));
-    g.drawText (juce::String (d + 1), badge, juce::Justification::centred);
+    g.drawText (id < 2 ? juce::String (id + 1) : juce::String ("P"), badge, juce::Justification::centred);
 
-    drawLabel (g, topLane, laneName (d, 0), false);
-    drawLabel (g, bottomLane, laneName (d, 1), true);
-
-    // Stem separation progress
-    if (st.stemsReady.load())
-    {
-        const float p = st.stemsProgress.load();
-        if (p < 0.999f)
-        {
-            for (int lane = 0; lane < 2; ++lane)
-                if (lanes[(size_t) d][(size_t) lane].style == stems)
-                {
-                    auto lr = lane == 0 ? topLane : bottomLane;
-                    g.setColour (Theme::deckColour (d).withAlpha (0.8f));
-                    g.fillRect ((float) lr.getX(), (float) lr.getBottom() - 3.0f, (float) lr.getWidth() * p, 3.0f);
-                }
-            auto tr = juce::Rectangle<float> ((float) r.getX() + 34.0f, (float) r.getY() + 4.0f, 130.0f, 16.0f);
-            g.setColour (juce::Colours::black.withAlpha (0.78f));
-            g.fillRect (tr);
-            g.setColour (Theme::deckColour (d));
-            g.setFont (psyched::Fonts::label (10.0f));
-            g.drawText ("SEPARATING " + juce::String (juce::roundToInt (p * 100.0f)) + "%", tr, juce::Justification::centred);
-        }
-    }
+    drawLabel (g, topLane, laneName (d, 0), ! two);
+    if (two) drawLabel (g, bottomLane, laneName (d, 1), true);
+    // (Stem separation progress is shown under the deck's overview, against the whole track.)
 }
 
 void ScrollingWaveforms::paintLane (juce::Graphics& g, int d, int lane, juce::Rectangle<int> r)
@@ -339,8 +327,9 @@ void ScrollingWaveforms::paintLane (juce::Graphics& g, int d, int lane, juce::Re
     if (r.getHeight() < 8) return;
 
     auto& dv = decks[(size_t) d];
-    const auto& st = engine.deck (d).state();
+    const auto& st = engine.deck (engineDeck (d)).state();
     const auto cfg = lanes[(size_t) d][(size_t) lane];
+    const bool stemsSeparate = cfg.style == stemsSplit;
     const bool flags = lane == 0;
     const float playX = playheadX (r);
     const double pps = (double) r.getWidth() / visibleSeconds;
@@ -359,7 +348,8 @@ void ScrollingWaveforms::paintLane (juce::Graphics& g, int d, int lane, juce::Re
         {
             g.setColour (Theme::textFaint);
             g.setFont (Theme::font (14.0f));
-            g.drawText ("Deck " + juce::String (d + 1) + "  -  load a track", r, juce::Justification::centred);
+            g.drawText (engineDeck (d) < 2 ? "Deck " + juce::String (engineDeck (d) + 1) + "  -  load a track" : juce::String ("PREP  -  load a track"),
+                        r, juce::Justification::centred);
         }
         return;
     }
@@ -389,7 +379,7 @@ void ScrollingWaveforms::paintLane (juce::Graphics& g, int d, int lane, juce::Re
     opts.fold = &dv.fold;
     const auto displayLen = [&fold] (double len) { return fold.displayLength (len); };
 
-    const bool showStems = cfg.style == stems && ! stemsHidden && dv.stemWave != nullptr && dv.stemWave->computed.load() > 0;
+    const bool showStems = (cfg.style == stems || cfg.style == stemsSplit) && ! stemsHidden && dv.stemWave != nullptr && dv.stemWave->computed.load() > 0;
     if (showStems)
     {
         auto sw = dv.stemWave;
@@ -426,7 +416,7 @@ void ScrollingWaveforms::paintLane (juce::Graphics& g, int d, int lane, juce::Re
             }
             auto& tc = dv.stemTiles[(size_t) lane][(size_t) s];
             const auto col = Theme::stemColour (s);
-            tc.configure (sw.get(), styleKeyFor (s, stemsSeparate ? 7 : cfg.shape, {}, fold.version), sw->entriesPerSecond, displayLen (sw->lengthSeconds()),
+            tc.configure (sw.get(), styleKeyFor (s, stemsSeparate ? 7 : cfg.shape, col, fold.version), sw->entriesPerSecond, displayLen (sw->lengthSeconds()),
                           pps, area.getHeight(), scale,
                           [sw, s, col, o] (double first, double epp, int w, int h)
                           { return renderStemStrip (*sw, s, col, sw->computed.load(), first, epp, w, h, o); });
@@ -437,7 +427,7 @@ void ScrollingWaveforms::paintLane (juce::Graphics& g, int d, int lane, juce::Re
     }
     else
     {
-        const int style = cfg.style == stems ? threeBand : cfg.style;
+        const int style = cfg.style == stems || cfg.style == stemsSplit ? threeBand : cfg.style;
         const auto wdStyle = style == rgb ? WaveformData::Style::rgb
                            : style == singleColour ? WaveformData::Style::blue : WaveformData::Style::threeBand;
         auto wd = dv.track->waveformInStyle (wdStyle);
@@ -445,7 +435,7 @@ void ScrollingWaveforms::paintLane (juce::Graphics& g, int d, int lane, juce::Re
         {
             auto o = opts;
             o.entriesPerSecond = wd->entriesPerSecond;
-            o.tint = style == singleColour ? (singleFollowsDeck ? Theme::deckColour (d) : singleTint) : juce::Colour();
+            o.tint = style == singleColour ? (singleFollowsDeck ? Theme::deckColour (engineDeck (d)) : singleTint) : juce::Colour();
             auto detail = dv.track->detail;
             o.detail = detail.get();
             auto& tc = dv.laneTiles[(size_t) lane];
@@ -478,7 +468,7 @@ void ScrollingWaveforms::paintLane (juce::Graphics& g, int d, int lane, juce::Re
 void ScrollingWaveforms::paintOverlays (juce::Graphics& g, int d, juce::Rectangle<int> wave, juce::Rectangle<int> r, bool withFlags)
 {
     auto& dv = decks[(size_t) d];
-    const auto& st = engine.deck (d).state();
+    const auto& st = engine.deck (engineDeck (d)).state();
     const float playX = playheadX (r);
     const double pps = (double) r.getWidth() / visibleSeconds;
     const double t = dv.shownPos;
@@ -504,25 +494,30 @@ void ScrollingWaveforms::paintOverlays (juce::Graphics& g, int d, juce::Rectangl
             const double a = p.src0 + juce::jmax (0.0, tStart - p.disp0), b = p.src0 + (juce::jmin (tEnd, d1) - p.disp0);
             spans.push_back ({ a, b, p.disp0 + (a - p.src0) });
         }
+    // Before the track starts and after it ends, the grid carries on (so a grid lined up on the drop shows its
+    // first bar even when the track starts late)
+    if (! fold.isEmpty())
+    {
+        if (tStart < 0.0) spans.push_back ({ fold.pieces.front().src0 + tStart, fold.pieces.front().src0, tStart });
+        const double dEnd = fold.displayLength ((std::numeric_limits<double>::max)() / 4);
+        if (tEnd > dEnd) spans.push_back ({ fold.pieces.back().src1, fold.pieces.back().src1 + (tEnd - dEnd), dEnd });
+    }
 
     // Beat grid
     if (track->grid.isValid())
     {
-        const auto& beats = track->grid.getBeats();
         const bool dense = pps * track->grid.beatLengthAt (fold.toSource (t)) < 7.0;
         for (auto& sp : spans)
-            for (int i = juce::jmax (0, track->grid.beatIndexAt (sp.s0)); i < (int) beats.size() && beats[(size_t) i].timeSec <= sp.s1; ++i)
+            track->grid.forEachBeat (sp.s0, sp.s1, [&] (double bt, int beatInBar, int)
             {
-                const auto& b = beats[(size_t) i];
-                if (b.timeSec < sp.s0) continue;
-                const bool bar = b.beatInBar == 1;
-                if (dense && ! bar) continue;
-                const float x = playX + (float) ((sp.d0 + (b.timeSec - sp.s0) - t) * pps);
+                const bool bar = beatInBar == 1;
+                if (dense && ! bar) return;
+                const float x = playX + (float) ((sp.d0 + (bt - sp.s0) - t) * pps);
                 g.setColour (bar ? juce::Colours::white.withAlpha (0.55f) : juce::Colours::white.withAlpha (0.18f));
                 g.fillRect (x, (float) wave.getY(), bar ? 1.5f : 1.0f, (float) wave.getHeight());
                 if (withFlags)
                     g.fillRect (x - (bar ? 1.5f : 1.0f), (float) r.getY() + markerBand - 5.0f, bar ? 4.5f : 3.0f, 4.0f);
-            }
+            });
     }
 
     // Edited view: where the track jumps (a rearranged or repeated phrase) - a dashed seam
@@ -640,7 +635,7 @@ void ScrollingWaveforms::paintOverlays (juce::Graphics& g, int d, juce::Rectangl
             }
             markers.push_back ({ juce::Rectangle<float> (x - 7.0f, flagTop - 1.0f, isLoop ? 26.0f : 14.0f, (float) markerBand), d, markerLocator, i });
             if (cueName)
-                if (auto name = cueName (d, false, i); name.isNotEmpty())
+                if (auto name = cueName (engineDeck (d), false, i); name.isNotEmpty())
                 {
                     g.setFont (Theme::font (10.0f, true));
                     g.setColour (c.brighter (0.4f));
@@ -696,7 +691,7 @@ void ScrollingWaveforms::paintOverlays (juce::Graphics& g, int d, juce::Rectangl
             g.drawText (juce::String::charToString ((juce::juce_wchar) ('A' + i)), flag, juce::Justification::centred);
             markers.push_back ({ flag.expanded (1.0f), d, markerHot, i });
             if (cueName)
-                if (auto name = cueName (d, true, i); name.isNotEmpty())
+                if (auto name = cueName (engineDeck (d), true, i); name.isNotEmpty())
                 {
                     g.setColour (col.brighter (0.3f));
                     g.drawText (name, juce::Rectangle<float> (x + 16.0f, flagTop, 120.0f, (float) markerBand - 2.0f), juce::Justification::centredLeft, true);
@@ -734,7 +729,7 @@ const ScrollingWaveforms::Marker* ScrollingWaveforms::markerAt (juce::Point<floa
 
 void ScrollingWaveforms::deleteMarker (const Marker& m)
 {
-    auto& deck = engine.deck (m.deck);
+    auto& deck = engine.deck (engineDeck (m.deck));
     if (m.kind == markerHot)          deck.post (Deck::Cmd::hotCueDelete, 0.0, m.index, true);
     else if (m.kind == markerLocator) deck.post (Deck::Cmd::locatorDelete, 0.0, m.index);
     else if (m.kind == markerSkip)    deck.post (Deck::Cmd::skipDelete, 0.0, m.index);
@@ -742,7 +737,7 @@ void ScrollingWaveforms::deleteMarker (const Marker& m)
 
 void ScrollingWaveforms::showMarkerMenu (const Marker& m)
 {
-    const auto& st = engine.deck (m.deck).state();
+    const auto& st = engine.deck (engineDeck (m.deck)).state();
     juce::PopupMenu menu;
     juce::Colour current;
     if (m.kind == markerHot)
@@ -784,7 +779,7 @@ void ScrollingWaveforms::showMarkerMenu (const Marker& m)
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (screen),
                         [this, marker, screen, current, loopCycles] (int result)
     {
-        auto& deck = engine.deck (marker.deck);
+        auto& deck = engine.deck (engineDeck (marker.deck));
         if (auto [mode, cycles] = loopModeFromMenu (result, 200, loopCycles); mode >= 0)
         {
             deck.post (Deck::Command { Deck::Cmd::locatorLoopMode, (double) mode, marker.index, true, nullptr, 0, (double) cycles });
@@ -792,15 +787,15 @@ void ScrollingWaveforms::showMarkerMenu (const Marker& m)
         }
         auto setColour = [this, marker] (juce::Colour c)
         {
-            engine.deck (marker.deck).post (marker.kind == markerHot ? Deck::Cmd::hotCueColour : Deck::Cmd::locatorColour,
+            engine.deck (engineDeck (marker.deck)).post (marker.kind == markerHot ? Deck::Cmd::hotCueColour : Deck::Cmd::locatorColour,
                                             (double) c.getARGB(), marker.index);
         };
         if (result == 1) deleteMarker (marker);
         else if (result == 2) deck.post (Deck::Cmd::skipsToggle);
-        else if (result == 3) { auto& ev = editView[(size_t) marker.deck]; ev = ! ev; needsRedraw = true; if (onEditViewChanged) onEditViewChanged (marker.deck, ev); }
+        else if (result == 3) { auto& ev = editView[(size_t) marker.deck]; ev = ! ev; needsRedraw = true; if (onEditViewChanged) onEditViewChanged (engineDeck (marker.deck), ev); }
         else if (result == 4 && onRenameCue)
-            onRenameCue (marker.deck, marker.kind == markerHot, marker.index,
-                         cueName ? cueName (marker.deck, marker.kind == markerHot, marker.index) : juce::String());
+            onRenameCue (engineDeck (marker.deck), marker.kind == markerHot, marker.index,
+                         cueName ? cueName (engineDeck (marker.deck), marker.kind == markerHot, marker.index) : juce::String());
         else if (handleCueColourMenu (result, 100, screen, current, setColour)) {}
     });
 }
@@ -809,12 +804,14 @@ void ScrollingWaveforms::showDeckMenu (int d, double sourceTime)
 {
     auto& dv = decks[(size_t) d];
     if (dv.track == nullptr) return;
-    const auto& st = engine.deck (d).state();
+    const auto& st = engine.deck (engineDeck (d)).state();
 
     auto fmt = [] (double s) { return juce::String ((int) s / 60) + ":" + juce::String (std::fmod (s, 60.0), 1).paddedLeft ('0', 4); };
     juce::PopupMenu menu;
-    menu.addSectionHeader ("Deck " + juce::String (d + 1) + "  at " + fmt (sourceTime));
+    const double lb = loopBeatsForMenu ? loopBeatsForMenu() : 4.0;
+    menu.addSectionHeader ((engineDeck (d) < 2 ? "Deck " + juce::String (engineDeck (d) + 1) : juce::String ("PREP")) + "  at " + fmt (sourceTime));
     menu.addItem (1, "Add locator here");
+    menu.addItem (8, "Add loop locator here (" + juce::String (lb, lb < 1.0 ? 2 : 0) + " beats)");
     if (dv.uiSkipFrom < 0.0)
         menu.addItem (2, "Start skip here");
     else
@@ -828,9 +825,9 @@ void ScrollingWaveforms::showDeckMenu (int d, double sourceTime)
     menu.addItem (7, "Show stems in stem lanes", true, ! stemsHidden);
 
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withMousePosition(),
-                        [this, d, sourceTime] (int result)
+                        [this, d, sourceTime, lb] (int result)
     {
-        auto& deck = engine.deck (d);
+        auto& deck = engine.deck (engineDeck (d));
         auto& v = decks[(size_t) d];
         switch (result)
         {
@@ -839,8 +836,20 @@ void ScrollingWaveforms::showDeckMenu (int d, double sourceTime)
             case 3: deck.post2 (Deck::Cmd::skipAdd, v.uiSkipFrom, sourceTime); v.uiSkipFrom = -1.0; break;
             case 4: v.uiSkipFrom = -1.0; needsRedraw = true; break;
             case 5: deck.post (Deck::Cmd::skipsToggle); break;
-            case 6: editView[(size_t) d] = ! editView[(size_t) d]; needsRedraw = true; if (onEditViewChanged) onEditViewChanged (d, editView[(size_t) d]); break;
+            case 6: editView[(size_t) d] = ! editView[(size_t) d]; needsRedraw = true; if (onEditViewChanged) onEditViewChanged (engineDeck (d), editView[(size_t) d]); break;
             case 7: stemsHidden = ! stemsHidden; needsRedraw = true; break;
+            case 8:
+            {
+                double s0 = sourceTime, s1 = sourceTime + lb * 0.5;
+                if (v.track != nullptr && v.track->grid.isValid())
+                {
+                    const double b = std::round (v.track->grid.beatPosition (sourceTime));
+                    s0 = v.track->grid.timeAtBeat (b);
+                    s1 = v.track->grid.timeAtBeat (b + lb);
+                }
+                deck.post (Deck::Command { Deck::Cmd::locatorLoopAdd, juce::jmax (0.0, s0), 0, true, nullptr, 0, s1 });
+                break;
+            }
             default: break;
         }
     });
@@ -858,7 +867,7 @@ void ScrollingWaveforms::mouseDown (const juce::MouseEvent& e)
 {
     dragDeck = dragDivider = -1;
     dragPlayhead = false;
-    const int d = deckBounds (0).contains (e.getPosition()) ? 0 : 1;
+    const int d = numSlots() == 1 || deckBounds (0).contains (e.getPosition()) ? 0 : 1;
 
     if (e.mods.isPopupMenu())
     {
@@ -885,7 +894,8 @@ void ScrollingWaveforms::mouseDrag (const juce::MouseEvent& e)
     {
         auto r = deckBounds (dragDivider);
         const float share = (float) (e.y - r.getY() - dividerH / 2) / (float) juce::jmax (1, r.getHeight() - dividerH);
-        setLaneSplit (dragDivider, share);
+        // Both decks keep the same split
+        for (int k = 0; k < numSlots(); ++k) setLaneSplit (k, share);
         repaint();
         return;
     }
@@ -896,8 +906,8 @@ void ScrollingWaveforms::mouseDrag (const juce::MouseEvent& e)
         return;
     }
     if (dragDeck < 0) return;
-    auto& deck = engine.deck (dragDeck);
-    if (deck.state().playing.load()) return;
+    auto& deck = engine.deck (engineDeck (dragDeck));
+    if (deck.state().playing.load() && ! scrubWhilePlaying) return;
     const double pps = (double) getWidth() / visibleSeconds;
     const double disp = juce::jmax (0.0, dragStartPos - e.getDistanceFromDragStartX() / pps);
     deck.post (Deck::Cmd::seekSeconds, decks[(size_t) dragDeck].fold.toSource (disp));
@@ -906,7 +916,7 @@ void ScrollingWaveforms::mouseDrag (const juce::MouseEvent& e)
 void ScrollingWaveforms::mouseUp (const juce::MouseEvent&)
 {
     if (dragDivider >= 0 && onLaneSplitChanged)
-        onLaneSplitChanged (dragDivider, laneSplit[(size_t) dragDivider]);
+        for (int k = 0; k < numSlots(); ++k) onLaneSplitChanged (engineDeck (k), laneSplit[(size_t) k]);
     if (dragPlayhead && onPlayheadMoved)
         onPlayheadMoved (playhead);
     dragDeck = dragDivider = -1;

@@ -94,7 +94,9 @@ void DeckPanel::timerCallback()
     mix (router.getPitchRangePercent (deck));
     mix (editView); mix (st.playSegment.load());
     if (editor != nullptr) { mix ((double) (editor->activeEdit (deck).hashCode() & 0xffff)); mix (editor->activeEditModified (deck)); mix (editor->hasEdits (deck)); }
-    if (auto* n = noteShowing (st.positionSec.load())) mix (n->timeSec + 7.0);
+    if (auto* n = noteShowing (st.positionSec.load())) mix (n->timeSec + 7.0 + std::floor (st.positionSec.load() * 10.0));
+    for (size_t i = 0; i < 4; ++i) mix (st.stemMode[i].load());
+    mix (overviewGrid); mix (st.stemsReady.load() && st.stemsProgress.load() < 0.999f ? std::floor (st.stemsProgress.load() * 400.0f) : -1.0);
     if (h != lastHash) { lastHash = h; repaint(); }
 }
 
@@ -217,9 +219,15 @@ void DeckPanel::paint (juce::Graphics& g)
                 const bool any = editor->hasEdits (deck);
                 juce::String text = name.isNotEmpty() ? name : (any ? juce::String ("UNSAVED EDITS") : juce::String ("NO EDITS"));
                 if (name.isNotEmpty() && editor->activeEditModified (deck)) text << " *";
-                const float w = juce::jlimit (80.0f, 190.0f, psyched::Fonts::label().getStringWidthFloat ("EDIT: " + text.toUpperCase()) + 30.0f);
-                auto vc = r.removeFromLeft (juce::jmin (w, juce::jmax (40.0f, r.getWidth() - 310.0f))).reduced (1.0f, 3.0f);
-                chip (g, vc, "EDIT: " + text, name.isNotEmpty() || any, Theme::sync.brighter (0.3f));
+                // The longest wording that fits the space left: "EDIT: name", "name", then "EDIT"
+                const float room = juce::jmax (36.0f, r.getWidth() - 310.0f);
+                juce::String shown;
+                for (auto cand : { "EDIT: " + text, text, juce::String ("EDIT") })
+                    if (psyched::Fonts::label().getStringWidthFloat (cand.toUpperCase()) + 22.0f <= juce::jmin (room, 190.0f)) { shown = cand; break; }
+                if (shown.isEmpty()) shown = "EDIT";
+                const float w = juce::jmin (room, juce::jlimit (44.0f, 190.0f, psyched::Fonts::label().getStringWidthFloat (shown.toUpperCase()) + 22.0f));
+                auto vc = r.removeFromLeft (w).reduced (1.0f, 3.0f);
+                chip (g, vc, shown, name.isNotEmpty() || any, Theme::sync.brighter (0.3f));
                 regions.push_back ({ vc, p + "editver", 0 });
             }
         }
@@ -280,6 +288,20 @@ void DeckPanel::paint (juce::Graphics& g)
     // --- Overview --------------------------------------------------------------
     {
         auto r = rowOverview;
+        // grid toggle on the left; stem separation progress in a strip underneath (against the track and playhead)
+        auto toggle = r.removeFromLeft (20.0f);
+        r.removeFromLeft (4.0f);
+        paintGridToggle (g, toggle, overviewGrid, Theme::sync);
+        regions.push_back ({ toggle, "overviewgrid", 7 });
+        auto progress = r.removeFromBottom (4.0f);
+        r.removeFromBottom (1.0f);
+        if (loaded && st.stemsReady.load() && st.stemsProgress.load() < 0.999f)
+        {
+            updateFold();
+            paintStemProgressStrip (g, progress, st.stemsProgress.load(), st.lengthSec.load(), &fold, col);
+            g.setColour (col);
+            g.setFont (psyched::Fonts::label (8.5f));
+        }
         g.setColour (Theme::waveBg);
         g.fillRect (r);
         regions.push_back ({ r, {}, 1 });
@@ -335,7 +357,17 @@ void DeckPanel::paint (juce::Graphics& g)
                         g.setColour (juce::Colours::black.withAlpha (st.skipsOn.load() ? 0.62f : 0.35f));
                         g.fillRect (juce::Rectangle<float>::leftTopRightBottom (x0, r.getY(), x1, r.getBottom()));
                     }
+                if (overviewGrid) paintOverviewGrid (g, r, track->grid, len, &fold);
                 paintOverviewMarks (g, r, TrackMarks::fromDeck (st, track->phrases, track.get()), false, &fold);
+                if (st.stemsReady.load() && st.stemsProgress.load() < 0.999f)
+                {
+                    auto lab = juce::Rectangle<float> (r.getRight() - 112.0f, r.getBottom() - 13.0f, 112.0f, 13.0f);
+                    g.setColour (juce::Colours::black.withAlpha (0.75f));
+                    g.fillRect (lab);
+                    g.setColour (col);
+                    g.setFont (psyched::Fonts::label (9.0f));
+                    g.drawText ("SEPARATING " + juce::String (juce::roundToInt (st.stemsProgress.load() * 100.0f)) + "%", lab, juce::Justification::centred);
+                }
 
                 g.setColour (Theme::accent);
                 g.fillRect (xOf (st.cuePointSec.load()) - 0.5f, r.getY(), 1.0f, r.getHeight());
@@ -405,9 +437,11 @@ void DeckPanel::paint (juce::Graphics& g)
     {
         auto r = rowJump;
         const auto p = juce::String ("d") + juce::String (deck + 1) + ".beatjump.";
-        psyched::paintLabel (g, "Jump", r.removeFromLeft (40.0f), juce::Justification::centredLeft);
+        psyched::paintLabel (g, "Jump", r.removeFromLeft (36.0f), juce::Justification::centredLeft);
         const std::pair<int, const char*> sizes[] = { { 1, "1 BEAT" }, { 4, "1 BAR" }, { 8, "2 BARS" }, { 16, "4 BARS" } };
-        const float gw = (r.getWidth() - 3 * 8.0f) / 4.0f;
+        // each size sits tight between its buttons; the rest of the row shows notes
+        const float gw = juce::jlimit (78.0f, 104.0f, (r.getWidth() * 0.55f - 3 * 8.0f) / 4.0f);
+        paintNotesBox (g, r.withTrimmedLeft (4 * gw + 3 * 8.0f + 10.0f));
         for (int k = 0; k < 4; ++k)
         {
             auto grp = r.removeFromLeft (gw);
@@ -485,12 +519,22 @@ void DeckPanel::paint (juce::Graphics& g)
         chip (g, skipBtn, pending ? "SKIP TO" : "SKIP", pending, juce::Colour (0xff38d9ff));
         regions.push_back ({ skipBtn, p + "skip.set", 0 });
 
-        // Stems (rotor shows separation progress)
+        // Stems (rotor shows separation progress); the mode chip switches all four between level and filter
         r.removeFromLeft (8.0f);
         rotorArea = r.removeFromLeft (r.getHeight()).reduced (1.0f);
-        r.removeFromLeft (8.0f);
+        r.removeFromLeft (6.0f);
         const bool ready = st.stemsReady.load();
         const float prog = st.stemsProgress.load();
+        {
+            int m0 = st.stemMode[0].load();
+            bool same = true;
+            for (size_t k = 1; k < 4; ++k) same = same && st.stemMode[k].load() == m0;
+            const char* names[] = { "LVL", "LP", "HP" };
+            auto mc = vfit (r.removeFromLeft (34.0f));
+            chip (g, mc, same ? names[juce::jlimit (0, 2, m0)] : "MIX", ! same || m0 != 0, Theme::sync);
+            regions.push_back ({ mc, "stemmode", 8 });
+            r.removeFromLeft (6.0f);
+        }
         const float sw = (r.getWidth() - 3 * 6.0f) / 4.0f;
         for (int s = 0; s < 4; ++s)
         {
@@ -508,7 +552,8 @@ void DeckPanel::paint (juce::Graphics& g)
             g.drawRect (b.reduced (0.5f), 1.0f);
             g.setColour (ready ? (gain <= 0.0f ? Theme::textFaint : Theme::text) : Theme::textFaint);
             g.setFont (Theme::font (11.0f, true));
-            g.drawText (juce::String (stemName (s)).toUpperCase(), b, juce::Justification::centred);
+            const int mode = st.stemMode[(size_t) s].load();
+            g.drawText (juce::String (stemName (s)).toUpperCase() + (mode == 1 ? " LP" : mode == 2 ? " HP" : ""), b, juce::Justification::centred);
             regions.push_back ({ b, p + "stem." + juce::String (s + 1) + ".mute", 2 });
         }
     }
@@ -593,33 +638,67 @@ void DeckPanel::updateFold()
 
 const NoteLocator* DeckPanel::noteShowing (double pos) const
 {
-    // A note pops up a couple of seconds before playback reaches it and stays for eight seconds after.
+    // A note shows from a little before playback reaches it until a set time after (or until the next note).
     if (track == nullptr) return nullptr;
     const NoteLocator* found = nullptr;
     for (auto& n : track->notes)
-        if (pos >= n.timeSec - 2.0 && pos <= n.timeSec + 8.0) found = &n;
+        if (pos >= n.timeSec - noteLead && (noteShow <= 0.0 || pos <= n.timeSec + noteShow)) found = &n;
     return found;
 }
 
-void DeckPanel::paintNote (juce::Graphics& g)
+void DeckPanel::paintNotesBox (juce::Graphics& g, juce::Rectangle<float> r)
 {
-    // Note locator: a banner over the track title while playback is at it
+    // The notes box: shows only note locators, as playback comes up to them
+    if (r.getWidth() < 60.0f) return;
     const auto& st = engine.deck (deck).state();
     auto* n = noteShowing (st.positionSec.load());
-    if (n == nullptr) return;
-    const double until = n->timeSec - st.positionSec.load();
-    auto r = rowInfo.reduced (2.0f, 2.0f).withTrimmedLeft (rowInfo.getHeight() + 6.0f);
-    g.setColour (psyched::Colours::void_.withAlpha (0.92f));
+    g.setColour (n != nullptr ? psyched::Colours::void_ : Theme::panel);
     g.fillRect (r);
-    g.setColour (n->colour);
+    g.setColour (n != nullptr ? n->colour : Theme::line);
+    g.drawRect (r, 1.0f);
+    if (n == nullptr)
+    {
+        psyched::paintLabel (g, "NOTES", r.reduced (8.0f, 0.0f), juce::Justification::centredLeft, Theme::textFaint, 9.0f);
+        return;
+    }
     g.fillRect (r.removeFromLeft (4.0f));
-    g.drawRect (r.expanded (4.0f, 0.0f).withTrimmedLeft (4.0f), 1.0f);
-    r.removeFromLeft (8.0f);
-    g.setFont (psyched::Fonts::mono (10.0f, true));
-    g.drawText (until > 0.05 ? "NOTE IN " + juce::String (until, 1) + "s" : juce::String ("NOTE"), r.removeFromLeft (84.0f), juce::Justification::centredLeft);
+    r.removeFromLeft (6.0f);
+    const double until = n->timeSec - st.positionSec.load();
+    g.setFont (psyched::Fonts::mono (9.5f, true));
+    g.drawText (until > 0.05 ? "IN " + juce::String (until, 1) + "s" : juce::String ("NOTE"), r.removeFromLeft (52.0f), juce::Justification::centredLeft);
     g.setColour (Theme::text);
-    g.setFont (Theme::font (14.0f, true));
-    g.drawFittedText (n->text, r.toNearestInt(), juce::Justification::centredLeft, 2);
+    g.setFont (Theme::font (13.0f, true));
+    g.drawText (n->text, r.reduced (2.0f, 0.0f), juce::Justification::centredLeft, true);
+}
+
+void DeckPanel::setStemMode (int stem, int mode)
+{
+    engine.deck (deck).post (Deck::Cmd::stemMode, (double) mode, stem);
+    if (onStemModeChanged) onStemModeChanged (deck, stem, mode);
+}
+
+void DeckPanel::showStemModeMenu (int stem, juce::Rectangle<float> area)
+{
+    const auto& st = engine.deck (deck).state();
+    const int cur = stem >= 0 ? st.stemMode[(size_t) stem].load() : -1;
+    juce::PopupMenu m;
+    const char* labels[] = { "Level (volume)", "Low-pass filter (closes down as the control goes down)", "High-pass filter (closes up as the control goes down)" };
+    if (stem >= 0)
+    {
+        m.addSectionHeader (juce::String (stemName (stem)) + " control");
+        for (int k = 0; k < 3; ++k) m.addItem (1 + k, labels[k], true, cur == k);
+        m.addSeparator();
+    }
+    m.addSectionHeader ("All four stems on this deck");
+    for (int k = 0; k < 3; ++k) m.addItem (11 + k, labels[k]);
+    juce::Component::SafePointer<DeckPanel> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (localAreaToGlobal (area.toNearestInt())),
+                     [safe, stem] (int r)
+    {
+        if (safe == nullptr || r == 0) return;
+        if (r >= 11) safe->setStemMode (-1, r - 11);
+        else safe->setStemMode (stem, r - 1);
+    });
 }
 
 void DeckPanel::showEditVersionMenu (juce::Rectangle<float> area)
@@ -648,6 +727,24 @@ void DeckPanel::mouseDown (const juce::MouseEvent& e)
 {
     auto* r = regionAt (e.position);
     if (r == nullptr) return;
+    if (r->kind == 2 && e.mods.isPopupMenu())
+    {
+        showStemModeMenu (r->action.fromFirstOccurrenceOf ("stem.", false, false).getIntValue() - 1, r->r);
+        return;
+    }
+    if (r->kind == 8)
+    {
+        if (e.mods.isPopupMenu()) { showStemModeMenu (-1, r->r); return; }
+        // click: all four stems step level > low-pass > high-pass
+        const int m0 = engine.deck (deck).state().stemMode[0].load();
+        setStemMode (-1, (m0 + 1) % 3);
+        return;
+    }
+    if (r->kind == 7)
+    {
+        if (onOverviewGridToggled) onOverviewGridToggled();
+        return;
+    }
     if (e.mods.isPopupMenu() && r->kind != 3) return;
 
     if (r->kind == 1)

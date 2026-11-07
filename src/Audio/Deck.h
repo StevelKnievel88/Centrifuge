@@ -78,7 +78,8 @@ public:
         skipIn, skipOut, skipSet, skipAdd, skipDelete, skipDeleteNearest, skipsToggle, skipsSet,
         locatorLoopMode,  // index = locator, value = mode (0 normal, 1 active, 2 cycle), value2 = cycles
         locatorLoopAdd,   // value = start, value2 = end: a loop locator (orange)
-        swapTrackData   // same audio, new grid / cues (ptr = LoadedTrack*); playback carries on
+        swapTrackData,  // same audio, new grid / cues (ptr = LoadedTrack*); playback carries on
+        stemMode        // index = stem (-1 = all four), value = 0 level, 1 low-pass filter, 2 high-pass filter
     };
 
     static constexpr int maxLocators = 32;
@@ -161,6 +162,7 @@ public:
         std::atomic<double> skipPendingFrom { -1.0 };
         std::atomic<int> playSegment { -1 };          // which stretch of the play map is playing (-1 = none)
         std::array<std::atomic<float>, 4> stemAuto;   // stem locators' gain on each stem (1 = untouched)
+        std::array<std::atomic<int>, 4> stemMode;     // what each stem's control does: 0 level, 1 low-pass, 2 high-pass
         /** Counts edits to hot cues, locators and skips (so the app knows to save them). */
         std::atomic<int> cueEdits { 0 };
         /** Increases when the track's grid / cue data is swapped (e.g. switching rekordbox / Centrifuge version). */
@@ -180,6 +182,7 @@ public:
             for (auto& c : hotColour) c = 0;
             for (auto& g : stemGain) g = 1.0f;
             for (auto& g : stemAuto) g = 1.0f;
+            for (auto& m : stemMode) m = 0;
         }
     };
 
@@ -289,7 +292,11 @@ private:
     std::array<bool, 4> stemMuted { false, false, false, false };
     std::array<float, 4> stemAutoNow { 1, 1, 1, 1 };
     int playSeg = -1;                // current stretch of track->playMap
-    void stemAutomationAt (double sec, std::array<float, 4>& g) const noexcept;
+    void stemAutomationAt (double sec, std::array<float, 4>& g, std::array<int, 4>* modes = nullptr) const noexcept;
+    // Stem controls as filters: what each stem's control does, and a state-variable filter per stem (stereo)
+    std::array<int, 4> stemMode { 0, 0, 0, 0 };
+    struct StemFilter { float s1L = 0, s2L = 0, s1R = 0, s2R = 0; int mode = 0; bool on = false; };
+    std::array<StemFilter, 4> stemFilters;
     int64_t stemsValid = 0;
 
     // Key lock

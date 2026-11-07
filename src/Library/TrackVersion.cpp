@@ -26,6 +26,7 @@ namespace
         o->setProperty ("s", r3 (l.timeSec));
         o->setProperty ("t", juce::Array<juce::var> { l.target[0], l.target[1], l.target[2], l.target[3] });
         if (l.fadeBeats > 0.0f) o->setProperty ("f", l.fadeBeats);
+        if (l.mode != 0) o->setProperty ("m", l.mode);
         if (l.name.isNotEmpty()) o->setProperty ("n", l.name);
         return juce::var (o);
     }
@@ -37,6 +38,7 @@ namespace
         if (auto* t = v["t"].getArray())
             for (int i = 0; i < juce::jmin (4, t->size()); ++i) l.target[(size_t) i] = juce::jlimit (-1, 1, (int) (*t)[i]);
         l.fadeBeats = (float) (double) v.getProperty ("f", 0.0);
+        l.mode = juce::jlimit (0, 2, (int) v.getProperty ("m", 0));
         l.name = v.getProperty ("n", {}).toString();
         return l;
     }

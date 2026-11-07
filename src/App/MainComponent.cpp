@@ -88,13 +88,36 @@ MainComponent::MainComponent()
         };
         dp->onTrackDropped = [this] (int d) { loadDragged (d); };
         dp->onEditViewToggled = [this] (int d) { settings.editView[(size_t) d] = ! settings.editView[(size_t) d]; settings.save(); applySettings(); };
+        dp->onOverviewGridToggled = [this] { settings.overviewGrid = ! settings.overviewGrid; applySettings(); };
+        dp->onStemModeChanged = [this] (int d, int stem, int mode)
+        {
+            for (int s = 0; s < 4; ++s) if (stem < 0 || stem == s) settings.stemModes[(size_t) d][(size_t) s] = mode;
+            settings.save();
+        };
     }
+    prepView.onOverviewGridToggled = [this] { settings.overviewGrid = ! settings.overviewGrid; applySettings(); };
+    prepView.onStemModeChanged = [this] (int stem, int mode)
+    {
+        for (int s = 0; s < 4; ++s) if (stem < 0 || stem == s) settings.stemModes[2][(size_t) s] = mode;
+        settings.save();
+    };
+    prepView.onDeckColour = [this] (juce::Colour c)
+    {
+        settings.deckColours[2] = c.getARGB();
+        applySettings();
+        prepView.repaint(); phaseMeter.repaint(); prepView.getWaves().forceRedraw();
+    };
+    prepView.getWaves().onZoomChanged = [this] (double sec) { settings.prepVisibleSeconds = sec; settings.save(); };
+    prepView.getWaves().onLaneSplitChanged = [this] (int, float share) { settings.prepLaneSplit = share; settings.save(); };
+    prepView.getWaves().onEditViewChanged = [this] (int, bool on) { settings.editView[2] = on; settings.save(); applySettings(); };
+    browser.setColumnState (settings.browserColumns);
+    browser.onColumnsChanged = [this] (const juce::String& cols) { settings.browserColumns = cols; settings.save(); };
     waves.onTrackDropped = [this] (int d) { loadDragged (d); };
     prepView.onTrackDropped = [this] { loadDragged (AudioEngine::prepDeck); };
     prepView.onRenameCue = [this] (int d, bool hot, int i, juce::String cur) { askRename (d, hot, i, cur); };
     prepView.onSetBpm = [this] (int d) { askBpm (d); };
     prepView.onEditViewToggled = [this] { settings.editView[2] = ! settings.editView[2]; settings.save(); applySettings(); };
-    phaseMeter.foldFor = [this] (int d) -> const TimeFold* { return d < 2 ? &waves.foldFor (d) : nullptr; };
+    phaseMeter.foldFor = [this] (int d) -> const TimeFold* { return d < 2 ? &waves.foldFor (d) : d == AudioEngine::prepDeck ? &prepView.getWaves().foldFor (0) : nullptr; };
     prepView.setListWidth (settings.prepListWidth);
     prepView.onListWidthChanged = [this] (int w) { settings.prepListWidth = w; settings.save(); };
     browser.versionFor = [this] (const TrackInfo& t) { return editor.versionToLoad (0, t); };
@@ -176,6 +199,7 @@ MainComponent::~MainComponent()
     stopImport = true;
     importPool.removeAllJobs (false, 20000);
     settings.audioDeviceState = engine.saveDeviceState();
+    settings.browserColumns = browser.getColumnState();
     settings.save();
     editor.poll();
     midi.saveToFile (AppSettings::mappingFile());
@@ -186,6 +210,8 @@ void MainComponent::applySettings()
 {
     Theme::deckColours()[0] = juce::Colour (settings.deckColours[0]);
     Theme::deckColours()[1] = juce::Colour (settings.deckColours[1]);
+    Theme::deckColours()[2] = juce::Colour (settings.deckColours[2]);
+    for (size_t s = 0; s < 4; ++s) Theme::stemColours()[s] = juce::Colour (settings.stemColours[s]);
     MusicalKey::camelotDisplay() = settings.camelotKeys;
     engine.setPreviewOutput (settings.previewOutput);
     repaint();
@@ -207,8 +233,32 @@ void MainComponent::applySettings()
     }
     waves.setSingleColour (juce::Colour (settings.singleColour), settings.singleFollowsDeck);
     waves.setStemLayers (settings.stemLayerOrder, settings.stemOpacity);
-    waves.setStemsSeparate (settings.stemsSeparate);
     for (int d = 0; d < 2; ++d) waves.setEditView (d, settings.editView[(size_t) d]);
+    waves.forceRedraw();
+    {
+        // PREP's own waveform
+        auto& pw = prepView.getWaves();
+        pw.setMaxFps (settings.maxFps);
+        pw.setLanes (0, { settings.prepLaneStyle[0], settings.prepLaneShape[0] }, { settings.prepLaneStyle[1], settings.prepLaneShape[1] });
+        pw.setLaneSplit (0, settings.prepLaneSplit);
+        pw.setSingleColour (juce::Colour (settings.singleColour), settings.singleFollowsDeck);
+        pw.setStemLayers (settings.stemLayerOrder, settings.stemOpacity);
+        pw.setEditView (0, settings.editView[2]);
+        pw.setVisibleSeconds (settings.prepVisibleSeconds);
+        pw.forceRedraw();
+        prepView.setOverviewStyle (settings.prepOverviewStyle, settings.prepOverviewShape == 1,
+                                   settings.singleFollowsDeck ? Theme::deckColour (2) : juce::Colour (settings.singleColour));
+        prepView.setOverviewGrid (settings.overviewGrid);
+    }
+    for (auto* dp : { &deck1, &deck2 })
+    {
+        dp->setOverviewGrid (settings.overviewGrid);
+        dp->setNoteTiming (settings.noteLeadSeconds, settings.noteShowSeconds);
+    }
+    // What each stem control does (level / low-pass / high-pass), per deck
+    for (int d = 0; d < 3; ++d)
+        for (int s = 0; s < 4; ++s)
+            engine.deck (d == 2 ? (int) AudioEngine::prepDeck : d).post (Deck::Cmd::stemMode, (double) settings.stemModes[(size_t) d][(size_t) s], s);
     deck1.setEditView (settings.editView[0]);
     deck2.setEditView (settings.editView[1]);
     prepView.setEditView (settings.editView[2]);

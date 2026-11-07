@@ -32,7 +32,6 @@ public:
     void itemDropped (const SourceDetails&) override { dropHover = false; repaint(); if (onTrackDropped) onTrackDropped (deck); }
     void paintOverChildren (juce::Graphics& g) override
     {
-        paintNote (g);
         if (! dropHover) return;
         g.setColour (psyched::Colours::void_.withAlpha (0.7f));
         g.fillRect (getLocalBounds());
@@ -50,6 +49,13 @@ public:
     /** Edited view: the overview (and times) show the track as it will play. */
     void setEditView (bool on) { if (on != editView) { editView = on; overviewWidth = 0; repaint(); } }
     std::function<void (int deck)> onEditViewToggled;
+    /** Bar lines and minute marks over the overview. */
+    void setOverviewGrid (bool on) { if (on != overviewGrid) { overviewGrid = on; repaint(); } }
+    std::function<void()> onOverviewGridToggled;
+    /** How long a note locator shows: from `lead` seconds before it to `show` seconds after (0 = until the next note). */
+    void setNoteTiming (double lead, double show) { noteLead = lead; noteShow = show; repaint(); }
+    /** A stem's control (or all four: stem -1) changed between level / low-pass / high-pass. */
+    std::function<void (int deck, int stem, int mode)> onStemModeChanged;
 
     /** Overview waveform: style 1 = 3-band, 2 = RGB, 3 = single colour; half = bars from the bottom only. */
     void setOverviewStyle (int style, bool half, juce::Colour single)
@@ -97,7 +103,11 @@ private:
     int renderedFold = -1;
     void updateFold();
     void showEditVersionMenu (juce::Rectangle<float> area);
-    void paintNote (juce::Graphics& g);
+    void paintNotesBox (juce::Graphics& g, juce::Rectangle<float> r);
+    void showStemModeMenu (int stem, juce::Rectangle<float> area);
+    void setStemMode (int stem, int mode);
+    bool overviewGrid = false;
+    double noteLead = 2.0, noteShow = 8.0;
     const NoteLocator* noteShowing (double pos) const;
     bool dropHover = false;
     bool tempoDrag = false;

@@ -81,15 +81,14 @@ void AppSettings::load()
     num ("prepListWidth", prepListWidth);
     boolean ("prepEditC", prepEditC);
     boolean ("camelotKeys", camelotKeys);
-    boolean ("stemsSeparate", stemsSeparate);
     if (auto* dc = v["deckColours"].getArray())
-        for (int i = 0; i < juce::jmin (2, dc->size()); ++i)
+        for (int i = 0; i < juce::jmin (3, dc->size()); ++i)
             deckColours[(size_t) i] = (juce::uint32) (juce::int64) (*dc)[i];
 
     // Lanes (older settings had one main-lane mode and one original-lane style for both decks)
     if (auto* arr = v["laneStyle"].getArray())
     {
-        for (int i = 0; i < juce::jmin (4, arr->size()); ++i) laneStyle[(size_t) i / 2][(size_t) i % 2] = juce::jlimit (0, 3, (int) (*arr)[i]);
+        for (int i = 0; i < juce::jmin (4, arr->size()); ++i) laneStyle[(size_t) i / 2][(size_t) i % 2] = juce::jlimit (0, 4, (int) (*arr)[i]);
     }
     else if (v.hasProperty ("mainLaneMode") || v.hasProperty ("waveformStyle"))
     {
@@ -99,6 +98,28 @@ void AppSettings::load()
     }
     if (auto* arr = v["laneShape"].getArray())
         for (int i = 0; i < juce::jmin (4, arr->size()); ++i) laneShape[(size_t) i / 2][(size_t) i % 2] = juce::jlimit (0, 2, (int) (*arr)[i]);
+    // Older settings: one "stems in their own rows" switch for every stem lane
+    if ((bool) v.getProperty ("stemsSeparate", false))
+        for (auto& d : laneStyle) for (auto& l : d) if (l == 0) l = 4;
+    if (auto* arr = v["prepLane"].getArray(); arr != nullptr && arr->size() == 4)
+    {
+        prepLaneStyle = { juce::jlimit (0, 4, (int) (*arr)[0]), juce::jlimit (-1, 4, (int) (*arr)[1]) };
+        prepLaneShape = { juce::jlimit (0, 2, (int) (*arr)[2]), juce::jlimit (0, 2, (int) (*arr)[3]) };
+    }
+    num ("prepLaneSplit", prepLaneSplit);
+    num ("prepOverviewStyle", prepOverviewStyle);
+    num ("prepOverviewShape", prepOverviewShape);
+    num ("prepVisibleSeconds", prepVisibleSeconds);
+    boolean ("overviewGrid", overviewGrid);
+    if (auto* arr = v["stemColours"].getArray())
+        for (int i = 0; i < juce::jmin (4, arr->size()); ++i) stemColours[(size_t) i] = (juce::uint32) (juce::int64) (*arr)[i];
+    if (auto* arr = v["stemModes"].getArray())
+        for (int i = 0; i < juce::jmin (12, arr->size()); ++i) stemModes[(size_t) i / 4][(size_t) i % 4] = juce::jlimit (0, 2, (int) (*arr)[i]);
+    num ("noteShowSeconds", noteShowSeconds);
+    num ("noteLeadSeconds", noteLeadSeconds);
+    if (auto* arr = v["collapsedSections"].getArray())
+        for (auto& c : *arr) collapsedSections.addIfNotAlreadyThere (c.toString());
+    str ("browserColumns", browserColumns);
     num ("overviewStyle", overviewStyle);
     num ("overviewShape", overviewShape);
     if (auto* ev = v["editView"].getArray())
@@ -149,6 +170,12 @@ void AppSettings::load()
 
     visibleSeconds = juce::jlimit (1.0, 60.0, visibleSeconds);
     overviewStyle = juce::jlimit (1, 3, overviewStyle);
+    prepOverviewStyle = juce::jlimit (1, 3, prepOverviewStyle);
+    prepOverviewShape = juce::jlimit (0, 1, prepOverviewShape);
+    prepLaneSplit = juce::jlimit (0.1f, 0.9f, prepLaneSplit);
+    prepVisibleSeconds = juce::jlimit (1.0, 120.0, prepVisibleSeconds);
+    noteShowSeconds = juce::jlimit (0.0, 120.0, noteShowSeconds);
+    noteLeadSeconds = juce::jlimit (0.0, 30.0, noteLeadSeconds);
     overviewShape = juce::jlimit (0, 1, overviewShape);
     playheadPosition = juce::jlimit (0.1f, 0.9f, playheadPosition);
     maxFps = juce::jlimit (15, 240, maxFps);
@@ -175,8 +202,25 @@ void AppSettings::save() const
     o->setProperty ("prepListWidth", prepListWidth);
     o->setProperty ("prepEditC", prepEditC);
     o->setProperty ("camelotKeys", camelotKeys);
-    o->setProperty ("stemsSeparate", stemsSeparate);
-    o->setProperty ("deckColours", juce::Array<juce::var> { (juce::int64) deckColours[0], (juce::int64) deckColours[1] });
+    o->setProperty ("deckColours", juce::Array<juce::var> { (juce::int64) deckColours[0], (juce::int64) deckColours[1], (juce::int64) deckColours[2] });
+    o->setProperty ("prepLane", juce::Array<juce::var> { prepLaneStyle[0], prepLaneStyle[1], prepLaneShape[0], prepLaneShape[1] });
+    o->setProperty ("prepLaneSplit", prepLaneSplit);
+    o->setProperty ("prepOverviewStyle", prepOverviewStyle);
+    o->setProperty ("prepOverviewShape", prepOverviewShape);
+    o->setProperty ("prepVisibleSeconds", prepVisibleSeconds);
+    o->setProperty ("overviewGrid", overviewGrid);
+    {
+        juce::Array<juce::var> sc, sm, cs;
+        for (auto c : stemColours) sc.add ((juce::int64) c);
+        for (auto& d : stemModes) for (auto m : d) sm.add (m);
+        for (auto& c : collapsedSections) cs.add (c);
+        o->setProperty ("stemColours", sc);
+        o->setProperty ("stemModes", sm);
+        o->setProperty ("collapsedSections", cs);
+    }
+    o->setProperty ("noteShowSeconds", noteShowSeconds);
+    o->setProperty ("noteLeadSeconds", noteLeadSeconds);
+    o->setProperty ("browserColumns", browserColumns);
 
     o->setProperty ("laneStyle", juce::Array<juce::var> { laneStyle[0][0], laneStyle[0][1], laneStyle[1][0], laneStyle[1][1] });
     o->setProperty ("laneShape", juce::Array<juce::var> { laneShape[0][0], laneShape[0][1], laneShape[1][0], laneShape[1][1] });

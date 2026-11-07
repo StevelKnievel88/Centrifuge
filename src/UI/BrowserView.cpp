@@ -4,6 +4,7 @@
 #include "../Library/Anlz.h"
 #include "../Audio/MusicalKey.h"
 #include "CentrifugeRotor.h"
+#include "../Library/PreviewWaveCache.h"
 
 namespace orbit
 {
@@ -169,7 +170,7 @@ BrowserView::BrowserView (LibraryManager& lib, StemManager& stems) : library (li
     rootItem = std::make_unique<Item> (*this, nullptr, nullptr, "root", "root", false, false);
     tree.setRootItem (rootItem.get());
 
-    startTimer (4000);
+    startTimer (2000);
 }
 
 BrowserView::~BrowserView()
@@ -452,11 +453,14 @@ void BrowserView::paintCell (juce::Graphics& g, int row, int col, int w, int h, 
             const auto path = t.file.getFullPathName();
             const bool active = path == previewPath && previewPath.isNotEmpty();
             auto area = juce::Rectangle<float> (2.0f, 3.0f, (float) w - 4.0f, (float) h - 6.0f);
-            if (active)
             {
+                // The stop square's place is always kept, so the waveform doesn't change size when a preview starts
                 auto stop = area.removeFromLeft (area.getHeight());
-                g.setColour (previewPlaying ? Theme::output : Theme::textDim);
-                g.fillRect (stop.reduced (3.0f));
+                if (active)
+                {
+                    g.setColour (previewPlaying ? Theme::output : Theme::textDim);
+                    g.fillRect (stop.reduced (3.0f));
+                }
                 area.removeFromLeft (3.0f);
             }
             auto it = previewWaves.find (path);
@@ -464,8 +468,17 @@ void BrowserView::paintCell (juce::Graphics& g, int row, int col, int w, int h, 
             const auto& pd = it->second;
             if (pd.low.empty())
             {
-                g.setColour (Theme::line);
-                g.fillRect (area.withSizeKeepingCentre (area.getWidth(), 1.0f));
+                if (pd.missing)
+                {
+                    g.setColour (Theme::textFaint);
+                    g.setFont (psyched::Fonts::label (9.0f));
+                    g.drawText ("NOT ANALYSED", area, juce::Justification::centred, true);
+                }
+                else
+                {
+                    g.setColour (Theme::line);
+                    g.fillRect (area.withSizeKeepingCentre (area.getWidth(), 1.0f));
+                }
             }
             else
             {
@@ -552,12 +565,9 @@ void BrowserView::cellClicked (int row, int col, const juce::MouseEvent& e)
         const int w = hdr.getColumnWidth (11);
         float f = cellFraction (11, e);
         const bool active = t.file.getFullPathName() == previewPath && previewPath.isNotEmpty();
-        if (active)
-        {
-            const float stopW = (float) table.getRowHeight() - 6.0f;
-            if (f * (float) w < stopW + 2.0f) { if (onPreviewStop) onPreviewStop(); return; }
-            f = juce::jlimit (0.0f, 1.0f, (f * (float) w - stopW - 5.0f) / juce::jmax (1.0f, (float) w - stopW - 9.0f));
-        }
+        const float stopW = (float) table.getRowHeight() - 6.0f;
+        if (active && f * (float) w < stopW + 2.0f) { if (onPreviewStop) onPreviewStop(); return; }
+        f = juce::jlimit (0.0f, 1.0f, (f * (float) w - stopW - 5.0f) / juce::jmax (1.0f, (float) w - stopW - 9.0f));
         if (onPreview) onPreview (t, currentSource->kind == LibrarySource::Kind::pcCollection, (double) f);
         return;
     }
@@ -620,23 +630,12 @@ void BrowserView::setPreviewState (const juce::String& path, double fraction, bo
 
 void BrowserView::notePreviewWaveform (const juce::String& path, const WaveformData& w)
 {
-    constexpr int points = 160;
-    const int n = w.size();
-    if (n <= 0) return;
+    auto p = PreviewWaveCache::make (w);
+    if (p.isEmpty()) return;
+    PreviewWaveCache::save (path, p);   // so it's there straight away next time
     auto& pd = previewWaves[path];
-    pd.low.assign (points, 0); pd.mid.assign (points, 0); pd.high.assign (points, 0);
-    for (int i = 0; i < n; ++i)
-    {
-        const size_t b = (size_t) juce::jmin (points - 1, i * points / n);
-        if (w.style == WaveformData::Style::threeBand)
-        {
-            pd.low[b] = juce::jmax (pd.low[b], w.low[(size_t) i]);
-            pd.mid[b] = juce::jmax (pd.mid[b], w.mid[(size_t) i]);
-            pd.high[b] = juce::jmax (pd.high[b], w.high[(size_t) i]);
-        }
-        else
-            pd.mid[b] = juce::jmax (pd.mid[b], w.height[(size_t) i]);
-    }
+    pd.low = std::move (p.low); pd.mid = std::move (p.mid); pd.high = std::move (p.high);
+    pd.missing = false;
     table.repaint();
 }
 
@@ -652,26 +651,33 @@ void BrowserView::notePreviewMarks (const juce::String& path, const TrackMarks& 
 void BrowserView::requestPreviewWave (const TrackInfo& t)
 {
     const auto path = t.file.getFullPathName();
-    previewWaves[path] = {};   // placeholder while loading (and when there's no analysis yet)
+    previewWaves[path] = {};   // placeholder while loading
     std::optional<TrackVersion> version;
     if (versionFor) version = versionFor (t);
-    if (! t.anlzBase.existsAsFile() && ! version) return;
     const auto anlz = t.anlzBase;
     const double length = t.durationSec;
     juce::Component::SafePointer<BrowserView> safe (this);
     previewPool.addJob ([safe, anlz, path, version, length]
     {
+        // rekordbox's analysis if there is one, else the preview kept from Centrifuge's own analysis
         const auto data = anlz.existsAsFile() ? loadAnlz (anlz) : AnlzData();
-        WaveformData::Ptr w;
-        if (data.waveforms.numDetailEntries() > 0) w = WaveformData::fromAnlz (data.waveforms, WaveformData::Style::threeBand);
-        auto marks = version ? TrackMarks::fromVersion (*version, length, data.phrases)
-                             : TrackMarks::fromVersion (TrackVersion::fromRekordbox (data.beats, data.cues), length, data.phrases);
-        juce::MessageManager::callAsync ([safe, w, path, marks]
+        PreviewWave pw;
+        if (data.waveforms.numDetailEntries() > 0)
+            if (auto w = WaveformData::fromAnlz (data.waveforms, WaveformData::Style::threeBand)) pw = PreviewWaveCache::make (*w);
+        if (pw.isEmpty()) PreviewWaveCache::load (path, pw);
+        const bool marksToo = anlz.existsAsFile() || version.has_value();
+        TrackMarks marks;
+        if (marksToo)
+            marks = version ? TrackMarks::fromVersion (*version, length, data.phrases)
+                            : TrackMarks::fromVersion (TrackVersion::fromRekordbox (data.beats, data.cues), length, data.phrases);
+        juce::MessageManager::callAsync ([safe, pw, path, marks, marksToo]
         {
             if (safe == nullptr) return;
-            if (w != nullptr) safe->notePreviewWaveform (path, *w);
             auto& pd = safe->previewWaves[path];
-            if (! pd.haveMarks) { pd.marks = marks; pd.haveMarks = true; safe->table.repaint(); }
+            if (! pw.isEmpty() && pd.low.empty()) { pd.low = pw.low; pd.mid = pw.mid; pd.high = pw.high; }
+            pd.missing = pd.low.empty();
+            if (marksToo && ! pd.haveMarks) { pd.marks = marks; pd.haveMarks = true; }
+            safe->table.repaint();
         });
     });
 }
@@ -696,6 +702,9 @@ void BrowserView::timerCallback()
     // Stem cache status can change in the background (batch analysis).
     stemCache.clear();
     table.repaint();
+    // Column order / widths changed: keep them
+    if (onColumnsChanged)
+        if (const auto cs = getColumnState(); cs != lastColumnState) { lastColumnState = cs; onColumnsChanged (cs); }
 }
 
 //==============================================================================

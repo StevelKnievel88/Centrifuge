@@ -27,18 +27,18 @@ namespace Theme
     const juce::Colour bad         = P::orange;
     const juce::Colour waveBg      = juce::Colour (0xff06050b);
 
-    inline juce::Colour stemColour (int stem)
+    /** Stem colours (drums, bass, inst, vocals): set from Settings, used everywhere a stem is shown. */
+    inline std::array<juce::Colour, 4>& stemColours()
     {
-        static const juce::Colour c[] = { juce::Colour (0xffff3b3b),    // drums: red
-                                          juce::Colour (0xff2ee05a),    // bass: green
-                                          juce::Colour (0xff3d7bff),    // inst: blue
-                                          juce::Colour (0xffff3df2) };  // vocals: magenta
-        return c[juce::jlimit (0, 3, stem)];
+        static std::array<juce::Colour, 4> c { juce::Colour (0xffff3b3b), juce::Colour (0xff2ee05a), juce::Colour (0xff3d7bff), juce::Colour (0xffff3df2) };
+        return c;
     }
+    inline const std::array<juce::uint32, 4>& defaultStemColours() { static const std::array<juce::uint32, 4> c { 0xffff3b3b, 0xff2ee05a, 0xff3d7bff, 0xffff3df2 }; return c; }
+    inline juce::Colour stemColour (int stem) { return stemColours()[(size_t) juce::jlimit (0, 3, stem)]; }
 
-    /** Deck colours (layers): deck 1 cyan, deck 2 pink by default; set from Settings / the deck number. */
-    inline std::array<juce::Colour, 2>& deckColours() { static std::array<juce::Colour, 2> c { P::cyan, P::pink }; return c; }
-    inline juce::Colour deckColour (int deck) { return deckColours()[deck == 0 ? 0u : 1u]; }
+    /** Deck colours: deck 1 cyan, deck 2 pink, PREP (index 2 and up) yellow by default; set from Settings / the deck number. */
+    inline std::array<juce::Colour, 3>& deckColours() { static std::array<juce::Colour, 3> c { P::cyan, P::pink, P::yellow }; return c; }
+    inline juce::Colour deckColour (int deck) { return deckColours()[(size_t) juce::jlimit (0, 2, deck)]; }
 
     juce::Font font (float height, bool bold = false);      // Manrope
     juce::Font mono (float height, bool bold = false);      // JetBrains Mono

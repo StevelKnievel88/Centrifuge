@@ -23,9 +23,8 @@ struct AppSettings
     int prepListWidth = 300;   // PREP page: width of the locators / hot cues / phrases list
     int sumToMaster = -1;              // -1 auto, 0 off, 1 on
     double mp3OffsetMs = 0.0;
-    std::array<juce::uint32, 2> deckColours { 0xff2ee6d6, 0xffff3fa0 };
+    std::array<juce::uint32, 3> deckColours { 0xff2ee6d6, 0xffff3fa0, 0xffffd339 };   // deck 1, deck 2, PREP
     bool camelotKeys = false;          // show keys in Camelot notation
-    bool stemsSeparate = false;        // stems each in their own row in the waveform (not overlaid)
     int analysisRange = 1;             // tempo range for analysing music added from files: 0 = 70-140, 1 = 88-175, 2 = 100-200, 3 = 120-240
     std::pair<double, double> analysisBpmRange() const
     {
@@ -35,12 +34,25 @@ struct AppSettings
     }          // grid/cue correction for MP3s if your decoder differs from rekordbox's
 
     // Waveforms
-    // Each deck's top [0] and bottom [1] lane: style 0 = stems, 1 = 3-band, 2 = RGB, 3 = single colour;
+    // Each deck's top [0] and bottom [1] lane: style 0 = stems (overlaid), 1 = 3-band, 2 = RGB, 3 = single colour,
+    // 4 = stems (a row each), -1 = off (PREP's second lane only);
     // shape 0 = full, 1 = half (bars grow up), 2 = half (bars grow down).
     std::array<std::array<int, 2>, 2> laneStyle { { { 0, 1 }, { 0, 1 } } };
     std::array<std::array<int, 2>, 2> laneShape { { { 0, 0 }, { 0, 0 } } };
     int overviewStyle = 1;             // deck overview: 1 = 3-band, 2 = RGB, 3 = single colour
     int overviewShape = 0;             // 0 = full, 1 = half
+    // PREP's waveform: its own lanes (the second can be off), split, overview and zoom
+    std::array<int, 2> prepLaneStyle { 0, -1 }, prepLaneShape { 0, 0 };
+    float prepLaneSplit = 0.6f;
+    int prepOverviewStyle = 1, prepOverviewShape = 0;
+    double prepVisibleSeconds = 8.0;
+    bool overviewGrid = false;         // bar lines and minute marks over the overviews
+    std::array<juce::uint32, 4> stemColours { 0xffff3b3b, 0xff2ee05a, 0xff3d7bff, 0xffff3df2 };   // drums, bass, inst, vocals
+    std::array<std::array<int, 4>, 3> stemModes {};   // per deck (1, 2, PREP) and stem: 0 level, 1 low-pass, 2 high-pass
+    double noteShowSeconds = 8.0;      // a note locator stays up this long after playback reaches it (0 = until the next one)
+    double noteLeadSeconds = 2.0;      // ... and shows this long before
+    juce::StringArray collapsedSections;   // Settings sections folded away
+    juce::String browserColumns;       // browser column order and widths
     juce::uint32 singleColour = 0xff3d9bff;
     bool singleFollowsDeck = false;
     std::array<bool, 3> editView { true, true, true };   // decks 1, 2 and PREP: show the edited version (as it will play)    // single-colour waveforms use each deck's colour instead

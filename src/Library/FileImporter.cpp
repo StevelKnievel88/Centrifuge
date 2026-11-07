@@ -1,6 +1,7 @@
 #include "FileImporter.h"
 #include "TagReader.h"
 #include "../Audio/MusicalKey.h"
+#include "PreviewWaveCache.h"
 #include <thread>
 
 namespace orbit
@@ -91,6 +92,10 @@ bool FileImporter::analyseFile (AudioFileLoader& loader, const juce::File& f, co
     ao.hintBpm = tags.bpm;
     const auto r = TrackAnalyser::analyse (*audio, ao, cancel);
     if (cancel != nullptr && cancel->load()) return false;
+
+    // The browser's preview waveform, kept so it shows straight away from now on
+    if (auto w = WaveformData::fromAudio (*audio))
+        PreviewWaveCache::save (f.getFullPathName(), PreviewWaveCache::make (*w));
 
     info = {};
     info.file = f;

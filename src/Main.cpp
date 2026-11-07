@@ -562,6 +562,14 @@ private:
                 d.post (Deck::Cmd::pause);
                 main.showPage (4);
             }
+            if (k == 34)
+            {
+                // PREP with two lanes (stems a row each over 3-band), the overview grid on
+                main.getPrep().getWaves().setLanes (0, { 4, 0 }, { 1, 0 });
+                main.getPrep().setOverviewGrid (true);
+                main.getDeckPanel (0).setOverviewGrid (true);
+                main.getDeckPanel (1).setOverviewGrid (true);
+            }
             if (k == 36)
             {
                 snap ("11_edits_prep.png");
@@ -572,7 +580,52 @@ private:
             }
             if (k == 39) snap ("12_edits_play.png");
             if (k == 40) main.showPage (2);
-            if (k == 42) { snap ("13_stems_page.png"); std::printf ("edit test done\n"); std::fflush (stdout); stage = 40; }
+            if (k == 42)
+            {
+                snap ("13_stems_page.png");
+                main.showPage (3);
+                // stem controls as filters: bass low-pass at 30 %, inst high-pass at 50 %, while deck 1 plays
+                auto& d0 = main.getEngine().deck (0);
+                if (! d0.state().stemsReady.load())
+                    if (auto t = d0.getLoadedTrack(); t != nullptr && t->audio != nullptr)
+                    {
+                        // no separation model here: fake stems (a quarter of the track each) so the filters run
+                        StemAudio::Ptr st = new StemAudio();
+                        st->sampleRate = t->audio->sampleRate;
+                        st->numFrames = t->audio->numFrames;
+                        for (int c = 0; c < 8; ++c)
+                        {
+                            auto& src = (c % 2) == 0 ? t->audio->left : t->audio->right;
+                            st->channels[(size_t) c].resize ((size_t) st->numFrames);
+                            for (int64_t i = 0; i < st->numFrames; ++i) st->channels[(size_t) c][(size_t) i] = StemAudio::fromFloat (src[(size_t) i] * 0.25f);
+                        }
+                        st->validFrames = st->numFrames;
+                        main.getEngine().getReleasePool().add (st);
+                        d0.setStemsForUi (st);
+                        Deck::Command sc;
+                        sc.cmd = Deck::Cmd::attachStems;
+                        sc.ptr = st.get();
+                        sc.serial = d0.state().trackSerial.load();
+                        d0.post (sc);
+                    }
+                d0.post (Deck::Cmd::stemMode, 1.0, 1);
+                d0.post (Deck::Cmd::stemMode, 2.0, 2);
+                d0.post (Deck::Cmd::stemGain, 0.3, 1);
+                d0.post (Deck::Cmd::stemGain, 0.5, 2);
+                d0.post (Deck::Cmd::seekSeconds, 20.0);
+                d0.post (Deck::Cmd::play);
+            }
+            if (k == 44) snap ("14_settings.png");
+            if (k == 52)
+            {
+                const auto& st = main.getEngine().deck (0).state();
+                std::printf ("filter test: pos %.2f stems %d modes %d %d %d %d peak %.3f %.3f\n", st.positionSec.load(), (int) st.stemsReady.load(),
+                             st.stemMode[0].load(), st.stemMode[1].load(), st.stemMode[2].load(), st.stemMode[3].load(), st.peakL.load(), st.peakR.load());
+                main.showPage (0);
+                main.getEngine().deck (0).post (Deck::Cmd::pause);
+                main.getEngine().deck (0).post (Deck::Cmd::seekSeconds, 0.6);   // the grid carries on before the track starts
+            }
+            if (k == 54) { snap ("15_play_filters.png"); std::printf ("edit test done\n"); std::fflush (stdout); stage = 40; }
         }
         else if (stage == 20)
         {

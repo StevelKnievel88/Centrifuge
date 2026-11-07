@@ -77,6 +77,14 @@ public:
     void resized() override;
     void paint (juce::Graphics&) override;
 
+    /** Column order and widths (to keep between sessions). */
+    juce::String getColumnState() const { return table.getHeader().toString(); }
+    void setColumnState (const juce::String& s) { if (s.isNotEmpty()) { table.getHeader().restoreFromString (s); lastColumnState = getColumnState(); } }
+    std::function<void (const juce::String&)> onColumnsChanged;
+  private:
+    juce::String lastColumnState;
+  public:
+
 private:
     class Item;
     friend class Item;
@@ -123,6 +131,7 @@ private:
     struct PreviewData
     {
         std::vector<uint8_t> low, mid, high;   // empty = being loaded / no analysis
+        bool missing = false;                  // looked: the track hasn't been analysed yet
         TrackMarks marks;
         bool haveMarks = false;
     };

@@ -286,4 +286,83 @@ inline void paintPhraseStripFolded (juce::Graphics& g, juce::Rectangle<float> st
         }
 }
 
+/** Bar lines and minute marks over an overview (the overview grid toggle). Minutes are of the track as it plays
+    (the edited view's timeline); bar lines are drawn every 4, 8, 16 ... bars so they never crowd. */
+inline void paintOverviewGrid (juce::Graphics& g, juce::Rectangle<float> r, const BeatGrid& grid, double sourceLength, const TimeFold* fold)
+{
+    if (sourceLength <= 0.0) return;
+    const double dlen = juce::jmax (0.001, fold != nullptr ? fold->displayLength (sourceLength) : sourceLength);
+    auto xOfD = [&] (double d) { return r.getX() + (float) (d / dlen) * r.getWidth(); };
+    juce::Graphics::ScopedSaveState ss (g);
+    g.reduceClipRegion (r.toNearestInt());
+    if (grid.isValid())
+    {
+        // bars per line: the smallest power of two (from 4) that keeps lines at least 7 px apart
+        const double barSec = grid.beatLengthAt (sourceLength * 0.5) * 4.0;
+        const double pxPerBar = r.getWidth() * barSec / dlen;
+        int every = 4;
+        while (every < 256 && pxPerBar * every < 7.0) every *= 2;
+        int bar = 0;
+        grid.forEachBeat (0.0, sourceLength, [&] (double t, int beatInBar, int)
+        {
+            if (beatInBar != 1) return;
+            const bool major = bar % (every * 4) == 0;
+            if (bar++ % every != 0) return;
+            g.setColour (juce::Colours::white.withAlpha (major ? 0.32f : 0.14f));
+            if (fold == nullptr || fold->isEmpty()) g.fillRect (xOfD (t) - 0.5f, r.getY(), 1.0f, r.getHeight());
+            else for (double d : fold->allDisplay (t)) g.fillRect (xOfD (d) - 0.5f, r.getY(), 1.0f, r.getHeight());
+        });
+    }
+    // minute marks along the top
+    g.setFont (psyched::Fonts::mono (8.5f, true));
+    for (int m = 1; m * 60.0 < dlen; ++m)
+    {
+        const float x = xOfD (m * 60.0);
+        g.setColour (juce::Colours::white.withAlpha (0.75f));
+        g.fillRect (x - 0.5f, r.getY(), 1.0f, 5.0f);
+        g.setColour (juce::Colours::black.withAlpha (0.6f));
+        g.fillRect (x + 1.0f, r.getY(), 14.0f, 10.0f);
+        g.setColour (juce::Colours::white.withAlpha (0.85f));
+        g.drawText (juce::String (m), juce::Rectangle<float> (x + 1.0f, r.getY(), 14.0f, 10.0f), juce::Justification::centredLeft);
+    }
+}
+
+/** Stem separation progress as a strip under an overview: the separated part of the track lit, so it can be read
+    against the track and the playhead. (fraction = separated share of the track, from its start) */
+inline void paintStemProgressStrip (juce::Graphics& g, juce::Rectangle<float> strip, float fraction, double sourceLength,
+                                    const TimeFold* fold, juce::Colour colour)
+{
+    g.setColour (Theme::line.withAlpha (0.7f));
+    g.fillRect (strip);
+    if (sourceLength <= 0.0) return;
+    const double done = sourceLength * juce::jlimit (0.0f, 1.0f, fraction);
+    if (fold == nullptr || fold->isEmpty())
+    {
+        g.setColour (colour);
+        g.fillRect (strip.withWidth (strip.getWidth() * fraction));
+        return;
+    }
+    const double dlen = juce::jmax (0.001, fold->displayLength (sourceLength));
+    g.setColour (colour);
+    for (auto& p : fold->pieces)
+    {
+        const double a = p.src0, b = juce::jmin (p.src1, done);
+        if (b <= a) continue;
+        const float x0 = strip.getX() + (float) (p.disp0 / dlen) * strip.getWidth();
+        const float x1 = strip.getX() + (float) ((p.disp0 + (b - a)) / dlen) * strip.getWidth();
+        g.fillRect (juce::Rectangle<float>::leftTopRightBottom (x0, strip.getY(), juce::jmax (x0 + 1.0f, x1), strip.getBottom()));
+    }
+}
+
+/** A small toggle that draws a grid icon (the overview grid switch). */
+inline void paintGridToggle (juce::Graphics& g, juce::Rectangle<float> r, bool on, juce::Colour colour)
+{
+    psyched::paintChip (g, r, {}, colour, on ? psyched::ChipState::on : psyched::ChipState::off);
+    auto ic = r.withSizeKeepingCentre (juce::jmin (12.0f, r.getWidth() - 6.0f), juce::jmin (12.0f, r.getHeight() - 6.0f));
+    g.setColour (on ? colour : Theme::textDim);
+    for (int k = 0; k < 3; ++k)
+        g.fillRect (ic.getX() + (float) k * ic.getWidth() / 2.0f - (k == 2 ? 1.0f : 0.0f), ic.getY(), 1.0f, ic.getHeight());
+    g.fillRect (ic.getX(), ic.getY(), ic.getWidth(), 1.0f);
+}
+
 } // namespace orbit

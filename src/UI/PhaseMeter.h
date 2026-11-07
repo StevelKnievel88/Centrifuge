@@ -84,7 +84,7 @@ private:
     void paintRow (juce::Graphics& g, int d, juce::Rectangle<float> r)
     {
         const bool prep = d >= 2;
-        const auto col = prep ? Theme::accent : Theme::deckColour (d);
+        const auto col = prep ? Theme::deckColour (2) : Theme::deckColour (d);
         auto badge = r.removeFromLeft (prep ? r.getHeight() * 2.6f : r.getHeight() + 2.0f).withSizeKeepingCentre (prep ? r.getHeight() * 2.4f : r.getHeight(), r.getHeight());
         g.setColour (col);
         g.fillRect (badge);

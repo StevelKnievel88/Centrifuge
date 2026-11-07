@@ -849,6 +849,14 @@ void Deck::apply (const Command& c)
             break;
         }
 
+        case Cmd::stemMode:
+        {
+            const int m = juce::jlimit (0, 2, (int) c.value);
+            for (int s = 0; s < 4; ++s)
+                if (c.index < 0 || c.index == s) stemMode[(size_t) s] = m;
+            break;
+        }
+
         case Cmd::stemReset:
             if (c.down) { stemMuted.fill (false); stemTarget.fill (1.0f); }
             break;
@@ -897,16 +905,19 @@ inline void Deck::sampleAt (double p, float& l, float& r, const float* g) const 
     r = hermite (r0, r1, r2, r3, t);
 }
 
-void Deck::stemAutomationAt (double sec, std::array<float, 4>& g) const noexcept
+void Deck::stemAutomationAt (double sec, std::array<float, 4>& g, std::array<int, 4>* modes) const noexcept
 {
     // Each stem's gain at this point: every stem locator up to here applied in turn (fades part-way if we're inside one).
+    // A locator's mode says whether the change is a level fade or a filter sweep.
     g = { 1, 1, 1, 1 };
+    if (modes != nullptr) *modes = { 0, 0, 0, 0 };
     for (auto& l : track->stemLocs)
     {
         if (l.timeSec > sec) break;
         for (size_t s = 0; s < 4; ++s)
         {
             if (l.target[s] < 0) continue;
+            if (modes != nullptr) (*modes)[s] = l.mode;
             const float to = l.target[s] > 0 ? 1.0f : 0.0f;
             if (l.fadeSec > 0.001 && sec < l.timeSec + l.fadeSec)
                 g[s] = g[s] + (to - g[s]) * (float) ((sec - l.timeSec) / l.fadeSec);
@@ -977,8 +988,9 @@ void Deck::readResampled (float* outL, float* outR, int n, double step)
     std::array<float, 4> target;
     bool stemsActive = false;
     std::array<float, 4> autoG { 1, 1, 1, 1 };
+    std::array<int, 4> autoMode { 0, 0, 0, 0 };
     if (skipsOn && ! track->stemLocs.empty())
-        stemAutomationAt ((pos + n * std::abs (step)) / srcRate, autoG);
+        stemAutomationAt ((pos + n * std::abs (step)) / srcRate, autoG, &autoMode);
     stemAutoNow = autoG;
     for (size_t s = 0; s < 4; ++s)
     {
@@ -987,6 +999,21 @@ void Deck::readResampled (float* outL, float* outR, int n, double step)
     }
     stemsActive = stemsActive && stems != nullptr && stems->numFrames == a.numFrames;
     stemsValid = stemsActive ? stems->validFrames.load (std::memory_order_acquire) : 0;
+
+    // Stems whose control (or stem locator) is a filter: they're taken out of the level mix and filtered on their own
+    // (low-pass closes down / high-pass closes up as the control goes down; fully down = silent).
+    int numFiltered = 0;
+    std::array<int, 4> filtered {};
+    for (size_t s = 0; s < 4; ++s)
+    {
+        auto& f = stemFilters[s];
+        const int mode = autoG[s] < 0.999f ? autoMode[s] : stemMode[s];
+        const bool on = stemsActive && mode != 0 && (target[s] < 0.999f || stemCurrent[s] < 0.999f);
+        if (on && (! f.on || f.mode != mode)) f = {};   // starts clean
+        f.on = on;
+        f.mode = mode;
+        if (on) filtered[(size_t) numFiltered++] = (int) s;
+    }
 
     // Fast path: straight copy (no resampling, no stems, no loop or skip crossing, no cross-fade running)
     const bool skipInBlock = (nextSkip >= 0 && skipFromF < pos + n + 1.0) || (autoNext >= 0 && autoStartF < pos + n * step + 1.0)
@@ -1003,6 +1030,25 @@ void Deck::readResampled (float* outL, float* outR, int n, double step)
 
     float g[4];
     const float invN = n > 0 ? 1.0f / (float) n : 0.0f;
+    const float twoPiOverFs = juce::MathConstants<float>::pi / (float) deviceRate;
+    std::array<float, 4> fa1 {}, fa2 {}, fa3 {}, famp {};
+    constexpr float fk = 1.1f;   // a touch of resonance
+    auto filterCoeffs = [&] (int s, float v)
+    {
+        const bool lp = stemFilters[(size_t) s].mode == 1;
+        const float fc = juce::jmin (0.45f * (float) deviceRate, 20.0f * std::pow (1000.0f, lp ? v : 1.0f - v));
+        const float gg = std::tan (twoPiOverFs * fc);
+        fa1[(size_t) s] = 1.0f / (1.0f + gg * (gg + fk));
+        fa2[(size_t) s] = gg * fa1[(size_t) s];
+        fa3[(size_t) s] = gg * fa2[(size_t) s];
+        famp[(size_t) s] = juce::jmin (1.0f, v / 0.06f);   // the last bit fades out, so fully down is silent
+    };
+    auto stemAt = [&] (int s, double p, float& l, float& r)
+    {
+        float oh[4] = { 0, 0, 0, 0 };
+        oh[s] = 1.0f;
+        sampleAt (p, l, r, oh);
+    };
 
     for (int i = 0; i < n; ++i)
     {
@@ -1088,18 +1134,52 @@ void Deck::readResampled (float* outL, float* outR, int n, double step)
             const float t = (float) (i + 1) * invN;
             for (size_t s = 0; s < 4; ++s)
                 g[s] = stemCurrent[s] + (target[s] - stemCurrent[s]) * t;
+            for (int k = 0; k < numFiltered; ++k)
+            {
+                const int s = filtered[(size_t) k];
+                if ((i & 31) == 0) filterCoeffs (s, g[s]);   // the sweep follows the control every 32 samples
+                g[s] = 0.0f;                                  // filtered stems are added below
+            }
             gp = g;
         }
 
+        const float w = xfRemain > 0 ? (float) xfRemain / (float) xfadeLen : 0.0f;
         float l, r;
         sampleAt (pos, l, r, gp);
         if (xfRemain > 0)
         {
             float ol, orr;
             sampleAt (xfPos, ol, orr, gp);
-            const float w = (float) xfRemain / (float) xfadeLen;
             l = l * (1.0f - w) + ol * w;
             r = r * (1.0f - w) + orr * w;
+        }
+        if (numFiltered > 0 && (int64_t) pos + 2 < stemsValid)
+            for (int k = 0; k < numFiltered; ++k)
+            {
+                const int s = filtered[(size_t) k];
+                float sl, sr;
+                stemAt (s, pos, sl, sr);
+                if (xfRemain > 0)
+                {
+                    float ol, orr;
+                    stemAt (s, xfPos, ol, orr);
+                    sl = sl * (1.0f - w) + ol * w;
+                    sr = sr * (1.0f - w) + orr * w;
+                }
+                auto& f = stemFilters[(size_t) s];
+                const float a1 = fa1[(size_t) s], a2 = fa2[(size_t) s], a3 = fa3[(size_t) s];
+                auto run = [&] (float x, float& s1, float& s2)
+                {
+                    const float v3 = x - s2, v1 = a1 * s1 + a2 * v3, v2 = s2 + a2 * s1 + a3 * v3;
+                    s1 = 2.0f * v1 - s1;
+                    s2 = 2.0f * v2 - s2;
+                    return f.mode == 1 ? v2 : x - fk * v1 - v2;
+                };
+                l += famp[(size_t) s] * run (sl, f.s1L, f.s2L);
+                r += famp[(size_t) s] * run (sr, f.s1R, f.s2R);
+            }
+        if (xfRemain > 0)
+        {
             xfPos += step;
             --xfRemain;
         }
@@ -1304,6 +1384,7 @@ void Deck::publish()
     for (size_t s = 0; s < 4; ++s)
         pub.stemGain[s] = stemMuted[s] ? 0.0f : stemTarget[s];
     for (size_t s = 0; s < 4; ++s) pub.stemAuto[s] = stemAutoNow[s];
+    for (size_t s = 0; s < 4; ++s) pub.stemMode[s] = stemMode[s];
     pub.playSegment = playSeg;
 
     for (int i = 0; i < maxLocators; ++i)

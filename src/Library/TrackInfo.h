@@ -43,6 +43,7 @@ struct StemLocator
     double timeSec = 0.0;
     std::array<int, 4> target { -1, -1, -1, -1 };   // drums, bass, inst, vocals: 1 on, 0 off, -1 unchanged
     float fadeBeats = 0.0f;
+    int mode = 0;                                    // how the change happens: 0 level fade, 1 low-pass sweep, 2 high-pass sweep
     double fadeSec = 0.0;                            // worked out from the beat grid when loaded
     juce::String name;
 };
@@ -73,19 +74,9 @@ struct EditVersion
     std::vector<LoopMode> loopModes;                 // loop locators by start: mode and cycles
 };
 
-/** Colour for a phrase name (rekordbox's sections; anything else gets a neutral colour). */
-inline juce::Colour defaultPhraseColour (const juce::String& name)
-{
-    const auto n = name.toLowerCase();
-    if (n.startsWith ("intro"))  return juce::Colour (0xffe0565b);
-    if (n.startsWith ("up"))     return juce::Colour (0xffff9f40);
-    if (n.startsWith ("down"))   return juce::Colour (0xff4f7dff);
-    if (n.startsWith ("chorus")) return juce::Colour (0xff3cd36a);
-    if (n.startsWith ("verse"))  return juce::Colour (0xff36b5e6);
-    if (n.startsWith ("bridge")) return juce::Colour (0xffffd339);
-    if (n.startsWith ("outro"))  return juce::Colour (0xff9a6cff);
-    return juce::Colour (0xff8f88a8);
-}
+/** Colour for a phrase name: the phrase preset's colour (Edit presets on PREP), else rekordbox's section colours,
+    else a neutral colour. (PhrasePresets.cpp) */
+juce::Colour defaultPhraseColour (const juce::String& name);
 
 struct Beat
 {

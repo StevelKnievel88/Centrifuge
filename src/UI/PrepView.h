@@ -2,6 +2,7 @@
 #include <set>
 #include <map>
 #include "WaveformRender.h"
+#include "ScrollingWaveforms.h"
 #include "ColourPicker.h"
 #include "../App/TrackEditor.h"
 
@@ -43,6 +44,14 @@ public:
     std::function<void()> onEditViewToggled;
     void setListWidth (int w) { listWidth = juce::jlimit (200, 900, w); resized(); repaint(); }
 
+    /** The zoomed waveform: lanes (the second can be off), split, colours and zoom - like the play decks. */
+    ScrollingWaveforms& getWaves() { return waves; }
+    void setOverviewStyle (int style, bool half, juce::Colour single) { overviewStyle = style; overviewHalf = half; singleColour = single; overviewWidth = 0; repaint(); }
+    void setOverviewGrid (bool on) { if (on != overviewGrid) { overviewGrid = on; repaint(); } }
+    std::function<void()> onOverviewGridToggled;
+    std::function<void (juce::Colour)> onDeckColour;
+    std::function<void (int stem, int mode)> onStemModeChanged;
+
 private:
     struct Region { juce::Rectangle<float> r; juce::String action; int kind; };   // kind: 0 button, 1 overview, 2 zoom wave, 3 pad, 4 list row, 5 bpm,
                                                                                     //       6 list colour icon, 7 list delete (x), 8 list loop mode
@@ -53,7 +62,12 @@ private:
     void post (Deck::Cmd cmd, double value = 0.0, int index = 0, bool down = true);
     Deck& deck() { return engine.deck (deckIndex); }
     const Region* regionAt (juce::Point<float> p) const;
-    void paintWaveArea (juce::Graphics&, juce::Rectangle<int> area);
+    void paintStems (juce::Graphics&, juce::Rectangle<float> area);
+    void showStemModeMenu (int stem, juce::Rectangle<float> area);
+    void showDeckColourMenu (juce::Rectangle<float> area);
+    void addNoteAtPlayhead();
+    void addStemLocatorAtPlayhead (juce::Rectangle<float> area);
+    void addLoopLocatorAtPlayhead();
     void paintList (juce::Graphics&, juce::Rectangle<float> area);
     std::vector<ListEntry> listEntries() const;
     void showEntryMenu (const ListEntry& e, juce::Rectangle<float> area);
@@ -94,9 +108,12 @@ private:
     std::vector<Region> regions;
     juce::Image overview;
     int overviewWidth = 0;
-    WaveformTileCache tiles;
-    PositionSmoother smoother;
-    double visibleSeconds = 8.0;
+    int overviewStyle = 1;
+    bool overviewHalf = false, overviewGrid = false;
+    juce::Colour singleColour { 0xff3d9bff };
+    ScrollingWaveforms waves { engine, { AudioEngine::prepDeck } };
+    juce::Rectangle<int> rowStems;
+    int dragStem = -1;
     double loopBeats = 4.0;
     int listScroll = 0;
     bool editView = true;
@@ -106,7 +123,6 @@ private:
     int renderedFold = -1;
     void updateFold();
     double displayNow() const;              // the playhead on the display timeline (edited view)
-    double sourceAtX (float x) const;       // track time under x in the zoomed waveform
     void showEditVersionMenu (juce::Rectangle<float> area);
     void showAddMenu (juce::Rectangle<float> area);
     void showStemEditor (int index, juce::Rectangle<float> area);
@@ -123,9 +139,7 @@ private:
     int listTab = 0;          // 0 locators / loops / skips, 1 hot cues, 2 phrases
     int phraseSelected = -1;
     juce::String heldAction;
-    bool scrubbing = false, dropHover = false, hoverList = false;
-    double scrubStartTime = 0.0;
-    float scrubStartX = 0.0f;
+    bool dropHover = false, hoverList = false;
 };
 
 } // namespace orbit

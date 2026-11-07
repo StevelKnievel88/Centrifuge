@@ -113,17 +113,20 @@ Non-destructive edits
 All made on the PREP page, saved with the track in Centrifuge's library; the
 audio file is never touched. The SKIP button (skips on/off) switches every
 edit below on or off live.
-- STEM LOCATORS: + ADD AT PLAYHEAD... > Stem locator. From that point each
-  stem is switched off, on, or left alone - cut, or faded over 1-32 beats.
-  Click its icon in the list to change it. Needs the track's stems (decks
-  separate them; PREP uses stems already made).
+- STEM LOCATORS: STEM LOC (under PREP's waveform) or + ADD AT PLAYHEAD... >
+  Stem locator. From that point each stem fades out, fades in, or is left
+  alone - straight away or over 1-32 beats - as a level fade or a low-pass /
+  high-pass filter sweep. Click its icon in the list to change it. Needs the
+  track's stems (decks separate them; PREP uses stems already made).
 - PHRASE REPEAT: the x1 chip on a phrase (PHRASES tab) steps x1 > x2 > x3 >
   x4 > x8 - the phrase plays that many times in a row.
 - SECTION REARRANGE: drag a phrase by its grip in the PHRASES tab to change
   the order the track plays in (RESET ORDER puts it back). Playback jumps at
   the joins; with a rearrangement the track ends when the last section ends.
-- NOTE LOCATORS: + ADD AT PLAYHEAD... > Note. A reminder that pops up over
-  the deck's title from 2 seconds before to 8 seconds after its point.
+- NOTE LOCATORS: NOTE (under PREP's waveform) or + ADD AT PLAYHEAD... > Note.
+  A reminder shown in each deck's NOTES box (next to the beat jumps), from a
+  little before its point until a set time after - both set in Settings >
+  NOTE LOCATORS (2 s before / 8 s after by default; 0 = until the next note).
 - EDIT VERSIONS: the EDIT chip (PREP header and every deck) picks a named set
   of skips, loop modes, stem locators, phrase order and repeats ("Radio
   edit", "Extended"...). On PREP: save the current edits as a new version,
@@ -134,11 +137,39 @@ edit below on or off live.
   play (skips folded out, phrases in play order, repeats shown again, a
   dashed line at each join). Off: the whole track as recorded, every marker.
 
+Stem controls: level or filter
+------------------------------
+Each stem button on a deck (and on PREP) can work as a volume (LVL), a
+low-pass filter (LP - closes down as the control goes down) or a high-pass
+filter (HP - closes up). Right-click a stem for that stem, or click the chip
+before the four to switch all of them (LVL > LP > HP; MIX = they differ).
+Your mapping is unchanged: the same knob now fades or filters. Remembered
+per deck.
+
+Waveforms and overviews
+-----------------------
+- Each lane: stems overlaid, stems a row each (drums, bass, inst, vocals),
+  3-band, RGB or single colour - full or half height (Settings).
+- Drag the line between a deck's two lanes: both decks take the same split.
+- The beat grid carries on before a track starts and after it ends.
+- The grid button left of each overview turns on bar lines and minute marks
+  over the overviews.
+- Stem separation progress shows as a strip under the deck's overview, so
+  you can see how far it has got against the track and the playhead.
+- Settings > STEM COLOURS AND LAYERS: each stem's colour (used everywhere).
+- Settings sections fold away: click a section's title.
+
 PREP page (F5)
 --------------
 - One track on its own, for getting it ready: big zoomable waveform (drag
   to scrub, wheel to zoom), overview (click to go anywhere), the beat grid
   editor, hot cues A-H, loops, locators, skips and beat jumps.
+- PREP's waveform has its own settings (Settings > PREP - WAVEFORMS): the
+  lane style, an optional second lane, the split between them, the overview
+  style. Click the P badge to change PREP's colour.
+- EDITED (edited view) and the overview grid button are left of the overview;
+  the stem controls are to its right. Under the waveform: LOCATOR, LOOP LOC,
+  STEM LOC, NOTE and SKIP add at the playhead.
 - On the right, three tabs:
     LOCATORS  every locator, loop locator and skip, in track order. Click
               a loop locator's mode text (loop / active / cycle) to step
@@ -155,8 +186,11 @@ PREP page (F5)
   icon (or right-click) to colour them all at once, or press Delete.
 - Drag the list's left edge to make it wider or narrower (remembered).
 - + ADD LOCATOR AT PLAYHEAD (LOCATORS tab) and + ADD PHRASE AT PLAYHEAD
-  (PHRASES tab). The phrase menu's "Edit presets" adds, renames, removes and
-  reorders the preset names (or goes back to the standard ones).
+  (PHRASES tab). The phrase menu's "Edit presets" adds, renames, recolours,
+  removes and reorders the presets (or goes back to the standard ones). A
+  preset's colour is what new phrases of that name get - e.g. Drop green,
+  Breakdown red, Intro pink - and "Recolour this track's phrases" applies the
+  preset colours to a track you've already done.
 - Colours: every colour menu has the presets, then your saved colours, then
   "Custom colour...". In the custom picker, + SAVE COLOUR asks for a name and
   adds it to your saved colours; "Delete a saved colour" removes one.
@@ -176,7 +210,10 @@ Browser
   column updates.
 - PREVIEW column: a shrunk overview of each track (3-band waveform, hot
   cues, locators, skips and phrases) - click it to play from there on the
-  preview output; click the square to stop.
+  preview output; click the square to stop. Tracks Centrifuge analysed keep
+  their preview (it shows straight away after a restart); a track nobody has
+  analysed yet says NOT ANALYSED.
+- Column order and widths are remembered.
 - Drag a track onto deck 1 or 2 (or the top / bottom half of the waveforms)
   to load it.
 - RATING (click the stars) and PLAYS columns. A play is counted once a

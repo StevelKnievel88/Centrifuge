@@ -49,6 +49,8 @@ public:
     void showPage (int page);
     void showAbout() { about.show(); }
     ScrollingWaveforms& getWaves() { return waves; }
+    PrepView& getPrep() { return prepView; }
+    DeckPanel& getDeckPanel (int d) { return d == 0 ? deck1 : deck2; }
     void importForDemo (std::shared_ptr<const LibrarySource> s) { runImport (s, {}); }
     bool isImporting() const { return importing.load(); }
     std::shared_ptr<const LibrarySource> librarySource (int view) { return centrifugeSource (view); }

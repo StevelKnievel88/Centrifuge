@@ -4,6 +4,7 @@
 #include "ColourPicker.h"
 #include "../Library/RekordboxMasterDb.h"
 #include "../App/Features.h"
+#include "../Audio/TrackAudio.h"
 
 namespace orbit
 {
@@ -45,19 +46,19 @@ public:
         analysisRange.setTooltip ("Music added from files or folders is analysed by Centrifuge: its tempo is looked for in this range");
         analysisRange.onChange = [this] { settings.analysisRange = analysisRange.getSelectedId() - 1; onChanged(); };
 
-        addSection ("WAVEFORMS");
+        addSection ("PLAY DECKS - WAVEFORMS");
         const char* laneLabels[] = { "Deck 1 top lane", "Deck 1 bottom lane", "Deck 2 top lane", "Deck 2 bottom lane" };
         for (int i = 0; i < 4; ++i)
         {
             auto& row = laneRows[(size_t) i];
-            row.style.addItemList ({ "Stems (overlaid, follow the stem knobs)", "3-Band", "RGB", "Single colour" }, 1);
+            fillLaneStyles (row.style, false);
             row.shape.addItemList ({ "Full waveform", "Half (bars grow up)", "Half (bars grow down)" }, 1);
-            row.style.setSelectedId (settings.laneStyle[(size_t) i / 2][(size_t) i % 2] + 1, juce::dontSendNotification);
+            row.style.setSelectedId (settings.laneStyle[(size_t) i / 2][(size_t) i % 2] + 2, juce::dontSendNotification);
             row.shape.setSelectedId (settings.laneShape[(size_t) i / 2][(size_t) i % 2] + 1, juce::dontSendNotification);
             row.style.onChange = row.shape.onChange = [this, i]
             {
                 auto& rw = laneRows[(size_t) i];
-                settings.laneStyle[(size_t) i / 2][(size_t) i % 2] = rw.style.getSelectedId() - 1;
+                settings.laneStyle[(size_t) i / 2][(size_t) i % 2] = rw.style.getSelectedId() - 2;
                 settings.laneShape[(size_t) i / 2][(size_t) i % 2] = rw.shape.getSelectedId() - 1;
                 onChanged();
             };
@@ -93,10 +94,89 @@ public:
         followDeck.setButtonText ("Single colour follows each deck's colour (click a deck's number to change it)");
         followDeck.setToggleState (settings.singleFollowsDeck, juce::dontSendNotification);
         followDeck.onClick = [this] { settings.singleFollowsDeck = followDeck.getToggleState(); onChanged(); };
-        add (&stemLayout, 28, "Stems in the waveform");
-        stemLayout.addItemList ({ "Overlaid (one waveform)", "Separate (a row each: drums, bass, inst, vocals)" }, 1);
-        stemLayout.setSelectedId (settings.stemsSeparate ? 2 : 1, juce::dontSendNotification);
-        stemLayout.onChange = [this] { settings.stemsSeparate = stemLayout.getSelectedId() == 2; onChanged(); };
+        add (&foldSkips, 28, {});
+        foldSkips.setButtonText ("Edited view on every deck: waveforms show the track as it will play (each deck's EDITED chip switches its own)");
+        foldSkips.setToggleState (settings.editView[0] && settings.editView[1] && settings.editView[2], juce::dontSendNotification);
+        foldSkips.onClick = [this] { const bool on = foldSkips.getToggleState(); settings.editView = { on, on, on }; onChanged(); };
+        add (&playhead, 28, "Playhead position (%)");
+        setupSlider (playhead, 10.0, 90.0, 1.0, settings.playheadPosition * 100.0);
+        playhead.onValueChange = [this] { settings.playheadPosition = (float) playhead.getValue() / 100.0f; onChanged(); };
+        add (&fps, 28, "Frame rate limit");
+        add (&zoom, 28, "Visible seconds");
+
+        addSection ("PREP - WAVEFORMS");
+        for (int i = 0; i < 2; ++i)
+        {
+            auto& row = prepLaneRows[(size_t) i];
+            fillLaneStyles (row.style, i == 1);
+            row.shape.addItemList ({ "Full waveform", "Half (bars grow up)", "Half (bars grow down)" }, 1);
+            row.style.setSelectedId (settings.prepLaneStyle[(size_t) i] + 2, juce::dontSendNotification);
+            row.shape.setSelectedId (settings.prepLaneShape[(size_t) i] + 1, juce::dontSendNotification);
+            row.style.onChange = row.shape.onChange = [this, i]
+            {
+                auto& rw = prepLaneRows[(size_t) i];
+                settings.prepLaneStyle[(size_t) i] = rw.style.getSelectedId() - 2;
+                settings.prepLaneShape[(size_t) i] = rw.shape.getSelectedId() - 1;
+                onChanged();
+            };
+            add (&row, 28, i == 0 ? "PREP top lane" : "PREP second lane");
+        }
+        prepOverviewRow.style.addItemList ({ "3-Band", "RGB", "Single colour" }, 1);
+        prepOverviewRow.shape.addItemList ({ "Full waveform", "Half waveform" }, 1);
+        prepOverviewRow.style.setSelectedId (settings.prepOverviewStyle, juce::dontSendNotification);
+        prepOverviewRow.shape.setSelectedId (settings.prepOverviewShape + 1, juce::dontSendNotification);
+        prepOverviewRow.style.onChange = prepOverviewRow.shape.onChange = [this]
+        {
+            settings.prepOverviewStyle = prepOverviewRow.style.getSelectedId();
+            settings.prepOverviewShape = prepOverviewRow.shape.getSelectedId() - 1;
+            onChanged();
+        };
+        add (&prepOverviewRow, 28, "PREP overview");
+        add (&prepColour, 28, "PREP colour");
+        prepColour.getProperties().set ("psyched.swatch", true);
+        prepColour.setColour (juce::TextButton::buttonColourId, juce::Colour (settings.deckColours[2]));
+        prepColour.setButtonText ("CHOOSE COLOUR  (or click the P badge on PREP)");
+        prepColour.onClick = [this]
+        {
+            juce::Component::SafePointer<Content> safe (this);
+            ColourPickerBubble::show (prepColour.getScreenBounds(), juce::Colour (settings.deckColours[2]), [safe] (juce::Colour c)
+            {
+                if (safe == nullptr) return;
+                safe->settings.deckColours[2] = c.getARGB();
+                safe->prepColour.setColour (juce::TextButton::buttonColourId, c);
+                safe->onChanged();
+            });
+        };
+
+        addSection ("STEM COLOURS AND LAYERS");
+        add (&stemColourRow, 30, "Stem colours");
+        for (int st = 0; st < 4; ++st)
+        {
+            auto& b = stemColourRow.buttons[(size_t) st];
+            b.getProperties().set ("psyched.swatch", true);
+            b.setButtonText (juce::String (stemName (st)).toUpperCase());
+            b.setColour (juce::TextButton::buttonColourId, juce::Colour (settings.stemColours[(size_t) st]));
+            b.onClick = [this, st]
+            {
+                juce::Component::SafePointer<Content> safe (this);
+                ColourPickerBubble::show (stemColourRow.buttons[(size_t) st].getScreenBounds(), juce::Colour (settings.stemColours[(size_t) st]), [safe, st] (juce::Colour c)
+                {
+                    if (safe == nullptr) return;
+                    safe->settings.stemColours[(size_t) st] = c.getARGB();
+                    safe->stemColourRow.buttons[(size_t) st].setColour (juce::TextButton::buttonColourId, c);
+                    safe->onChanged();
+                });
+            };
+        }
+        stemColourRow.reset.onClick = [this]
+        {
+            for (int st = 0; st < 4; ++st)
+            {
+                settings.stemColours[(size_t) st] = Theme::defaultStemColours()[(size_t) st];
+                stemColourRow.buttons[(size_t) st].setColour (juce::TextButton::buttonColourId, juce::Colour (settings.stemColours[(size_t) st]));
+            }
+            onChanged();
+        };
         // Stem layer order (back to front) and opacity of each stem
         const char* posNames[] = { "Back", "2nd", "3rd", "Front" };
         for (int i = 0; i < 4; ++i)
@@ -128,15 +208,13 @@ public:
             sl.setColour (juce::Slider::trackColourId, Theme::stemColour (st));
             sl.onValueChange = [this, st] { settings.stemOpacity[(size_t) st] = (float) stemOpacity[(size_t) st].getValue() / 100.0f; onChanged(); };
         }
-        add (&foldSkips, 28, {});
-        foldSkips.setButtonText ("Edited view on every deck: waveforms show the track as it will play (each deck's EDITED chip switches its own)");
-        foldSkips.setToggleState (settings.editView[0] && settings.editView[1] && settings.editView[2], juce::dontSendNotification);
-        foldSkips.onClick = [this] { const bool on = foldSkips.getToggleState(); settings.editView = { on, on, on }; onChanged(); };
-        add (&playhead, 28, "Playhead position (%)");
-        setupSlider (playhead, 10.0, 90.0, 1.0, settings.playheadPosition * 100.0);
-        playhead.onValueChange = [this] { settings.playheadPosition = (float) playhead.getValue() / 100.0f; onChanged(); };
-        add (&fps, 28, "Frame rate limit");
-        add (&zoom, 28, "Visible seconds");
+        addSection ("NOTE LOCATORS");
+        add (&noteLead, 28, "Show before (seconds)");
+        setupSlider (noteLead, 0.0, 10.0, 0.5, settings.noteLeadSeconds);
+        noteLead.onValueChange = [this] { settings.noteLeadSeconds = noteLead.getValue(); onChanged(); };
+        add (&noteShow, 28, "Stay up for (s, 0 = till next)");
+        setupSlider (noteShow, 0.0, 60.0, 1.0, settings.noteShowSeconds);
+        noteShow.onValueChange = [this] { settings.noteShowSeconds = noteShow.getValue(); onChanged(); };
 
         addSection ("CONTROLLER");
         add (&quantize, 28, {});
@@ -247,6 +325,8 @@ public:
         foldSkips.setToggleState (settings.editView[0] && settings.editView[1] && settings.editView[2], juce::dontSendNotification);
         playhead.setValue (settings.playheadPosition * 100.0, juce::dontSendNotification);
         zoom.setValue (settings.visibleSeconds, juce::dontSendNotification);
+        prepColour.setColour (juce::TextButton::buttonColourId, juce::Colour (settings.deckColours[2]));
+        repaint();
     }
 
     void refreshRouting()
@@ -288,14 +368,19 @@ public:
     int layout (int width)
     {
         int y = 8;
+        bool hidden = false;
         for (auto& row : rows)
         {
             if (row.comp == nullptr)
             {
-                row.labelBounds = { 0, y + 14, width, 22 };
-                y += 40;
+                hidden = settings.collapsedSections.contains (row.label);
+                row.labelBounds = { 0, y + 14, juce::jmin (816, width), 22 };
+                y += row.label.startsWith ("PREP") || row.label.startsWith ("PLAY") ? 48 : 40;
+                if (row.label.startsWith ("PREP") || row.label.startsWith ("PLAY")) row.labelBounds.translate (0, 8);
                 continue;
             }
+            row.comp->setVisible (! hidden);
+            if (hidden) continue;
             if (row.label.isNotEmpty())
             {
                 row.labelBounds = { 0, y, 190, row.height };
@@ -308,16 +393,58 @@ public:
         return y + 20;
     }
 
+    /** Section colours: PREP's sections in PREP's colour, the play decks' in deck 1's, the rest in the accent. */
+    juce::Colour sectionColour (const juce::String& title) const
+    {
+        if (title.startsWith ("PREP")) return Theme::deckColour (2);
+        if (title.startsWith ("PLAY")) return Theme::deckColour (0);
+        return Theme::accent;
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        // click a section's title to fold it away / open it
+        for (auto& row : rows)
+            if (row.comp == nullptr && row.labelBounds.expanded (0, 6).contains (e.getPosition()))
+            {
+                auto& c = settings.collapsedSections;
+                if (c.contains (row.label)) c.removeString (row.label); else c.add (row.label);
+                settings.save();
+                setSize (getWidth(), layout (getWidth()));
+                repaint();
+                return;
+            }
+    }
+    void mouseMove (const juce::MouseEvent& e) override
+    {
+        bool over = false;
+        for (auto& row : rows) over = over || (row.comp == nullptr && row.labelBounds.expanded (0, 6).contains (e.getPosition()));
+        setMouseCursor (over ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+    }
+
     void paint (juce::Graphics& g) override
     {
+        bool hidden = false;
         for (auto& row : rows)
         {
             if (row.comp == nullptr)
             {
-                psyched::paintTitle (g, row.label, row.labelBounds.toFloat(), juce::Justification::centredLeft, Theme::accent, 11.0f);
-                g.setColour (Theme::line);
-                g.fillRect (row.labelBounds.getX(), row.labelBounds.getBottom(), juce::jmin (816, getWidth()), 1);
+                hidden = settings.collapsedSections.contains (row.label);
+                const auto col = sectionColour (row.label);
+                auto lb = row.labelBounds.toFloat();
+                // the fold arrow: pointing down when open, right when folded
+                auto ar = lb.removeFromLeft (18.0f).withSizeKeepingCentre (10.0f, 10.0f);
+                juce::Path tri;
+                if (hidden) tri.addTriangle (ar.getX() + 1.0f, ar.getY(), ar.getX() + 1.0f, ar.getBottom(), ar.getRight(), ar.getCentreY());
+                else tri.addTriangle (ar.getX(), ar.getY() + 1.0f, ar.getRight(), ar.getY() + 1.0f, ar.getCentreX(), ar.getBottom());
+                g.setColour (col);
+                g.fillPath (tri);
+                psyched::paintTitle (g, row.label, lb, juce::Justification::centredLeft, col, 11.0f);
+                const bool major = row.label.startsWith ("PREP") || row.label.startsWith ("PLAY");
+                g.setColour (major ? col.withAlpha (0.7f) : Theme::line);
+                g.fillRect (row.labelBounds.getX(), row.labelBounds.getBottom(), juce::jmin (816, getWidth()), major ? 2 : 1);
             }
+            else if (hidden) continue;
             else if (row.label.isNotEmpty())
             {
                 g.setColour (Theme::textDim);
@@ -386,6 +513,34 @@ private:
         }
     };
     std::array<PairRow, 4> laneRows;
+    std::array<PairRow, 2> prepLaneRows;
+    PairRow prepOverviewRow;
+    juce::TextButton prepColour;
+    struct StemColourRow : juce::Component
+    {
+        std::array<juce::TextButton, 4> buttons;
+        juce::TextButton reset { "RESET" };
+        StemColourRow() { for (auto& b : buttons) addAndMakeVisible (b); addAndMakeVisible (reset); }
+        void resized() override
+        {
+            auto r = getLocalBounds();
+            reset.setBounds (r.removeFromRight (70));
+            r.removeFromRight (8);
+            const int w = (r.getWidth() - 18) / 4;
+            for (auto& b : buttons) { b.setBounds (r.removeFromLeft (w)); r.removeFromLeft (6); }
+        }
+    } stemColourRow;
+    juce::Slider noteLead, noteShow;
+    static void fillLaneStyles (juce::ComboBox& c, bool allowOff)
+    {
+        // ids are style + 2 (style -1 = off)
+        if (allowOff) c.addItem ("Off (one lane)", 1);
+        c.addItem ("Stems (overlaid, follow the stem knobs)", 2);
+        c.addItem ("Stems (a row each: drums, bass, inst, vocals)", 6);
+        c.addItem ("3-Band", 3);
+        c.addItem ("RGB", 4);
+        c.addItem ("Single colour", 5);
+    }
     struct LayerRow : juce::Component
     {
         std::array<juce::ComboBox, 4> boxes;
@@ -400,7 +555,7 @@ private:
     std::array<juce::Slider, 4> stemOpacity;
     PairRow overviewRow;
     juce::TextButton colourButton;
-    juce::ComboBox deck1Out, deck2Out, previewOut, fps, analysisRange, keyNotation, stemLayout;
+    juce::ComboBox deck1Out, deck2Out, previewOut, fps, analysisRange, keyNotation;
     juce::ToggleButton sumToMaster, leds, stemsOnLoad, stemsGpu, foldSkips, quantize, followDeck;
     juce::TextEditor dbPath, dbKey, usbFolder, modelPath, cachePath;
     Resizer dbButtons;
