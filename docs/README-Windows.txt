@@ -127,6 +127,13 @@ PREP page (F5)
   Select several like in Windows Explorer - ctrl + click adds / removes
   one, shift + click selects a range, ctrl + A selects all - then click an
   icon (or right-click) to colour them all at once, or press Delete.
+- Drag the list's left edge to make it wider or narrower (remembered).
+- + ADD LOCATOR AT PLAYHEAD (LOCATORS tab) and + ADD PHRASE AT PLAYHEAD
+  (PHRASES tab). The phrase menu's "Edit presets" adds, renames, removes and
+  reorders the preset names (or goes back to the standard ones).
+- Colours: every colour menu has the presets, then your saved colours, then
+  "Custom colour...". In the custom picker, + SAVE COLOUR asks for a name and
+  adds it to your saved colours; "Delete a saved colour" removes one.
 - The phrase meter in the top bar shows just PREP while you're on PREP.
 - Load a track: double-click it while on PREP, drag it onto PREP, or
   right-click it in the browser > Load into PREP.
@@ -137,6 +144,10 @@ PREP page (F5)
 
 Browser
 -------
+- STEMS column: the rotor shows a track has stems, with their quality
+  (FAST / BETTER / HIGH / BEST). Right-click > "Separate stems now" (or
+  pre-analysis) at a higher quality replaces lower-quality stems, and the
+  column updates.
 - PREVIEW column: a shrunk overview of each track (3-band waveform, hot
   cues, locators, skips and phrases) - click it to play from there on the
   preview output; click the square to stop.

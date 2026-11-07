@@ -748,8 +748,7 @@ void ScrollingWaveforms::showMarkerMenu (const Marker& m)
         else if (result == 4 && onRenameCue)
             onRenameCue (marker.deck, marker.kind == markerHot, marker.index,
                          cueName ? cueName (marker.deck, marker.kind == markerHot, marker.index) : juce::String());
-        else if (result >= 100 && result < 116) setColour (juce::Colour (rekordboxCueColours()[(size_t) (result - 100)].argb));
-        else if (result == 116) ColourPickerBubble::show (screen, current, setColour);
+        else if (handleCueColourMenu (result, 100, screen, current, setColour)) {}
     });
 }
 

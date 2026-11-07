@@ -26,7 +26,8 @@ public:
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
-    void mouseMove (const juce::MouseEvent& e) override { if (listArea.contains (e.getPosition()) || hoverList) { hoverList = listArea.contains (e.getPosition()); repaint (listArea); } }
+    juce::MouseCursor getMouseCursor() override;
+    void mouseMove (const juce::MouseEvent& e) override { const bool in = listArea.contains (e.getPosition()) || listEdge.contains (e.getPosition()); if (in || hoverList) { hoverList = in; repaint (listArea.getUnion (listEdge)); } }
     void mouseExit (const juce::MouseEvent&) override { if (hoverList) { hoverList = false; repaint (listArea); } }
 
     bool isInterestedInDragSource (const SourceDetails& d) override { return d.description == juce::var ("centrifuge-tracks"); }
@@ -37,6 +38,8 @@ public:
     std::function<void()> onTrackDropped;
     std::function<void (int deck, bool hotCue, int index, juce::String currentName)> onRenameCue;
     std::function<void (int deck)> onSetBpm;
+    std::function<void (int width)> onListWidthChanged;   // after the list's edge is dragged
+    void setListWidth (int w) { listWidth = juce::jlimit (200, 900, w); resized(); repaint(); }
 
 private:
     struct Region { juce::Rectangle<float> r; juce::String action; int kind; };   // kind: 0 button, 1 overview, 2 zoom wave, 3 pad, 4 list row, 5 bpm,
@@ -94,6 +97,10 @@ private:
     double visibleSeconds = 8.0;
     double loopBeats = 4.0;
     int listScroll = 0;
+    int listWidth = 300;
+    bool resizingList = false;
+    int resizeStartX = 0, resizeStartWidth = 0;
+    juce::Rectangle<int> listEdge;   // drag to make the list wider / narrower
     int listTab = 0;          // 0 locators / loops / skips, 1 hot cues, 2 phrases
     int phraseSelected = -1;
     juce::String heldAction;

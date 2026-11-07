@@ -38,9 +38,24 @@ namespace
 }
 
 TrackEditor::TrackEditor (AudioEngine& e, CentrifugeLibrary& l) : engine (e), library (l) {}
+TrackEditor::~TrackEditor() { flushAllSaves(); }
+
+void TrackEditor::flushSave (const Session& s) const
+{
+    if (! s.pendR && ! s.pendC) return;
+    if (s.libId > 0) library.saveVersions (s.libId, s.pendR ? &s.rb : nullptr, s.pendC ? &s.cf : nullptr);
+    s.pendR = s.pendC = false;
+    s.pendSince = 0;
+}
+
+void TrackEditor::flushAllSaves() const
+{
+    for (auto& s : sessions) flushSave (s);
+}
 
 std::optional<TrackVersion> TrackEditor::versionToLoad (int deck, const TrackInfo& info) const
 {
+    flushAllSaves();
     const auto key = info.libraryKey.isNotEmpty() ? info.libraryKey : CueStore::keyFor (info, info.durationSec);
     if (auto t = library.find (key))
         return sessions[(size_t) deck].c ? t->cf : t->rb;
@@ -50,6 +65,7 @@ std::optional<TrackVersion> TrackEditor::versionToLoad (int deck, const TrackInf
 void TrackEditor::trackLoaded (int deck, LoadedTrack::Ptr track)
 {
     auto& s = sessions[(size_t) deck];
+    flushSave (s);
     s.track = track;
     s.serial = track != nullptr ? track->serial : -1;
     s.undo.clear();
@@ -181,7 +197,9 @@ void TrackEditor::ensureInLibrary (Session& s)
 void TrackEditor::save (Session& s, bool rb, bool cf)
 {
     ensureInLibrary (s);
-    library.saveVersions (s.libId, rb ? &s.rb : nullptr, cf ? &s.cf : nullptr);
+    s.pendR = s.pendR || rb;
+    s.pendC = s.pendC || cf;
+    if (s.pendSince == 0) s.pendSince = juce::jmax (1u, juce::Time::getMillisecondCounter());
 }
 
 void TrackEditor::swapDeck (int deck, const TrackVersion& v)
@@ -202,6 +220,9 @@ void TrackEditor::swapDeck (int deck, const TrackVersion& v)
 
 void TrackEditor::poll()
 {
+    const auto now = juce::Time::getMillisecondCounter();
+    for (auto& s : sessions)
+        if (s.pendSince != 0 && now - s.pendSince > 400) flushSave (s);
     for (int d = 0; d < (int) sessions.size(); ++d)
     {
         auto& s = sessions[(size_t) d];
@@ -436,6 +457,22 @@ void TrackEditor::setPhrase (int deck, int index, const Phrase& p)
         q.startSec -= shift;
         if (q.endSec > 0) q.endSec -= shift;
         list[(size_t) index] = q;
+    });
+}
+
+void TrackEditor::setPhrases (int deck, const std::vector<std::pair<int, Phrase>>& changes)
+{
+    const double shift = hasTrack (deck) ? sessions[(size_t) deck].track->cueShift : 0.0;
+    editPhrases (deck, [=] (std::vector<Phrase>& list)
+    {
+        for (auto& [index, p] : changes)
+        {
+            if (index < 0 || index >= (int) list.size()) continue;
+            auto q = p;
+            q.startSec -= shift;
+            if (q.endSec > 0) q.endSec -= shift;
+            list[(size_t) index] = q;
+        }
     });
 }
 

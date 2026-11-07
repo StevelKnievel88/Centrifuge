@@ -78,6 +78,7 @@ void AppSettings::load()
     num ("analysisRange", analysisRange);
     num ("previewOutput", previewOutput);
     boolean ("prepEditR", prepEditR);
+    num ("prepListWidth", prepListWidth);
     boolean ("prepEditC", prepEditC);
     boolean ("camelotKeys", camelotKeys);
     boolean ("stemsSeparate", stemsSeparate);
@@ -166,6 +167,7 @@ void AppSettings::save() const
     o->setProperty ("analysisRange", analysisRange);
     o->setProperty ("previewOutput", previewOutput);
     o->setProperty ("prepEditR", prepEditR);
+    o->setProperty ("prepListWidth", prepListWidth);
     o->setProperty ("prepEditC", prepEditC);
     o->setProperty ("camelotKeys", camelotKeys);
     o->setProperty ("stemsSeparate", stemsSeparate);

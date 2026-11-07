@@ -43,6 +43,7 @@ public:
     AudioEngine& getEngine() { return engine; }
     BrowserView& getBrowser() { return browser; }
     TrackLoader& getLoader() { return loader; }
+    TrackEditor& getEditor() { return editor; }
     LibraryManager& getLibrary() { return library; }
     ActionRouter& getRouter() { return router; }
     void showPage (int page);

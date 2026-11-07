@@ -38,14 +38,39 @@ Deck::Deck (int i) : index (i), stretch (std::make_unique<Stretcher>())
 Deck::~Deck() = default;
 
 //==============================================================================
+namespace
+{
+    /** Objects handed to the audio thread by pointer. The command holds a reference of its own until the deck has
+        taken it, so nothing can free the object while the command waits in the queue (several quick edits used
+        to let the release pool free a track the deck was about to switch to). */
+    juce::ReferenceCountedObject* objectIn (const Deck::Command& c)
+    {
+        if (c.ptr == nullptr) return nullptr;
+        switch (c.cmd)
+        {
+            case Deck::Cmd::load:
+            case Deck::Cmd::swapTrackData: return static_cast<LoadedTrack*> (c.ptr);
+            case Deck::Cmd::attachStems:   return static_cast<StemAudio*> (c.ptr);
+            default:                       return nullptr;
+        }
+    }
+}
+
 void Deck::post (const Command& c)
 {
+    auto* obj = objectIn (c);
+    if (obj != nullptr) obj->incReferenceCount();
     const juce::ScopedLock sl (producerLock);
     int s1, n1, s2, n2;
     fifo.prepareToWrite (1, s1, n1, s2, n2);
     if (n1 > 0)       queue[(size_t) s1] = c;
     else if (n2 > 0)  queue[(size_t) s2] = c;
-    else              return; // queue full: drop (only happens if audio has stopped)
+    else
+    {
+        // queue full: drop (only happens if audio has stopped)
+        if (obj != nullptr) obj->decReferenceCount();
+        return;
+    }
     fifo.finishedWrite (n1 + n2);
 }
 
@@ -82,8 +107,15 @@ void Deck::handleCommands()
     if (ready <= 0) return;
     int s1, n1, s2, n2;
     fifo.prepareToRead (ready, s1, n1, s2, n2);
-    for (int i = 0; i < n1; ++i) apply (queue[(size_t) (s1 + i)]);
-    for (int i = 0; i < n2; ++i) apply (queue[(size_t) (s2 + i)]);
+    auto run = [this] (const Command& c)
+    {
+        apply (c);
+        // the deck holds its own reference now (or didn't take it, and the release pool still has one),
+        // so this never frees anything on the audio thread
+        if (auto* obj = objectIn (c)) obj->decReferenceCountWithoutDeleting();
+    };
+    for (int i = 0; i < n1; ++i) run (queue[(size_t) (s1 + i)]);
+    for (int i = 0; i < n2; ++i) run (queue[(size_t) (s2 + i)]);
     fifo.finishedRead (n1 + n2);
 }
 

@@ -505,8 +505,7 @@ void DeckPanel::showPadMenu (int pad, juce::Rectangle<float> area)
         if (result == 1) d.post (Deck::Cmd::hotCueDelete, 0.0, pad, true);
         else if (result == 2 && safe->onRenameCue)
             safe->onRenameCue (safe->deck, true, pad, safe->editor != nullptr ? safe->editor->cueName (safe->deck, true, pad) : juce::String());
-        else if (result >= 100 && result < 116) setColour (juce::Colour (rekordboxCueColours()[(size_t) (result - 100)].argb));
-        else if (result == 116) ColourPickerBubble::show (screen, current, setColour);
+        else if (handleCueColourMenu (result, 100, screen, current, setColour)) {}
     });
 }
 
@@ -526,8 +525,7 @@ void DeckPanel::showDeckColourMenu (juce::Rectangle<float> area)
         if (safe == nullptr || safe->onDeckColour == nullptr) return;
         auto set = [safe] (juce::Colour c) { if (safe != nullptr && safe->onDeckColour) safe->onDeckColour (safe->deck, c); };
         if (result == 200) set (safe->deck == 0 ? psyched::Colours::cyan : psyched::Colours::pink);
-        else if (result >= 100 && result < 116) set (juce::Colour (rekordboxCueColours()[(size_t) (result - 100)].argb));
-        else if (result == 116) ColourPickerBubble::show (screen, current, set);
+        else if (handleCueColourMenu (result, 100, screen, current, set)) {}
     });
 }
 

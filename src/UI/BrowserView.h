@@ -102,7 +102,7 @@ private:
     std::shared_ptr<const LibrarySource> currentSource;
     std::vector<int> allRows, rows;   // indices into currentSource->tracks
     juce::String currentListName, currentKey;
-    mutable std::unordered_map<juce::String, bool> stemCache;
+    mutable std::unordered_map<juce::String, int> stemCache;   // stem quality of each file's cached stems (-1 = none)
 
     juce::TreeView tree;
     std::unique_ptr<juce::TreeViewItem> rootItem;

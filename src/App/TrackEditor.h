@@ -13,6 +13,7 @@ class TrackEditor
 {
 public:
     TrackEditor (AudioEngine& engine, CentrifugeLibrary& library);
+    ~TrackEditor();
 
     /** Which version a deck should play for a track about to be loaded (empty when it isn't in the library). */
     std::optional<TrackVersion> versionToLoad (int deck, const TrackInfo& info) const;
@@ -64,7 +65,12 @@ private:
         Snap last;
         std::vector<std::pair<std::vector<Beat>, std::vector<Beat>>> undo;
         std::vector<double> taps;
+        // Edits reach the library database at most a few times a second (dragging a colour picker sends dozens)
+        mutable bool pendR = false, pendC = false;
+        mutable juce::uint32 pendSince = 0;
     };
+    void flushSave (const Session& s) const;
+    void flushAllSaves() const;
 
     Snap snapFromDeck (int deck, double shift) const;
     static Snap snapOf (const TrackVersion& v);
@@ -74,6 +80,10 @@ private:
     void save (Session& s, bool rb, bool cf);
     void swapDeck (int deck, const TrackVersion& v);
     void editPhrases (int deck, const std::function<void (std::vector<Phrase>&)>& fn);
+public:
+    /** Several phrases changed in one go (one save, one deck update). */
+    void setPhrases (int deck, const std::vector<std::pair<int, Phrase>>& changes);
+private:
     void syncOthers (int deck);   // the same track on another deck takes the edit straight away
     const TrackVersion& playing (const Session& s) const { return s.c ? s.cf : s.rb; }
 

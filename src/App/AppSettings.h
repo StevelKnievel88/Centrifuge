@@ -20,6 +20,7 @@ struct AppSettings
     std::array<int, 2> deckOutputs { 0, 2 };
     int previewOutput = -1;            // PREP / browser previews: first output channel, -1 = automatic
     bool prepEditR = true, prepEditC = true;
+    int prepListWidth = 300;   // PREP page: width of the locators / hot cues / phrases list
     int sumToMaster = -1;              // -1 auto, 0 off, 1 on
     double mp3OffsetMs = 0.0;
     std::array<juce::uint32, 2> deckColours { 0xff2ee6d6, 0xffff3fa0 };

@@ -121,7 +121,7 @@ BrowserView::BrowserView (LibraryManager& lib, StemManager& stems) : library (li
     hdr.addColumn ("Key", 5, 50, 40, 80);
     hdr.addColumn ("Time", 6, 60, 50, 90);
     hdr.addColumn ("Genre", 7, 120, 60, 400);
-    hdr.addColumn ("Stems", 8, 56, 40, 80);
+    hdr.addColumn ("Stems", 8, 84, 40, 120);
     hdr.addColumn ("Cues", 9, 46, 36, 70);
     if (Features::rekordboxCopy) hdr.addColumn ("R/C", 10, 46, 36, 70);
     hdr.addColumn ("Rating", 12, 76, 60, 100);
@@ -413,15 +413,20 @@ void BrowserView::paintCell (juce::Graphics& g, int row, int col, int w, int h, 
         case 8:
         {
             auto it = stemCache.find (t.file.getFullPathName());
-            bool has;
-            if (it == stemCache.end()) { has = stemManager.hasCachedStems (t); stemCache[t.file.getFullPathName()] = has; }
-            else has = it->second;
-            if (has)
+            int q;
+            if (it == stemCache.end()) { q = stemManager.cachedQuality (t); stemCache[t.file.getFullPathName()] = q; }
+            else q = it->second;
+            if (q >= 0)
             {
-                // The Centrifuge rotor with full tubes: this track's stems are ready.
-                const float sz = juce::jmin ((float) h - 4.0f, 20.0f);
-                CentrifugeRotor::paintRotor (g, juce::Rectangle<float> ((float) w * 0.5f - sz * 0.5f, (float) h * 0.5f - sz * 0.5f, sz, sz),
+                // The Centrifuge rotor with full tubes: this track's stems are ready - and at what quality.
+                const float sz = juce::jmin ((float) h - 4.0f, 18.0f);
+                CentrifugeRotor::paintRotor (g, juce::Rectangle<float> (4.0f, (float) h * 0.5f - sz * 0.5f, sz, sz),
                                              0.4f, 0.0f, 1.0f, 0.0f, 0.0f);
+                const char* names[] = { "FAST", "BETTER", "HIGH", "BEST" };
+                const juce::Colour cols[] = { Theme::textDim, juce::Colour (0xff6e8cff), juce::Colour (0xff2ee6d6), juce::Colour (0xffffd339) };
+                g.setColour (cols[juce::jlimit (0, 3, q)]);
+                g.setFont (psyched::Fonts::mono (10.0f, true));
+                g.drawText (names[juce::jlimit (0, 3, q)], juce::Rectangle<int> ((int) sz + 9, 0, w - (int) sz - 10, h), juce::Justification::centredLeft, true);
             }
             return;
         }
@@ -589,6 +594,8 @@ void BrowserView::showTrackMenu (int)
         if (Features::rekordboxCopy) m.addItem (11, "Remove from the rekordbox copy");
         m.addItem (12, "Reset play count");
     }
+    m.addSeparator();
+    m.addItem (13, "Separate stems now (pre-analysis quality - replaces lower-quality stems)");
     juce::Component::SafePointer<BrowserView> safe (this);
     m.showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [safe, tracks] (int r)
     {
@@ -598,6 +605,7 @@ void BrowserView::showTrackMenu (int)
         else if (r == 10) safe->onTrackAction (tracks, "remove.cf");
         else if (r == 11) safe->onTrackAction (tracks, "remove.rb");
         else if (r == 12) safe->onTrackAction (tracks, "plays.reset");
+        else if (r == 13) safe->onTrackAction (tracks, "stems.separate");
     });
 }
 

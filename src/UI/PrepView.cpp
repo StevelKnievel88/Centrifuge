@@ -32,8 +32,8 @@ PrepView::PrepView (AudioEngine& e, TrackEditor& ed) : engine (e), editor (ed)
 void PrepView::resized()
 {
     auto r = getLocalBounds().reduced (10, 8);
-    listArea = r.removeFromRight (juce::jlimit (240, 360, r.getWidth() / 4));
-    r.removeFromRight (10);
+    listArea = r.removeFromRight (juce::jlimit (200, juce::jmax (200, r.getWidth() - 500), listWidth));
+    listEdge = r.removeFromRight (10);
     rowHeader = r.removeFromTop (44);
     r.removeFromTop (6);
     rowOverview = r.removeFromTop (40);
@@ -281,6 +281,14 @@ void PrepView::paint (juce::Graphics& g)
     }
 
     paintList (g, listArea.toFloat());
+    {
+        // grip for resizing the list
+        const auto c = listEdge.toFloat().getCentre();
+        const bool hot = resizingList || listEdge.contains (getMouseXYRelative());
+        g.setColour (hot ? Theme::accent : Theme::line);
+        for (int k = -1; k <= 1; ++k)
+            g.fillRect (c.x - 0.75f + (float) k * 3.0f, c.y - 14.0f, 1.5f, 28.0f);
+    }
 
     if (dropHover)
     {
@@ -493,6 +501,12 @@ void PrepView::paintList (juce::Graphics& g, juce::Rectangle<float> r)
     {
         auto add = r.removeFromBottom (26.0f);
         chip (g, add, "+ ADD PHRASE AT PLAYHEAD", false, Theme::warn, "phrase.add");
+        r.removeFromBottom (6.0f);
+    }
+    else if (listTab == 0 && track != nullptr)
+    {
+        auto add = r.removeFromBottom (26.0f);
+        chip (g, add, "+ ADD LOCATOR AT PLAYHEAD", false, Theme::bad, "locator.add");
         r.removeFromBottom (6.0f);
     }
 
@@ -722,8 +736,20 @@ void PrepView::action (const juce::String& id, bool down)
     repaint();
 }
 
+juce::MouseCursor PrepView::getMouseCursor()
+{
+    return listEdge.contains (getMouseXYRelative()) || resizingList ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::NormalCursor;
+}
+
 void PrepView::mouseDown (const juce::MouseEvent& e)
 {
+    if (listEdge.contains (e.getPosition()) && ! e.mods.isPopupMenu())
+    {
+        resizingList = true;
+        resizeStartX = e.x;
+        resizeStartWidth = listArea.getWidth();
+        return;
+    }
     auto* r = regionAt (e.position);
     if (r == nullptr) return;
     const auto& st = deck().state();
@@ -827,6 +853,14 @@ void PrepView::mouseDown (const juce::MouseEvent& e)
 
 void PrepView::mouseDrag (const juce::MouseEvent& e)
 {
+    if (resizingList)
+    {
+        listWidth = juce::jlimit (200, juce::jmax (200, getWidth() - 520), resizeStartWidth - (e.x - resizeStartX));
+        overviewWidth = 0;
+        resized();
+        repaint();
+        return;
+    }
     if (scrubbing && track != nullptr)
     {
         const double pps = rowWave.getWidth() / visibleSeconds;
@@ -839,6 +873,12 @@ void PrepView::mouseDrag (const juce::MouseEvent& e)
 
 void PrepView::mouseUp (const juce::MouseEvent&)
 {
+    if (resizingList)
+    {
+        resizingList = false;
+        if (onListWidthChanged) onListWidthChanged (listWidth);
+        return;
+    }
     scrubbing = false;
     if (heldAction.isNotEmpty())
     {
@@ -900,8 +940,7 @@ void PrepView::showEntryMenu (const ListEntry& entry, juce::Rectangle<float> are
             return;
         }
         auto setColour = [safe, entry] (juce::Colour c) { if (safe != nullptr) safe->deck().post (Deck::Cmd::locatorColour, (double) c.getARGB(), entry.index); };
-        if (r >= 100 && r < 116) setColour (juce::Colour (rekordboxCueColours()[(size_t) (r - 100)].argb));
-        else if (r == 116) ColourPickerBubble::show (screen, current, setColour);
+        if (handleCueColourMenu (r, 100, screen, current, setColour)) {}
     });
 }
 
@@ -924,8 +963,7 @@ void PrepView::showPadMenu (int pad, juce::Rectangle<float> area)
         auto setColour = [safe, pad] (juce::Colour c) { if (safe != nullptr) safe->deck().post (Deck::Cmd::hotCueColour, (double) c.getARGB(), pad); };
         if (r == 1) safe->deck().post (Deck::Cmd::hotCueDelete, 0.0, pad);
         else if (r == 2) safe->startRename (safe->entryFor (2, pad));
-        else if (r >= 100 && r < 116) setColour (juce::Colour (rekordboxCueColours()[(size_t) (r - 100)].argb));
-        else if (r == 116) ColourPickerBubble::show (screen, current, setColour);
+        else if (handleCueColourMenu (r, 100, screen, current, setColour)) {}
     });
 }
 
@@ -941,27 +979,107 @@ void PrepView::askText (const juce::String& title, const juce::String& current, 
     }), true);
 }
 
+namespace
+{
+    /** The names offered by + ADD PHRASE: editable, kept between sessions. */
+    struct PhrasePresets
+    {
+        static juce::File file()
+        {
+            return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                       .getChildFile ("Centrifuge").getChildFile ("phrase-presets.json");
+        }
+        static juce::StringArray& list()
+        {
+            static juce::StringArray names = []
+            {
+                juce::StringArray n;
+                if (auto* a = juce::JSON::parse (file()).getArray())
+                    for (auto& v : *a) n.add (v.toString());
+                else
+                    n = { "Intro", "Verse", "Build", "Drop", "Breakdown", "Chorus", "Bridge", "Outro" };
+                return n;
+            }();
+            return names;
+        }
+        static void save()
+        {
+            juce::Array<juce::var> a;
+            for (auto& n : list()) a.add (n);
+            file().getParentDirectory().createDirectory();
+            file().replaceWithText (juce::JSON::toString (juce::var (a)));
+        }
+    };
+}
+
 void PrepView::showPhraseAddMenu()
 {
-    const char* names[] = { "Intro", "Verse", "Build", "Drop", "Breakdown", "Chorus", "Bridge", "Outro" };
+    auto& presets = PhrasePresets::list();
     juce::PopupMenu m;
     m.addSectionHeader ("Add a phrase at the playhead");
-    for (int i = 0; i < 8; ++i) m.addItem (1 + i, names[i]);
+    for (int i = 0; i < presets.size(); ++i)
+    {
+        juce::PopupMenu::Item item (presets[i]);
+        item.itemID = 1 + i;
+        item.colour = defaultPhraseColour (presets[i]);
+        m.addItem (item);
+    }
     m.addSeparator();
-    m.addItem (20, "Other name...");
+    m.addItem (1000, "Other name...");
+
+    juce::PopupMenu edit, ren, rem, up;
+    for (int i = 0; i < presets.size(); ++i)
+    {
+        ren.addItem (2000 + i, presets[i]);
+        rem.addItem (3000 + i, presets[i]);
+        if (i > 0) up.addItem (4000 + i, presets[i]);
+    }
+    edit.addItem (1001, "Add a preset...");
+    edit.addSubMenu ("Rename a preset", ren, presets.size() > 0);
+    edit.addSubMenu ("Remove a preset", rem, presets.size() > 0);
+    edit.addSubMenu ("Move a preset up", up, presets.size() > 1);
+    edit.addSeparator();
+    edit.addItem (1002, "Back to the standard presets");
+    m.addSubMenu ("Edit presets", edit);
+
     juce::Component::SafePointer<PrepView> safe (this);
     m.showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [safe] (int r)
     {
         if (safe == nullptr || r == 0) return;
+        auto& list = PhrasePresets::list();
         const double at = safe->deck().state().positionSec.load();
-        const char* nm[] = { "Intro", "Verse", "Build", "Drop", "Breakdown", "Chorus", "Bridge", "Outro" };
-        if (r >= 1 && r <= 8)
-            safe->editor.addPhrase (deckIndex, at, nm[r - 1], defaultPhraseColour (nm[r - 1]));
-        else if (r == 20)
+        if (r >= 1 && r <= list.size())
+            safe->editor.addPhrase (deckIndex, at, list[r - 1], defaultPhraseColour (list[r - 1]));
+        else if (r == 1000)
             safe->askText ("New phrase", {}, [safe, at] (juce::String n)
             {
                 if (safe != nullptr && n.isNotEmpty()) safe->editor.addPhrase (deckIndex, at, n, defaultPhraseColour (n));
             });
+        else if (r == 1001)
+            safe->askText ("New phrase preset", {}, [] (juce::String n)
+            {
+                if (n.isEmpty()) return;
+                PhrasePresets::list().addIfNotAlreadyThere (n);
+                PhrasePresets::save();
+            });
+        else if (r == 1002)
+        {
+            list = { "Intro", "Verse", "Build", "Drop", "Breakdown", "Chorus", "Bridge", "Outro" };
+            PhrasePresets::save();
+        }
+        else if (r >= 2000 && r < 2000 + list.size())
+        {
+            const int i = r - 2000;
+            safe->askText ("Rename preset", list[i], [i] (juce::String n)
+            {
+                auto& l = PhrasePresets::list();
+                if (n.isEmpty() || i >= l.size()) return;
+                l.set (i, n);
+                PhrasePresets::save();
+            });
+        }
+        else if (r >= 3000 && r < 3000 + list.size()) { list.remove (r - 3000); PhrasePresets::save(); }
+        else if (r >= 4001 && r < 4000 + list.size()) { list.move (r - 4000, r - 4001); PhrasePresets::save(); }
     });
 }
 
@@ -987,8 +1105,7 @@ void PrepView::showPhraseMenu (int index, juce::Rectangle<float> area)
         if (r == 1) ed.deletePhrase (deckIndex, index);
         else if (r == 2) safe->startRename (safe->entryFor (3, index));
         else if (r == 3) { auto q = p; q.startSec = safe->deck().state().positionSec.load(); ed.setPhrase (deckIndex, index, q); }
-        else if (r >= 100 && r < 116) setColour (juce::Colour (rekordboxCueColours()[(size_t) (r - 100)].argb));
-        else if (r == 116) ColourPickerBubble::show (screen, p.colour, setColour);
+        else if (handleCueColourMenu (r, 100, screen, p.colour, setColour)) {}
     });
 }
 
@@ -1061,13 +1178,16 @@ void PrepView::applyColour (const std::vector<ListEntry>& targets, juce::Colour 
     {
         if (t.kind == 0) deck().post (Deck::Cmd::locatorColour, (double) c.getARGB(), t.index);
         else if (t.kind == 2) deck().post (Deck::Cmd::hotCueColour, (double) c.getARGB(), t.index);
-        else if (t.kind == 3 && t.index < (int) editor.phrases (deckIndex).size())
+    }
+    std::vector<std::pair<int, Phrase>> phraseChanges;
+    for (auto& t : targets)
+        if (t.kind == 3 && t.index < (int) editor.phrases (deckIndex).size())
         {
             auto p = editor.phrases (deckIndex)[(size_t) t.index];
             p.colour = c;
-            editor.setPhrase (deckIndex, t.index, p);
+            phraseChanges.push_back ({ t.index, p });
         }
-    }
+    if (! phraseChanges.empty()) editor.setPhrases (deckIndex, phraseChanges);
     repaint();
 }
 
@@ -1109,8 +1229,7 @@ void PrepView::showColourMenu (const ListEntry& e, juce::Rectangle<float> area)
         if (safe == nullptr || r == 0) return;
         if (r == 1) { safe->deleteEntries (targets); return; }
         auto set = [safe, colourable] (juce::Colour c) { if (safe != nullptr) safe->applyColour (colourable, c); };
-        if (r >= 100 && r < 116) set (juce::Colour (rekordboxCueColours()[(size_t) (r - 100)].argb));
-        else if (r == 116) ColourPickerBubble::show (screen, current, set);
+        if (handleCueColourMenu (r, 100, screen, current, set)) {}
     });
 }
 

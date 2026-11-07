@@ -499,6 +499,28 @@ private:
         {
             snap ("09_prep.png");
             stage = 13;
+            t0 = ticks;
+            if (juce::SystemStats::getEnvironmentVariable ("CENTRIFUGE_STRESS", {}).isNotEmpty())
+            {
+                auto& ed = main.getEditor();
+                const char* nm[] = { "Intro", "Chorus", "Verse", "Outro" };
+                for (int i = 0; i < 4; ++i) ed.addPhrase (AudioEngine::prepDeck, 4.0 + i * 15.0, nm[i], juce::Colours::red);
+                stage = 20;
+            }
+        }
+        else if (stage == 20)
+        {
+            // what dragging the custom colour picker with three phrases selected does
+            auto& ed = main.getEditor();
+            for (int round = 0; round < 15; ++round)
+                for (int i = 0; i < 3; ++i)
+                {
+                    if (i >= (int) ed.phrases (AudioEngine::prepDeck).size()) continue;
+                    auto p = ed.phrases (AudioEngine::prepDeck)[(size_t) i];
+                    p.colour = juce::Colour::fromHSV ((float) ((ticks * 15 + round) % 100) / 100.0f, 0.8f, 0.9f, 1.0f);
+                    ed.setPhrase (AudioEngine::prepDeck, i, p);
+                }
+            if (ticks - t0 > 60) { std::printf ("stress ok\n"); std::fflush (stdout); snap ("10_stress.png"); stage = 21; }
         }
     }
 

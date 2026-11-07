@@ -91,6 +91,8 @@ MainComponent::MainComponent()
     prepView.onTrackDropped = [this] { loadDragged (AudioEngine::prepDeck); };
     prepView.onRenameCue = [this] (int d, bool hot, int i, juce::String cur) { askRename (d, hot, i, cur); };
     prepView.onSetBpm = [this] (int d) { askBpm (d); };
+    prepView.setListWidth (settings.prepListWidth);
+    prepView.onListWidthChanged = [this] (int w) { settings.prepListWidth = w; settings.save(); };
     browser.versionFor = [this] (const TrackInfo& t) { return editor.versionToLoad (0, t); };
     browser.onPreview = [this] (const TrackInfo& t, bool pc, double f) { startPreview (t, pc, f); };
     browser.onPreviewStop = [this] { engine.deck (AudioEngine::previewDeck).post (Deck::Cmd::pause); };
@@ -691,6 +693,13 @@ void MainComponent::trackAction (const std::vector<TrackInfo>& tracks, const juc
 {
     if (tracks.empty()) return;
     const bool pc = browser.getCurrentSource() != nullptr && browser.getCurrentSource()->kind == LibrarySource::Kind::pcCollection;
+    if (action == "stems.separate")
+    {
+        stems.addToBatch (tracks);
+        flash ("Separating stems for " + juce::String ((int) tracks.size()) + (tracks.size() == 1 ? " track" : " tracks")
+               + " - tracks that already have stems at this quality are skipped");
+        return;
+    }
     if (action.startsWith ("load."))
     {
         const int d = action.getTrailingIntValue();
