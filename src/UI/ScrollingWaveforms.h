@@ -116,7 +116,7 @@ private:
     void onVBlank (double timestampSec);
     void paintDeck (juce::Graphics& g, int deck, juce::Rectangle<int> r);
     void paintLane (juce::Graphics& g, int deck, int lane, juce::Rectangle<int> r);
-    void paintOverlays (juce::Graphics& g, int deck, juce::Rectangle<int> wave, juce::Rectangle<int> lane, bool withFlags);
+    void paintOverlays (juce::Graphics& g, int deck, juce::Rectangle<int> wave, juce::Rectangle<int> lane, bool withFlags, bool stemRows = false);
     void drawLabel (juce::Graphics& g, juce::Rectangle<int> lane, const juce::String& text, bool atTop);
     juce::Rectangle<int> deckBounds (int deck) const;
     juce::Rectangle<int> dividerBounds (int deck) const;

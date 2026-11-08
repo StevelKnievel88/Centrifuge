@@ -1,4 +1,6 @@
 #include "App/MainComponent.h"
+#include "Library/TagWriter.h"
+#include "Library/TagReader.h"
 #include "Library/RekordboxMasterDb.h"
 #include "Library/RekordboxPdb.h"
 #include "Library/Anlz.h"
@@ -25,6 +27,25 @@ static int runCommandLine (const juce::StringArray& args)
         const int i = args.indexOf (flag);
         return i >= 0 && i + 1 < args.size() ? args[i + 1].unquoted() : juce::String();
     };
+
+    if (args.contains ("--tagtest"))
+    {
+        // Writes tags into a copy of each file given and reads them back (for testing TagWriter)
+        int bad = 0;
+        for (int i = args.indexOf ("--tagtest") + 1; i < args.size(); ++i)
+        {
+            const juce::File f (args[i].unquoted());
+            TagWriter::Fields fl { "Test Title \xc3\xa9", "Test Artist", "Test Album", "Psytrance", "Test Label", "A comment", "8A" };
+            juce::String err;
+            const bool ok = TagWriter::write (f, fl, err);
+            const auto back = AudioTags::read (f);
+            std::printf ("%s: write %s %s | title '%s' artist '%s' album '%s' genre '%s' label '%s' comment '%s' key '%s'\n", f.getFileName().toRawUTF8(),
+                         ok ? "ok" : "FAILED", err.toRawUTF8(), back.title.toRawUTF8(), back.artist.toRawUTF8(), back.album.toRawUTF8(), back.genre.toRawUTF8(),
+                         back.label.toRawUTF8(), back.comment.toRawUTF8(), back.key.toRawUTF8());
+            if (! ok || back.genre != "Psytrance") ++bad;
+        }
+        return bad;
+    }
 
     if (args.contains ("--separate"))
     {
@@ -279,6 +300,114 @@ static int runCommandLine (const juce::StringArray& args)
         return juce::PNGImageFormat().writeImageToStream (img, os) ? 0 : 1;
     }
 
+    if (args.contains ("--keytest"))
+    {
+        // --keytest <USB stick root, folder or audio files...>: Centrifuge's key detection (first method and v2)
+        // against the key rekordbox (or the file's tag, or "[Am]" in the file name) gives each track.
+        struct Item { juce::File file; juce::String expected; };
+        std::vector<Item> items;
+        for (int i = args.indexOf ("--keytest") + 1; i < args.size(); ++i)
+        {
+            const juce::File f (args[i].unquoted());
+            if (f.isDirectory() && f.getChildFile ("PIONEER").isDirectory())
+            {
+                if (auto src = loadRekordboxUsbExport (f))
+                    for (auto& t : src->tracks) if (t.key.isNotEmpty()) items.push_back ({ t.file, t.key });
+            }
+            else if (f.isDirectory())
+            {
+                for (auto& e : f.findChildFiles (juce::File::findFiles, true, "*.mp3;*.wav;*.flac;*.aif;*.aiff;*.m4a"))
+                    items.push_back ({ e, {} });
+            }
+            else if (f.existsAsFile()) items.push_back ({ f, {} });
+            if (args[i].startsWith ("--")) break;
+        }
+        auto relation = [] (const MusicalKey& a, const MusicalKey& b) -> int
+        {
+            if (! a.isValid() || ! b.isValid()) return 5;
+            if (a.pitch == b.pitch && a.minor == b.minor) return 0;                                   // exact
+            if (a.minor == b.minor && ((a.pitch - b.pitch + 12) % 12 == 7 || (b.pitch - a.pitch + 12) % 12 == 7)) return 1;   // a fifth
+            if (a.minor != b.minor && (a.minor ? (a.pitch + 3) % 12 == b.pitch : (b.pitch + 3) % 12 == a.pitch)) return 2;  // relative
+            if (a.pitch == b.pitch) return 3;                                                         // parallel (major / minor)
+            return 4;
+        };
+        const char* names[] = { "exact", "fifth", "relative", "major/minor", "other", "no key" };
+        // also written to a text file on the desktop (a Windows app has no console to print to), opened at the end
+        juce::String report;
+        auto out = [&report] (const juce::String& line) { std::printf ("%s\n", line.toRawUTF8()); std::fflush (stdout); report << line << "\n"; };
+        out ("Centrifuge key test: " + juce::String ((int) items.size()) + " tracks");
+        std::array<int, 6> v1 {}, v2 {}, v3 {};
+        AudioFileLoader loader;
+        for (auto& it : items)
+        {
+            auto expected = it.expected;
+            if (expected.isEmpty()) expected = AudioTags::read (it.file).key;
+            if (expected.isEmpty() && it.file.getFileName().contains ("[")) expected = it.file.getFileName().fromFirstOccurrenceOf ("[", false, false).upToFirstOccurrenceOf ("]", false, false);
+            const auto want = MusicalKey::parse (expected);
+            if (! want.isValid()) continue;
+            juce::String err;
+            auto audio = loader.load (it.file, err);
+            if (audio == nullptr) continue;
+            TrackAnalyser::Options o;
+            const auto r = TrackAnalyser::analyse (*audio, o);
+            const auto k1 = MusicalKey::parse (TrackAnalyser::detectKey (*audio)), k2 = MusicalKey::parse (r.key);
+            const int r1 = relation (k1, want), r2 = relation (k2, want);
+            ++v1[(size_t) r1]; ++v2[(size_t) r2];
+            // stems: "<file>.stems/{drums,bass,inst,vocals}.wav" next to it, or the stem cache
+            juce::String stemText;
+            const auto stemDir = it.file.getSiblingFile (it.file.getFileName().upToLastOccurrenceOf (".", false, false) + ".stems");
+            if (stemDir.isDirectory())
+            {
+                StemAudio::Ptr st = new StemAudio();
+                st->sampleRate = audio->sampleRate;
+                st->numFrames = audio->numFrames;
+                const char* sn[] = { "drums", "bass", "inst", "vocals" };
+                bool ok = true;
+                for (int k = 0; k < 4 && ok; ++k)
+                {
+                    juce::String e2;
+                    auto sa = loader.load (stemDir.getChildFile (juce::String (sn[k]) + ".wav"), e2);
+                    ok = sa != nullptr && sa->numFrames >= st->numFrames;
+                    if (! ok) break;
+                    for (int c = 0; c < 2; ++c)
+                    {
+                        auto& dst = st->channels[(size_t) k * 2 + (size_t) c];
+                        dst.resize ((size_t) st->numFrames);
+                        const auto& src = c == 0 ? sa->left : sa->right;
+                        for (int64_t i = 0; i < st->numFrames; ++i) dst[(size_t) i] = StemAudio::fromFloat (src[(size_t) i] * 0.5f);
+                    }
+                }
+                if (ok)
+                {
+                    st->validFrames = st->numFrames;
+                    const auto k3 = MusicalKey::parse (TrackAnalyser::detectKeyV2 (*audio, st.get(), &r.beats));
+                    const int r3 = relation (k3, want);
+                    ++v3[(size_t) r3];
+                    stemText = "  v2+stems " + k3.toString() + " (" + names[r3] + ")";
+                }
+            }
+            out (it.file.getFileName().substring (0, 50).paddedRight (' ', 50) + "  want " + want.toString().paddedRight (' ', 4)
+                 + "  first " + k1.toString().paddedRight (' ', 4) + " (" + names[r1] + ")  v2 " + k2.toString().paddedRight (' ', 4)
+                 + " (" + names[r2] + ")" + stemText);
+        }
+        auto row = [] (const char* name, const std::array<int, 6>& v)
+        {
+            return juce::String (name).paddedRight (' ', 10) + juce::String (v[0]).paddedLeft (' ', 5) + juce::String (v[1]).paddedLeft (' ', 7)
+                 + juce::String (v[2]).paddedLeft (' ', 10) + juce::String (v[3]).paddedLeft (' ', 9) + juce::String (v[4]).paddedLeft (' ', 7);
+        };
+        out ({});
+        out ("          exact  fifth  relative  maj/min  other");
+        out (row ("first", v1));
+        out (row ("v2", v2));
+        if (v3[0] + v3[1] + v3[2] + v3[3] + v3[4] > 0) out (row ("v2+stems", v3));
+        if (! args.contains ("--no-report"))
+        {
+            const auto f = juce::File::getSpecialLocation (juce::File::userDesktopDirectory).getChildFile ("Centrifuge key test.txt");
+            if (f.replaceWithText (report)) f.startAsProcess();
+        }
+        return 0;
+    }
+
     if (args.contains ("--analyse"))
     {
         // --analyse <audio file> [--min 88 --max 175]: tags and Centrifuge's own BPM / grid / key analysis
@@ -517,7 +646,8 @@ private:
                 const char* nm[] = { "Intro", "Verse", "Chorus", "Outro" };
                 for (int i = 0; i < 4; ++i) ed.addPhrase (D, i * 15.0, nm[i], defaultPhraseColour (nm[i]));
                 ed.setPhraseRepeats (D, 2, 2);
-                ed.setArrangement (D, { 0.0, 30.0, 15.0, 45.0 });
+                ed.setArrangement (D, { 0.0, 30.0, 15.0, 30.0, 45.0 });   // the Chorus duplicated after the Verse
+                while (! ed.notes (D).empty()) ed.deleteNote (D, (int) ed.notes (D).size() - 1);
                 StemLocator l; l.timeSec = 20.0; l.target = { -1, -1, -1, 0 }; l.fadeBeats = 4.0f;
                 ed.addStemLocator (D, l);
                 NoteLocator n; n.timeSec = 8.0; n.text = "Big vocal sample - kill the bass"; ed.addNote (D, n);
@@ -569,6 +699,9 @@ private:
                 main.getPrep().setOverviewGrid (true);
                 main.getDeckPanel (0).setOverviewGrid (true);
                 main.getDeckPanel (1).setOverviewGrid (true);
+                main.demoSettings ([] (AppSettings& s) { s.phraseBrackets = true; s.phraseBars = 64; s.browserInfoOpen = true; });
+                main.getBrowser().setInfoPanelOpen (true);
+                main.getPrep().showListTab (2);
             }
             if (k == 36)
             {
@@ -578,6 +711,7 @@ private:
                 main.getEngine().deck (0).post (Deck::Cmd::pause);
                 main.getEngine().deck (0).post (Deck::Cmd::seekSeconds, 7.6);
             }
+            if (k == 37) main.demoSettings ([] (AppSettings& s) { s.phraseBars = 16; });
             if (k == 39) snap ("12_edits_play.png");
             if (k == 40) main.showPage (2);
             if (k == 42)
@@ -720,11 +854,20 @@ public:
             setUsingNativeTitleBar (true);
             setContentOwned (main, false);
             setResizable (true, true);
-            setResizeLimits (1100, 680, 10000, 10000);
-            centreWithSize (1600, 940);
+            setResizeLimits (1100, 640, 10000, 10000);
+            // fits the screen at any resolution / Windows scaling (1080p at 125 % is only 1536 x 864 points),
+            // then where you left it last time
+            const auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
+            const auto area = display != nullptr ? display->userArea : juce::Rectangle<int> (0, 0, 1600, 940);
+            centreWithSize (juce::jmin (1600, area.getWidth() - 20), juce::jmin (940, area.getHeight() - 40));
+            if (const auto st = main->getWindowState(); st.isNotEmpty()) restoreWindowStateFromString (st);
             setVisible (true);
         }
-        void closeButtonPressed() override { JUCEApplication::getInstance()->systemRequestedQuit(); }
+        void closeButtonPressed() override
+        {
+            main->setWindowState (getWindowStateAsString());
+            JUCEApplication::getInstance()->systemRequestedQuit();
+        }
         MainComponent* main = nullptr;
     };
 

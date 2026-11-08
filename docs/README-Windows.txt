@@ -116,7 +116,10 @@ edit below on or off live.
 - STEM LOCATORS: STEM LOC (under PREP's waveform) or + ADD AT PLAYHEAD... >
   Stem locator. From that point each stem fades out, fades in, or is left
   alone - straight away or over 1-32 beats - as a level fade or a low-pass /
-  high-pass filter sweep. Click its icon in the list to change it. Needs the
+  high-pass filter sweep. On the waveform each stem it changes gets a line in
+  its colour, rising for a fade in and falling for a fade out (in its own row
+  when the lane shows the stems a row each); the icons: X = off, square = on,
+  ramp up = fade in, ramp down = fade out. Click its icon in the list to change it. Needs the
   track's stems (decks separate them; PREP uses stems already made).
 - PHRASE REPEAT: the x1 chip on a phrase (PHRASES tab) steps x1 > x2 > x3 >
   x4 > x8 - the phrase plays that many times in a row.
@@ -125,8 +128,8 @@ edit below on or off live.
   the joins; with a rearrangement the track ends when the last section ends.
 - NOTE LOCATORS: NOTE (under PREP's waveform) or + ADD AT PLAYHEAD... > Note.
   A reminder shown in each deck's NOTES box (next to the beat jumps), from a
-  little before its point until a set time after - both set in Settings >
-  NOTE LOCATORS (2 s before / 8 s after by default; 0 = until the next note).
+  little before its point until a set time after - set per note in its editor
+  (click its icon; 2 s before / 8 s after to start with; 0 = until the next).
 - EDIT VERSIONS: the EDIT chip (PREP header and every deck) picks a named set
   of skips, loop modes, stem locators, phrase order and repeats ("Radio
   edit", "Extended"...). On PREP: save the current edits as a new version,
@@ -137,14 +140,19 @@ edit below on or off live.
   play (skips folded out, phrases in play order, repeats shown again, a
   dashed line at each join). Off: the whole track as recorded, every marker.
 
-Stem controls: level or filter
-------------------------------
-Each stem button on a deck (and on PREP) can work as a volume (LVL), a
-low-pass filter (LP - closes down as the control goes down) or a high-pass
-filter (HP - closes up). Right-click a stem for that stem, or click the chip
-before the four to switch all of them (LVL > LP > HP; MIX = they differ).
-Your mapping is unchanged: the same knob now fades or filters. Remembered
-per deck.
+Stem controls: VOL or FILTER
+----------------------------
+Stem controls are bipolar: the centre (12 o'clock) leaves the stem untouched,
+and that's where they start.
+- VOL: turning left fades the stem down to silent; right of centre does
+  nothing.
+- FILTER: left of centre closes a low-pass, right of centre closes a
+  high-pass.
+The small VOL / FILTER button under each stem switches that stem; the button
+left of the four switches all of them (it says MIX when they differ - press it
+for all VOL). Double-click a stem to put it back to the centre. Your mapping
+is unchanged - the same knob now fades or filters - and it's remembered per
+deck.
 
 Waveforms and overviews
 -----------------------
@@ -195,6 +203,15 @@ PREP page (F5)
   "Custom colour...". In the custom picker, + SAVE COLOUR asks for a name and
   adds it to your saved colours; "Delete a saved colour" removes one.
 - The phrase meter in the top bar shows just PREP while you're on PREP.
+  Right-click the meter for its length (4 - 64 bars), "Follow the track's
+  phrases" (length and start from the phrase playing) and "Show bar
+  brackets" (4 / 16 / 32 / 64-bar brackets above it; the top bar grows to
+  fit).
+- PHRASES tab: the double-square button duplicates a section (another pass
+  right after it, marked "copy") - drag it anywhere in the play order; its
+  x deletes just that pass.
+- Notes: click a note's icon (or add one with NOTE) to edit its text,
+  colour, how long before it shows and how long it stays up.
 - Load a track: double-click it while on PREP, drag it onto PREP, or
   right-click it in the browser > Load into PREP.
 - PREP and browser previews each have their own deck (a preview never
@@ -213,7 +230,27 @@ Browser
   preview output; click the square to stop. Tracks Centrifuge analysed keep
   their preview (it shows straight away after a restart); a track nobody has
   analysed yet says NOT ANALYSED.
-- Column order and widths are remembered.
+- Column order and widths are remembered. Dragging a column's edge changes
+  only that column (the ones to its right move along); a scrollbar appears
+  when they don't fit.
+- # keeps each track's number in the list's own order. Clicking a column
+  header sorts ascending, then descending, then off (back to # order). The
+  STEMS column sorts by stem quality. Right-click a header > "Save this order
+  as the list's # order" renumbers 1, 2, 3 ... as shown (per playlist).
+- Right-click tracks (one or several):
+  - Show in Explorer (the files highlighted)
+  - Clear > locators, skips, hot cues, phrases, stem locators, notes, phrase
+    order, edit versions, or everything (asks first; the grid stays)
+  - Analyse: the waveform, plus grid / BPM / key where missing
+  - Analyse again: replaces the grid, BPM and key (the key uses the stems
+    when the track has them)
+- INFO opens the track info panel: edit title, artist, album, genre, label,
+  comment, key, rating and colour on every selected track at once ("(several)"
+  = they differ). Saved in Centrifuge's library; WRITE TO FILE TAGS writes
+  them into the MP3 / FLAC files themselves.
+- EXPAND makes the browser fill the screen (RESTORE to go back).
+- Settings > BROWSER: the preview column's style (3-band, RGB, single colour
+  or stems) and shape.
 - Drag a track onto deck 1 or 2 (or the top / bottom half of the waveforms)
   to load it.
 - RATING (click the stars) and PLAYS columns. A play is counted once a
@@ -223,6 +260,14 @@ Browser
   count. Ratings and plays are kept in Centrifuge's library (a track
   from rekordbox joins it once you edit it or play it).
 - Settings > Key notation: Standard (Am, F#) or Camelot (8A, 2B).
+- Key detection (when Centrifuge analyses a track): the tuning is measured
+  first; the harmony decides the key, weighted to bar downbeats and the first /
+  last bar of each phrase. When the track has stems ("Analyse again"), the
+  root comes from the bass stem and major / minor from the instrument and
+  vocal stems. To compare with rekordbox on your own music, run in a command
+  prompt:  Centrifuge.exe --keytest "E:\"   (a rekordbox USB stick, a folder,
+  or files) - it writes "Centrifuge key test.txt" on your desktop listing each
+  track and how often each method matches rekordbox.
 
 Library
 -------

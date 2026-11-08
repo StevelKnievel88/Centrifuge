@@ -54,6 +54,8 @@ struct NoteLocator
     double timeSec = 0.0;
     juce::String text;
     juce::Colour colour { 0xffffd339 };
+    double leadSec = 2.0;    // shows this long before its point
+    double showSec = 8.0;    // ... and stays up this long after (0 = until the next note)
 };
 
 /** One stretch of the track in the order it plays (section rearrange / phrase repeat). */

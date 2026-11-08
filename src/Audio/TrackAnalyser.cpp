@@ -1,5 +1,6 @@
 #include "TrackAnalyser.h"
 #include "MusicalKey.h"
+#include "BeatGrid.h"
 #include <juce_dsp/juce_dsp.h>
 #include <numeric>
 #include <iostream>
@@ -357,7 +358,7 @@ TrackAnalyser::Result TrackAnalyser::analyse (const TrackAudio& audio, const Opt
     r.bpm = bpm;
 
     if (! cancelled (cancel))
-        r.key = detectKey (audio);
+        r.key = detectKeyV2 (audio, nullptr, &r.beats);
     return r;
 }
 
@@ -426,6 +427,192 @@ juce::String TrackAnalyser::detectKey (const TrackAudio& a)
             if (rr > bestR) { bestR = rr; best.pitch = tonic; best.minor = minor != 0; }
         }
     return bestR > 0.0 ? best.toString() : juce::String();
+}
+
+
+//==============================================================================
+namespace
+{
+    /** Pitch-class content of a mono signal over time: per frame, 12 values (sqrt magnitude, triangular weighting
+        by distance from the semitone), between fMin and fMax, with the tuning offset (semitones) taken out. */
+    struct ChromaFrames
+    {
+        std::vector<std::array<float, 12>> frames;
+        std::vector<double> times;   // frame centres (seconds)
+    };
+
+    template <typename SampleFn>
+    ChromaFrames chromaOf (SampleFn&& sampleAt, int64_t numFrames, double sampleRate, int order, double fMin, double fMax, double tuning)
+    {
+        ChromaFrames c;
+        const int size = 1 << order;
+        if (numFrames < size * 2) return c;
+        juce::dsp::FFT fft (order);
+        std::vector<float> window ((size_t) size), buf ((size_t) size * 2);
+        for (int i = 0; i < size; ++i) window[(size_t) i] = 0.5f - 0.5f * std::cos (juce::MathConstants<float>::twoPi * (float) i / (float) size);
+        const double binHz = sampleRate / size;
+        struct Map { int bin; int pc; float w; };
+        std::vector<Map> maps;
+        for (int b = juce::jmax (1, (int) (fMin / binHz)); b <= (int) (fMax / binHz); ++b)
+        {
+            const double midi = 69.0 + 12.0 * std::log2 (b * binHz / 440.0) - tuning;
+            const double nearest = std::round (midi);
+            const float w = (float) juce::jmax (0.0, 1.0 - 2.0 * std::abs (midi - nearest));
+            if (w > 0.0f) maps.push_back ({ b, ((int) nearest % 12 + 12) % 12, w });
+        }
+        const int hop = size / 2;
+        for (int64_t start = 0; start + size <= numFrames; start += hop)
+        {
+            for (int i = 0; i < size; ++i) buf[(size_t) i] = sampleAt (start + i) * window[(size_t) i];
+            std::fill (buf.begin() + size, buf.end(), 0.0f);
+            fft.performFrequencyOnlyForwardTransform (buf.data(), true);
+            std::array<float, 12> frame {};
+            for (auto& m : maps) frame[(size_t) m.pc] += m.w * std::sqrt (buf[(size_t) m.bin]);
+            c.frames.push_back (frame);
+            c.times.push_back ((double) (start + size / 2) / sampleRate);
+        }
+        return c;
+    }
+
+    /** How far the track's tuning is from A = 440 Hz, in semitones (-0.5 .. 0.5): the circular mean of the strongest
+        spectral peaks' distance from the nearest semitone. */
+    template <typename SampleFn>
+    double estimateTuning (SampleFn&& sampleAt, int64_t numFrames, double sampleRate)
+    {
+        constexpr int order = 14, size = 1 << order;
+        if (numFrames < size * 2) return 0.0;
+        juce::dsp::FFT fft (order);
+        std::vector<float> buf ((size_t) size * 2);
+        const double binHz = sampleRate / size;
+        double sx = 0.0, sy = 0.0;
+        const int64_t hop = juce::jmax ((int64_t) size, numFrames / 40);   // ~40 frames across the track
+        for (int64_t start = 0; start + size <= numFrames; start += hop)
+        {
+            for (int i = 0; i < size; ++i)
+                buf[(size_t) i] = sampleAt (start + i) * (0.5f - 0.5f * std::cos (juce::MathConstants<float>::twoPi * (float) i / (float) size));
+            std::fill (buf.begin() + size, buf.end(), 0.0f);
+            fft.performFrequencyOnlyForwardTransform (buf.data(), true);
+            for (int b = (int) (100.0 / binHz); b < (int) (2000.0 / binHz) && b + 1 < size / 2; ++b)
+            {
+                const float m = buf[(size_t) b];
+                if (m <= buf[(size_t) b - 1] || m < buf[(size_t) b + 1]) continue;   // local peaks only
+                // parabolic interpolation for the peak's true frequency
+                const float a = buf[(size_t) b - 1], c = buf[(size_t) b + 1];
+                const float den = a - 2.0f * m + c;
+                const double delta = std::abs (den) > 1.0e-9f ? 0.5 * (a - c) / den : 0.0;
+                const double midi = 69.0 + 12.0 * std::log2 ((b + delta) * binHz / 440.0);
+                const double dev = midi - std::round (midi);
+                const double ang = dev * juce::MathConstants<double>::twoPi, w = std::sqrt ((double) m);
+                sx += w * std::cos (ang);
+                sy += w * std::sin (ang);
+            }
+        }
+        if (sx == 0.0 && sy == 0.0) return 0.0;
+        return std::atan2 (sy, sx) / juce::MathConstants<double>::twoPi;
+    }
+
+    double correlate (const std::array<double, 12>& chroma, const double* prof, int tonic)
+    {
+        double mx = 0, my = 0;
+        for (int i = 0; i < 12; ++i) { mx += chroma[(size_t) ((i + tonic) % 12)]; my += prof[i]; }
+        mx /= 12; my /= 12;
+        double sxy = 0, sxx = 0, syy = 0;
+        for (int i = 0; i < 12; ++i)
+        {
+            const double x = chroma[(size_t) ((i + tonic) % 12)] - mx, y = prof[i] - my;
+            sxy += x * y; sxx += x * x; syy += y * y;
+        }
+        return sxx > 0 && syy > 0 ? sxy / std::sqrt (sxx * syy) : -1.0;
+    }
+}
+
+juce::String TrackAnalyser::detectKeyV2 (const TrackAudio& a, const StemAudio* stems, const std::vector<Beat>* beats)
+{
+    // Root from the bass (the bass stem when there is one: it sits on the root most of the time - counted by how
+    // long each note lasts, with extra weight on bar downbeats and on the first and last bar of each 16-bar phrase),
+    // major / minor from the harmony (instruments + vocals, or the full mix's mid range). Tuning is measured first.
+    const bool haveStems = stems != nullptr && stems->numFrames == a.numFrames && stems->validFrames.load() >= stems->numFrames;
+    auto mix = [&a] (int64_t i) { return 0.5f * (a.left[(size_t) i] + a.right[(size_t) i]); };
+    auto stemMono = [stems] (int s, int64_t i)
+    {
+        return 0.5f * StemAudio::toFloat * ((float) stems->channels[(size_t) s * 2][(size_t) i] + (float) stems->channels[(size_t) s * 2 + 1][(size_t) i]);
+    };
+    auto harmony = [&] (int64_t i) { return stemMono (2, i) + stemMono (3, i); };   // inst + vocals
+    auto bass = [&] (int64_t i) { return stemMono (1, i); };
+
+    double tuning = haveStems ? estimateTuning (harmony, a.numFrames, a.sampleRate) : estimateTuning (mix, a.numFrames, a.sampleRate);
+    if (std::getenv ("CF_ANALYSE_DEBUG") != nullptr) std::cerr << "tuning " << tuning << std::endl;
+    if (std::getenv ("CF_KEY_NOTUNE") != nullptr) tuning = 0.0;
+
+    // Bass: fine frequency resolution (32768-point FFT) from 40 to 300 Hz
+    const auto bassC = haveStems ? chromaOf (bass, a.numFrames, a.sampleRate, 15, 40.0, 300.0, tuning)
+                                 : chromaOf (mix, a.numFrames, a.sampleRate, 15, 40.0, 220.0, tuning);
+    const double hLo = juce::SystemStats::getEnvironmentVariable ("CF_KEY_LO", "55").getDoubleValue();
+    const double hHi = juce::SystemStats::getEnvironmentVariable ("CF_KEY_HI", "1760").getDoubleValue();
+    const auto harmC = haveStems ? chromaOf (harmony, a.numFrames, a.sampleRate, 14, 110.0, hHi, tuning)
+                                 : chromaOf (mix, a.numFrames, a.sampleRate, 14, hLo, hHi, tuning);
+    if (harmC.frames.empty()) return detectKey (a);
+
+    // Weight of a moment: more on bar downbeats and on the first / last bar of a 16-bar phrase
+    std::unique_ptr<BeatGrid> grid;
+    if (beats != nullptr && beats->size() >= 2 && std::getenv ("CF_KEY_NOWEIGHT") == nullptr) grid = std::make_unique<BeatGrid> (*beats, 0.0, a.lengthSeconds());
+    int firstDown = 0;
+    if (grid != nullptr) for (int i = 0; i < (int) beats->size(); ++i) if ((*beats)[(size_t) i].beatInBar == 1) { firstDown = i; break; }
+    auto weightAt = [&] (double t)
+    {
+        if (grid == nullptr) return 1.0;
+        const double bp = grid->beatPosition (t) - firstDown;
+        if (bp < 0.0) return 1.0;
+        const double inBar = std::fmod (bp, 4.0);
+        const int bar = (int) std::floor (bp / 4.0);
+        double w = 1.0;
+        if (inBar < 1.0) w += 1.0;                                   // on the downbeat
+        if (bar % 16 == 0 || bar % 16 == 15) w += 1.0;               // first / last bar of a phrase
+        return w;
+    };
+
+    std::array<double, 12> bassHist {}, harm {};
+    for (size_t f = 0; f < bassC.frames.size(); ++f)
+    {
+        const auto& fr = bassC.frames[f];
+        const float mx = *std::max_element (fr.begin(), fr.end());
+        if (mx <= 1.0e-6f) continue;
+        // the strongest bass note of the moment counts most (how long it plays = how many frames)
+        const double w = weightAt (bassC.times[f]);
+        for (int i = 0; i < 12; ++i) bassHist[(size_t) i] += w * std::pow (fr[(size_t) i] / mx, 3.0f);
+    }
+    for (size_t f = 0; f < harmC.frames.size(); ++f)
+    {
+        const auto& fr = harmC.frames[f];
+        const float mx = *std::max_element (fr.begin(), fr.end());
+        if (mx <= 1.0e-6f) continue;
+        const double w = weightAt (harmC.times[f]);
+        for (int i = 0; i < 12; ++i) harm[(size_t) i] += w * fr[(size_t) i] / mx;
+    }
+    const double bassMax = juce::jmax (1.0e-9, *std::max_element (bassHist.begin(), bassHist.end()));
+
+    // Key profiles for the harmony: Krumhansl-Kessler by default (measured best here); CF_KEY_PROFILE=t tries Temperley's
+    static const double tMajor[12] = { 5.0, 2.0, 3.5, 2.0, 4.5, 4.0, 2.0, 4.5, 2.0, 3.5, 1.5, 4.0 };
+    static const double tMinor[12] = { 5.0, 2.0, 3.5, 4.5, 2.0, 4.0, 2.0, 4.5, 3.5, 2.0, 1.5, 4.0 };
+    static const double kMajor[12] = { 6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88 };
+    static const double kMinor[12] = { 6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17 };
+    const bool kk = juce::SystemStats::getEnvironmentVariable ("CF_KEY_PROFILE", "kk") == "kk";
+    const double* majorP = kk ? kMajor : tMajor;
+    const double* minorP = kk ? kMinor : tMinor;
+    // The bass stem decides the root; in the full mix the kick drum muddies the low end, so there the harmony
+    // (which includes the bass) decides alone. (Measured with --keytest: see README.)
+    double bassWeight = haveStems ? 0.7 : 0.0;
+    if (auto bw = juce::SystemStats::getEnvironmentVariable ("CF_KEY_BASS", {}); bw.isNotEmpty()) bassWeight = bw.getDoubleValue();
+
+    MusicalKey best;
+    double bestScore = -1.0e9;
+    for (int tonic = 0; tonic < 12; ++tonic)
+        for (int minor = 0; minor < 2; ++minor)
+        {
+            const double score = correlate (harm, minor ? minorP : majorP, tonic) + bassWeight * bassHist[(size_t) tonic] / bassMax;
+            if (score > bestScore) { bestScore = score; best.pitch = tonic; best.minor = minor != 0; }
+        }
+    return best.toString();
 }
 
 } // namespace orbit

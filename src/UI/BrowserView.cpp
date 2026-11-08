@@ -104,9 +104,51 @@ public:
     bool allTracks, isSourceRoot;
 };
 
+namespace
+{
+    /** Each list's own track order (the # column), by list key: file paths in order. */
+    struct ListOrders
+    {
+        static juce::File file() { return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("Centrifuge").getChildFile ("list-orders.json"); }
+        static juce::var& data()
+        {
+            static juce::var d = []
+            {
+                auto v = juce::JSON::parse (file());
+                return v.isObject() ? v : juce::var (new juce::DynamicObject());
+            }();
+            return d;
+        }
+        static void save() { file().getParentDirectory().createDirectory(); file().replaceWithText (juce::JSON::toString (data())); }
+    };
+}
+
+/** The table's header: right-click adds "Save this order as the list's # order". */
+class BrowserView::Header : public juce::TableHeaderComponent
+{
+public:
+    explicit Header (BrowserView& o) : owner (o) {}
+    void addMenuItems (juce::PopupMenu& menu, int columnIdClicked) override
+    {
+        menu.addItem (9001, "Save this order as the list's # order (renumbers 1, 2, 3 ... as shown now)");
+        menu.addItem (9002, "Reset the # order (back to the list's own order)");
+        menu.addSeparator();
+        juce::TableHeaderComponent::addMenuItems (menu, columnIdClicked);
+    }
+    void reactToMenuItem (int menuReturnId, int columnIdClicked) override
+    {
+        if (menuReturnId == 9001) owner.saveOrderAsDefault();
+        else if (menuReturnId == 9002) owner.resetSavedOrder();
+        else juce::TableHeaderComponent::reactToMenuItem (menuReturnId, columnIdClicked);
+    }
+private:
+    BrowserView& owner;
+};
+
 //==============================================================================
 BrowserView::BrowserView (LibraryManager& lib, StemManager& stems) : library (lib), stemManager (stems)
 {
+    table.setHeader (std::make_unique<Header> (*this));
     addAndMakeVisible (tree);
     tree.setRootItemVisible (false);
     tree.setDefaultOpenness (false);
@@ -127,7 +169,7 @@ BrowserView::BrowserView (LibraryManager& lib, StemManager& stems) : library (li
     if (Features::rekordboxCopy) hdr.addColumn ("R/C", 10, 46, 36, 70);
     hdr.addColumn ("Rating", 12, 76, 60, 100);
     hdr.addColumn ("Plays", 13, 48, 40, 80);
-    hdr.setStretchToFitActive (true);
+    hdr.setStretchToFitActive (false);   // resizing a column moves the ones to its right along, keeping their widths
     table.setRowHeight (24);
     table.setMultipleSelectionEnabled (true);
     table.setColour (juce::ListBox::backgroundColourId, Theme::panel);
@@ -144,6 +186,16 @@ BrowserView::BrowserView (LibraryManager& lib, StemManager& stems) : library (li
         b->setColour (juce::TextButton::buttonOnColourId, Theme::deckColour (b == &load1 ? 0 : 1));
     }
     load1.onClick = [this] { loadSelected (0); };
+    addAndMakeVisible (infoButton);
+    infoButton.setClickingTogglesState (false);
+    infoButton.setTooltip ("Show / hide the track info panel (edit several tracks at once)");
+    infoButton.onClick = [this] { setInfoPanelOpen (! infoOpen); if (onInfoPanelToggled) onInfoPanelToggled (infoOpen); };
+    addChildComponent (infoPanel);
+    infoPanel.onEdit = [this] (const std::vector<TrackInfo>& t, const juce::String& f, const juce::String& v) { if (onEditInfo) onEditInfo (t, f, v); };
+    infoPanel.onWriteTags = [this] (const std::vector<TrackInfo>& t) { if (onWriteTags) onWriteTags (t); };
+    addAndMakeVisible (expandButton);
+    expandButton.setTooltip ("Make the browser fill the screen (and back)");
+    expandButton.onClick = [this] { if (onExpandToggled) onExpandToggled(); };
     load2.onClick = [this] { loadSelected (1); };
 
     for (auto* b : { &importButton, &exportButton, &viewR, &viewC })
@@ -241,12 +293,17 @@ void BrowserView::resized()
         viewC.setBounds (top.removeFromLeft (98));
         top.removeFromLeft (12);
     }
+    expandButton.setBounds (top.removeFromRight (84));
+    top.removeFromRight (6);
+    infoButton.setBounds (top.removeFromRight (60));
+    top.removeFromRight (10);
     load2.setBounds (top.removeFromRight (70));
     top.removeFromRight (6);
     load1.setBounds (top.removeFromRight (70));
     top.removeFromRight (10);
     countLabel.setBounds (top.removeFromRight (100));
     search.setBounds (top.removeFromLeft (juce::jmin (300, top.getWidth())));
+    if (infoOpen) infoPanel.setBounds (r.removeFromRight (juce::jmin (320, r.getWidth() / 2)));
     table.setBounds (r);
 }
 
@@ -302,6 +359,12 @@ void BrowserView::refreshSources()
 
 void BrowserView::showList (std::shared_ptr<const LibrarySource> src, const PlaylistNode* node, const juce::String& name, const juce::String& key)
 {
+    // The same list again (the library was refreshed): keep the selection and the scroll position
+    const bool sameList = key.isNotEmpty() && key == currentKey && currentSource != nullptr;
+    juce::StringArray keepSelected;
+    const int keepScroll = table.getVerticalPosition() > 0.0 ? table.getViewport()->getViewPositionY() : 0;
+    if (sameList)
+        for (auto& t : getSelectedTracks()) keepSelected.add (t.file.getFullPathName());
     currentSource = std::move (src);
     currentListName = name;
     currentKey = key;
@@ -312,10 +375,35 @@ void BrowserView::showList (std::shared_ptr<const LibrarySource> src, const Play
             for (int i = 0; i < (int) currentSource->tracks.size(); ++i) allRows.push_back (i);
         else
             allRows = node->trackIndices;
+        // The list's saved # order (tracks it doesn't know yet go after, as they were)
+        if (auto* saved = key.isNotEmpty() ? ListOrders::data()[juce::Identifier (key)].getArray() : nullptr)
+        {
+            std::unordered_map<juce::String, int> pos;
+            for (int i = 0; i < saved->size(); ++i) pos[(*saved)[i].toString()] = i;
+            std::vector<std::pair<int, int>> keyed;
+            for (int k = 0; k < (int) allRows.size(); ++k)
+            {
+                auto it = pos.find (currentSource->tracks[(size_t) allRows[(size_t) k]].file.getFullPathName());
+                keyed.push_back ({ it != pos.end() ? it->second : 1000000 + k, allRows[(size_t) k] });
+            }
+            std::stable_sort (keyed.begin(), keyed.end(), [] (auto& a, auto& b) { return a.first < b.first; });
+            for (size_t k = 0; k < keyed.size(); ++k) allRows[k] = keyed[k].second;
+        }
     }
+    numbers.clear();
+    for (int k = 0; k < (int) allRows.size(); ++k) numbers[allRows[(size_t) k]] = k + 1;
     applyFilter();
     table.deselectAllRows();
-    if (! rows.empty()) table.selectRow (0);
+    if (sameList && ! keepSelected.isEmpty())
+    {
+        juce::SparseSet<int> sel;
+        for (int k = 0; k < (int) rows.size(); ++k)
+            if (keepSelected.contains (currentSource->tracks[(size_t) rows[(size_t) k]].file.getFullPathName())) sel.addRange ({ k, k + 1 });
+        table.setSelectedRows (sel, juce::dontSendNotification);
+        table.getViewport()->setViewPosition (table.getViewport()->getViewPositionX(), keepScroll);
+        if (infoOpen) infoPanel.setTracks (getSelectedTracks());
+    }
+    else if (! rows.empty()) table.selectRow (0);
 }
 
 void BrowserView::applyFilter()
@@ -331,7 +419,7 @@ void BrowserView::applyFilter()
             rows.push_back (i);
     }
 
-    if (sortColumn > 1 && currentSource != nullptr)
+    if (sortColumn >= 1 && currentSource != nullptr)
     {
         auto& tr = currentSource->tracks;
         std::stable_sort (rows.begin(), rows.end(), [&] (int a, int b)
@@ -341,6 +429,8 @@ void BrowserView::applyFilter()
             int c = 0;
             switch (sortColumn)
             {
+                case 1: c = numberOf (a) - numberOf (b); break;
+                case 8: c = stemQualityOf (x) - stemQualityOf (y); break;
                 case 2: c = x.title.compareNatural (y.title); break;
                 case 3: c = x.artist.compareNatural (y.artist); break;
                 case 4: c = x.bpm < y.bpm ? -1 : (x.bpm > y.bpm ? 1 : 0); break;
@@ -360,6 +450,7 @@ void BrowserView::applyFilter()
     countLabel.setText (juce::String ((int) rows.size()) + " tracks", juce::dontSendNotification);
     table.updateContent();
     table.repaint();
+    if (infoOpen) infoPanel.setTracks (getSelectedTracks());
 }
 
 int BrowserView::getNumRows() { return (int) rows.size(); }
@@ -398,7 +489,7 @@ void BrowserView::paintCell (juce::Graphics& g, int row, int col, int w, int h, 
 
     switch (col)
     {
-        case 1: s = juce::String (row + 1); g.setColour (Theme::textFaint); just = juce::Justification::centredRight; break;
+        case 1: s = juce::String (numberOf (rows[(size_t) row])); g.setColour (Theme::textFaint); just = juce::Justification::centredRight; break;
         case 2: s = t.title; break;
         case 3: s = t.artist; g.setColour (Theme::textDim); break;
         case 4: s = t.bpm > 0 ? juce::String (t.bpm, 2) : juce::String(); just = juce::Justification::centredRight; break;
@@ -413,10 +504,7 @@ void BrowserView::paintCell (juce::Graphics& g, int row, int col, int w, int h, 
         case 7: s = t.genre; g.setColour (Theme::textDim); break;
         case 8:
         {
-            auto it = stemCache.find (t.file.getFullPathName());
-            int q;
-            if (it == stemCache.end()) { q = stemManager.cachedQuality (t); stemCache[t.file.getFullPathName()] = q; }
-            else q = it->second;
+            const int q = stemQualityOf (t);
             if (q >= 0)
             {
                 // The Centrifuge rotor with full tubes: this track's stems are ready - and at what quality.
@@ -482,24 +570,7 @@ void BrowserView::paintCell (juce::Graphics& g, int row, int col, int w, int h, 
             }
             else
             {
-                // A shrunk overview: 3-band colours from the bottom up, like the deck overviews
-                const int n = (int) pd.low.size();
-                const float px = area.getWidth() / (float) n;
-                const float wh = area.getHeight() - (pd.marks.phrases.empty() ? 0.0f : 3.0f);
-                for (int i = 0; i < n; ++i)
-                {
-                    const float lo = pd.low[(size_t) i] / 255.0f, mi = pd.mid[(size_t) i] / 255.0f, hi = pd.high[(size_t) i] / 255.0f;
-                    const float x = area.getX() + (float) i * px, w1 = juce::jmax (1.0f, px - 0.3f);
-                    const float hOuter = juce::jmax (lo, mi) * wh, hHigh = hi * wh;
-                    const float base = area.getY() + wh;
-                    g.setColour (lo > mi ? WaveColours::low : WaveColours::mid);
-                    g.fillRect (x, base - hOuter, w1, hOuter);
-                    g.setColour (WaveColours::lowAndMid);
-                    const float hBoth = juce::jmin (lo, mi) * wh;
-                    g.fillRect (x, base - hBoth, w1, hBoth);
-                    g.setColour (WaveColours::high);
-                    g.fillRect (x, base - hHigh, w1, hHigh);
-                }
+                paintPreview (g, area, pd);
                 if (active)
                 {
                     g.setColour (juce::Colours::black.withAlpha (0.45f));
@@ -536,6 +607,55 @@ void BrowserView::paintCell (juce::Graphics& g, int row, int col, int w, int h, 
         default: break;
     }
     g.drawText (s, juce::Rectangle<int> (6, 0, w - 12, h), just, true);
+}
+
+void BrowserView::paintPreview (juce::Graphics& g, juce::Rectangle<float> area, const PreviewData& pd) const
+{
+    // A shrunk overview in the chosen style (Settings): 3-band, RGB, single colour or the four stems
+    const int n = (int) pd.low.size();
+    if (n <= 0) return;
+    const float px = area.getWidth() / (float) n;
+    const float wh = area.getHeight() - (pd.marks.phrases.empty() ? 0.0f : 3.0f);
+    const float base = previewHalf ? area.getY() + wh : area.getY() + wh * 0.5f;
+    auto bar = [&] (float x, float w, float h, juce::Colour c)
+    {
+        g.setColour (c);
+        if (previewHalf) g.fillRect (x, base - h, w, h);
+        else g.fillRect (x, base - h * 0.5f, w, h);
+    };
+    const bool stems = previewStyle == 4 && ! pd.stems[0].empty();
+    for (int i = 0; i < n; ++i)
+    {
+        const float x = area.getX() + (float) i * px, w1 = juce::jmax (1.0f, px - 0.3f);
+        const float lo = pd.low[(size_t) i] / 255.0f, mi = pd.mid[(size_t) i] / 255.0f, hi = pd.high[(size_t) i] / 255.0f;
+        if (stems)
+        {
+            // overlaid back to front: inst, bass, vocals, drums
+            for (int s : { 2, 1, 3, 0 })
+            {
+                const auto& v = pd.stems[(size_t) s];
+                const size_t k = (size_t) juce::jmin ((int) v.size() - 1, i * (int) v.size() / n);
+                bar (x, w1, v[k] / 255.0f * wh, Theme::stemColour (s).withAlpha (0.85f));
+            }
+            continue;
+        }
+        if (previewStyle == 2)
+        {
+            // RGB: lows red, mids green, highs blue, height from the loudest
+            const float m = juce::jmax (lo, mi, hi, 0.001f);
+            bar (x, w1, m * wh, juce::Colour::fromFloatRGBA (juce::jmin (1.0f, 0.25f + lo / m), juce::jmin (1.0f, 0.2f + mi / m * 0.9f), juce::jmin (1.0f, 0.2f + hi / m), 1.0f));
+            continue;
+        }
+        if (previewStyle == 3)
+        {
+            bar (x, w1, juce::jmax (lo, mi, hi) * wh, previewTint);
+            continue;
+        }
+        // 3-band, like the deck overviews
+        bar (x, w1, juce::jmax (lo, mi) * wh, lo > mi ? WaveColours::low : WaveColours::mid);
+        bar (x, w1, juce::jmin (lo, mi) * wh, WaveColours::lowAndMid);
+        bar (x, w1, hi * wh, WaveColours::high);
+    }
 }
 
 float BrowserView::cellFraction (int col, const juce::MouseEvent& e) const
@@ -597,6 +717,7 @@ void BrowserView::showTrackMenu (int)
     m.addItem (1, "Load to deck 1", one);
     m.addItem (2, "Load to deck 2", one);
     m.addItem (3, "Load into PREP", one);
+    m.addItem (20, "Show in Explorer");
     if (anyLibrary)
     {
         m.addSeparator();
@@ -604,18 +725,42 @@ void BrowserView::showTrackMenu (int)
         if (Features::rekordboxCopy) m.addItem (11, "Remove from the rekordbox copy");
         m.addItem (12, "Reset play count");
     }
+    {
+        // Clear marks / edits (asks first)
+        juce::PopupMenu clear;
+        clear.addItem (30, "All locators (and loop locators)");
+        clear.addItem (31, "All skips");
+        clear.addItem (32, "All hot cues");
+        clear.addItem (33, "All phrases");
+        clear.addItem (34, "All stem locators");
+        clear.addItem (35, "All notes");
+        clear.addItem (36, "Phrase order and repeats");
+        clear.addItem (37, "Saved edit versions");
+        clear.addSeparator();
+        clear.addItem (38, "Everything above (the beat grid stays)");
+        m.addSeparator();
+        m.addSubMenu ("Clear", clear);
+    }
     m.addSeparator();
+    m.addItem (14, "Analyse  (waveform; grid, BPM and key where missing)");
+    m.addItem (15, "Analyse again  (replace the grid, BPM and key)");
     m.addItem (13, "Separate stems now (pre-analysis quality - replaces lower-quality stems)");
     juce::Component::SafePointer<BrowserView> safe (this);
     m.showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [safe, tracks] (int r)
     {
         if (safe == nullptr || safe->onTrackAction == nullptr || r == 0) return;
         const char* actions[] = { "", "load.0", "load.1", "load.2" };
+        const char* clears[] = { "clear.locators", "clear.skips", "clear.hotcues", "clear.phrases", "clear.stemlocs",
+                                 "clear.notes", "clear.order", "clear.editversions", "clear.all" };
         if (r >= 1 && r <= 3) safe->onTrackAction (tracks, actions[r]);
         else if (r == 10) safe->onTrackAction (tracks, "remove.cf");
         else if (r == 11) safe->onTrackAction (tracks, "remove.rb");
         else if (r == 12) safe->onTrackAction (tracks, "plays.reset");
         else if (r == 13) safe->onTrackAction (tracks, "stems.separate");
+        else if (r == 14) safe->onTrackAction (tracks, "analyse");
+        else if (r == 15) safe->onTrackAction (tracks, "analyse.again");
+        else if (r == 20) safe->onTrackAction (tracks, "reveal");
+        else if (r >= 30 && r <= 38) safe->onTrackAction (tracks, clears[r - 30]);
     });
 }
 
@@ -665,15 +810,18 @@ void BrowserView::requestPreviewWave (const TrackInfo& t)
         if (data.waveforms.numDetailEntries() > 0)
             if (auto w = WaveformData::fromAnlz (data.waveforms, WaveformData::Style::threeBand)) pw = PreviewWaveCache::make (*w);
         if (pw.isEmpty()) PreviewWaveCache::load (path, pw);
+        PreviewStems ps;
+        PreviewWaveCache::loadStems (path, ps);
         const bool marksToo = anlz.existsAsFile() || version.has_value();
         TrackMarks marks;
         if (marksToo)
             marks = version ? TrackMarks::fromVersion (*version, length, data.phrases)
                             : TrackMarks::fromVersion (TrackVersion::fromRekordbox (data.beats, data.cues), length, data.phrases);
-        juce::MessageManager::callAsync ([safe, pw, path, marks, marksToo]
+        juce::MessageManager::callAsync ([safe, pw, ps, path, marks, marksToo]
         {
             if (safe == nullptr) return;
             auto& pd = safe->previewWaves[path];
+            if (! ps.isEmpty() && pd.stems[0].empty()) pd.stems = ps.stem;
             if (! pw.isEmpty() && pd.low.empty()) { pd.low = pw.low; pd.mid = pw.mid; pd.high = pw.high; }
             pd.missing = pd.low.empty();
             if (marksToo && ! pd.haveMarks) { pd.marks = marks; pd.haveMarks = true; }
@@ -692,9 +840,64 @@ void BrowserView::cellDoubleClicked (int row, int, const juce::MouseEvent&)
 
 void BrowserView::sortOrderChanged (int columnId, bool forwards)
 {
-    sortColumn = columnId;
-    sortForwards = forwards;
+    if (settingSort) return;
+    // A column's header steps ascending > descending > off (off = the list's # order)
+    if (columnId != 0 && columnId == sortColumn && ! sortForwards && forwards)
+    {
+        sortColumn = 0;
+        sortForwards = true;
+        const juce::ScopedValueSetter<bool> svs (settingSort, true);
+        table.getHeader().setSortColumnId (0, true);
+    }
+    else
+    {
+        sortColumn = columnId;
+        sortForwards = forwards;
+    }
     applyFilter();
+}
+
+int BrowserView::stemQualityOf (const TrackInfo& t) const
+{
+    const auto path = t.file.getFullPathName();
+    auto it = stemCache.find (path);
+    if (it != stemCache.end()) return it->second;
+    const int q = stemManager.cachedQuality (t);
+    stemCache[path] = q;
+    return q;
+}
+
+void BrowserView::saveOrderAsDefault()
+{
+    if (currentSource == nullptr || currentKey.isEmpty()) return;
+    // the order shown now first (a search may hide some: they keep their order after)
+    std::vector<int> order = rows;
+    std::unordered_map<int, bool> shown;
+    for (int i : rows) shown[i] = true;
+    for (int i : allRows) if (! shown.count (i)) order.push_back (i);
+    juce::Array<juce::var> paths;
+    for (int i : order) paths.add (currentSource->tracks[(size_t) i].file.getFullPathName());
+    if (auto* o = ListOrders::data().getDynamicObject()) o->setProperty (juce::Identifier (currentKey), paths);
+    ListOrders::save();
+    allRows = order;
+    numbers.clear();
+    for (int k = 0; k < (int) allRows.size(); ++k) numbers[allRows[(size_t) k]] = k + 1;
+    sortColumn = 0;
+    sortForwards = true;
+    {
+        const juce::ScopedValueSetter<bool> svs (settingSort, true);
+        table.getHeader().setSortColumnId (0, true);
+    }
+    applyFilter();
+}
+
+void BrowserView::resetSavedOrder()
+{
+    if (currentKey.isEmpty()) return;
+    if (auto* o = ListOrders::data().getDynamicObject()) o->removeProperty (juce::Identifier (currentKey));
+    ListOrders::save();
+    if (auto* sel = dynamic_cast<Item*> (tree.getSelectedItem (0)))
+        showList (sel->src, sel->allTracks ? nullptr : sel->node, sel->name, sel->key);
 }
 
 void BrowserView::timerCallback()

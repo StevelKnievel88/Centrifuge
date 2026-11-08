@@ -4,6 +4,7 @@
 #include "Theme.h"
 #include "../Audio/MusicalKey.h"
 #include "../Control/Actions.h"
+#include "StemControl.h"
 
 namespace orbit
 {
@@ -300,7 +301,7 @@ void DeckPanel::paint (juce::Graphics& g)
             updateFold();
             paintStemProgressStrip (g, progress, st.stemsProgress.load(), st.lengthSec.load(), &fold, col);
             g.setColour (col);
-            g.setFont (psyched::Fonts::label (8.5f));
+            g.setFont (psyched::Fonts::label (9.5f));
         }
         g.setColour (Theme::waveBg);
         g.fillRect (r);
@@ -526,35 +527,24 @@ void DeckPanel::paint (juce::Graphics& g)
         const bool ready = st.stemsReady.load();
         const float prog = st.stemsProgress.load();
         {
+            // VOL / FILTER for all four (MIX when they differ - pressing it sets them all to VOL)
             int m0 = st.stemMode[0].load();
             bool same = true;
             for (size_t k = 1; k < 4; ++k) same = same && st.stemMode[k].load() == m0;
-            const char* names[] = { "LVL", "LP", "HP" };
-            auto mc = vfit (r.removeFromLeft (34.0f));
-            chip (g, mc, same ? names[juce::jlimit (0, 2, m0)] : "MIX", ! same || m0 != 0, Theme::sync);
+            auto mc = vfit (r.removeFromLeft (46.0f));
+            chip (g, mc, ! same ? "MIX" : m0 == 1 ? "FILTER" : "VOL", ! same || m0 != 0, Theme::sync);
             regions.push_back ({ mc, "stemmode", 8 });
             r.removeFromLeft (6.0f);
         }
+        juce::ignoreUnused (prog);
         const float sw = (r.getWidth() - 3 * 6.0f) / 4.0f;
         for (int s = 0; s < 4; ++s)
         {
-            auto b = juce::Rectangle<float> (r.getX() + s * (sw + 6.0f), r.getY() + 2.0f, sw, r.getHeight() - 4.0f);
-            const float gain = st.stemGain[(size_t) s].load();
-            const auto sc = Theme::stemColour (s);
-            g.setColour (Theme::panelHi);
-            g.fillRect (b);
-            if (ready)
-            {
-                g.setColour (sc.withAlpha (gain <= 0.0f ? 0.12f : 0.6f));
-                g.fillRect (b.withTrimmedRight (b.getWidth() * (1.0f - juce::jmax (gain, 0.04f))));
-            }
-            g.setColour (ready ? sc.withAlpha (0.8f) : Theme::line);
-            g.drawRect (b.reduced (0.5f), 1.0f);
-            g.setColour (ready ? (gain <= 0.0f ? Theme::textFaint : Theme::text) : Theme::textFaint);
-            g.setFont (Theme::font (11.0f, true));
-            const int mode = st.stemMode[(size_t) s].load();
-            g.drawText (juce::String (stemName (s)).toUpperCase() + (mode == 1 ? " LP" : mode == 2 ? " HP" : ""), b, juce::Justification::centred);
-            regions.push_back ({ b, p + "stem." + juce::String (s + 1) + ".mute", 2 });
+            auto b = juce::Rectangle<float> (r.getX() + s * (sw + 6.0f), r.getY() + 1.0f, sw, r.getHeight() - 2.0f);
+            juce::Rectangle<float> bar, modeBtn;
+            paintStemControl (g, b, s, st.stemGain[(size_t) s].load(), st.stemMode[(size_t) s].load(), ready, bar, modeBtn);
+            regions.push_back ({ bar, p + "stem." + juce::String (s + 1) + ".mute", 2 });
+            regions.push_back ({ modeBtn, "stemmode." + juce::String (s), 9 });
         }
     }
 }
@@ -642,7 +632,11 @@ const NoteLocator* DeckPanel::noteShowing (double pos) const
     if (track == nullptr) return nullptr;
     const NoteLocator* found = nullptr;
     for (auto& n : track->notes)
-        if (pos >= n.timeSec - noteLead && (noteShow <= 0.0 || pos <= n.timeSec + noteShow)) found = &n;
+    {
+        // each note's own timing; "0" = stays until the next note
+        const bool beforeNext = &n == &track->notes.back() || pos < (&n + 1)->timeSec - (&n + 1)->leadSec;
+        if (pos >= n.timeSec - n.leadSec && (n.showSec <= 0.0 ? beforeNext : pos <= n.timeSec + n.showSec)) found = &n;
+    }
     return found;
 }
 
@@ -682,15 +676,15 @@ void DeckPanel::showStemModeMenu (int stem, juce::Rectangle<float> area)
     const auto& st = engine.deck (deck).state();
     const int cur = stem >= 0 ? st.stemMode[(size_t) stem].load() : -1;
     juce::PopupMenu m;
-    const char* labels[] = { "Level (volume)", "Low-pass filter (closes down as the control goes down)", "High-pass filter (closes up as the control goes down)" };
+    const char* labels[] = { "VOL - left of centre turns it down", "FILTER - left of centre low-pass, right high-pass" };
     if (stem >= 0)
     {
         m.addSectionHeader (juce::String (stemName (stem)) + " control");
-        for (int k = 0; k < 3; ++k) m.addItem (1 + k, labels[k], true, cur == k);
+        for (int k = 0; k < 2; ++k) m.addItem (1 + k, labels[k], true, cur == k);
         m.addSeparator();
     }
     m.addSectionHeader ("All four stems on this deck");
-    for (int k = 0; k < 3; ++k) m.addItem (11 + k, labels[k]);
+    for (int k = 0; k < 2; ++k) m.addItem (11 + k, labels[k]);
     juce::Component::SafePointer<DeckPanel> safe (this);
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (localAreaToGlobal (area.toNearestInt())),
                      [safe, stem] (int r)
@@ -735,9 +729,28 @@ void DeckPanel::mouseDown (const juce::MouseEvent& e)
     if (r->kind == 8)
     {
         if (e.mods.isPopupMenu()) { showStemModeMenu (-1, r->r); return; }
-        // click: all four stems step level > low-pass > high-pass
-        const int m0 = engine.deck (deck).state().stemMode[0].load();
-        setStemMode (-1, (m0 + 1) % 3);
+        // all four: VOL <> FILTER (from MIX: VOL)
+        const auto& st = engine.deck (deck).state();
+        bool same = true;
+        for (size_t k = 1; k < 4; ++k) same = same && st.stemMode[k].load() == st.stemMode[0].load();
+        setStemMode (-1, ! same ? 0 : 1 - st.stemMode[0].load());
+        return;
+    }
+    if (r->kind == 9)
+    {
+        const int s = r->action.getTrailingIntValue();
+        if (e.mods.isPopupMenu()) { showStemModeMenu (s, r->r); return; }
+        setStemMode (s, 1 - engine.deck (deck).state().stemMode[(size_t) s].load());
+        return;
+    }
+    if (r->kind == 2 && e.getNumberOfClicks() >= 2)
+    {
+        // double-click a stem: back to the centre (untouched); the first click's mute is undone
+        const auto stemId = "d" + juce::String (deck + 1) + ".stem." + juce::String (r->action.fromFirstOccurrenceOf ("stem.", false, false).getIntValue());
+        press (stemId + ".mute", true);
+        ActionValue av;
+        av.value = 0.5;
+        router.perform ("d" + juce::String (deck + 1) + ".stem." + juce::String (r->action.fromFirstOccurrenceOf ("stem.", false, false).getIntValue()) + ".volume", av);
         return;
     }
     if (r->kind == 7)

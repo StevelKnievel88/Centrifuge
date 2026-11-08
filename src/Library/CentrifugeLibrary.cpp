@@ -547,6 +547,20 @@ void CentrifugeLibrary::setRating (juce::int64 id, int stars)
     ++changeCount;
 }
 
+void CentrifugeLibrary::setInfo (juce::int64 id, const TrackInfo& info)
+{
+    const juce::ScopedLock sl (lock);
+    auto it = tracks.find (id);
+    if (it == tracks.end()) return;
+    auto keep = it->second.info;
+    it->second.info = info;
+    it->second.info.libraryId = keep.libraryId;
+    it->second.info.anlzBase = keep.anlzBase.existsAsFile() || info.anlzBase == juce::File() ? keep.anlzBase : info.anlzBase;
+    if (info.file == juce::File()) it->second.info.file = keep.file;
+    Stmt (db, "UPDATE tracks SET info=? WHERE id=?").bind (1, juce::JSON::toString (infoToVar (it->second.info), true)).bind (2, id).run();
+    ++changeCount;
+}
+
 void CentrifugeLibrary::saveVersions (juce::int64 id, const TrackVersion* rb, const TrackVersion* cf)
 {
     const juce::ScopedLock sl (lock);

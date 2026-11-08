@@ -81,12 +81,13 @@ std::vector<PlaySegment> TrackLoader::compilePlayMap (const std::vector<Phrase>&
     for (auto& p : phrases) anyRepeat = anyRepeat || p.repeats > 1;
     if (arrangement.empty() && ! anyRepeat) return map;
 
-    // Play order: the arrangement (by phrase start), then any phrase it leaves out, in track order.
+    // Play order: the arrangement (by phrase start - a phrase can be in it more than once: a duplicated section),
+    // then any phrase it leaves out, in track order.
     std::vector<int> order;
     std::vector<bool> used ((size_t) n, false);
     for (auto a : arrangement)
         for (int i = 0; i < n; ++i)
-            if (! used[(size_t) i] && std::abs (phrases[(size_t) i].startSec - a) < 0.05) { order.push_back (i); used[(size_t) i] = true; break; }
+            if (std::abs (phrases[(size_t) i].startSec - a) < 0.05) { order.push_back (i); used[(size_t) i] = true; break; }
     for (int i = 0; i < n; ++i) if (! used[(size_t) i]) order.push_back (i);
 
     auto endOf = [&] (int i) { return i + 1 < n ? phrases[(size_t) i + 1].startSec : length; };

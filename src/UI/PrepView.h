@@ -42,6 +42,7 @@ public:
     std::function<void (int width)> onListWidthChanged;   // after the list's edge is dragged
     void setEditView (bool on) { if (on != editView) { editView = on; overviewWidth = 0; repaint(); } }
     std::function<void()> onEditViewToggled;
+    void showListTab (int t) { listTab = juce::jlimit (0, 2, t); listScroll = 0; repaint(); }
     void setListWidth (int w) { listWidth = juce::jlimit (200, 900, w); resized(); repaint(); }
 
     /** The zoomed waveform: lanes (the second can be off), split, colours and zoom - like the play decks. */
@@ -127,8 +128,11 @@ private:
     void showAddMenu (juce::Rectangle<float> area);
     void showStemEditor (int index, juce::Rectangle<float> area);
     void showNoteMenu (int index, juce::Rectangle<float> area);
+    void showNoteEditor (int index, juce::Rectangle<float> area);
     static juce::String stemLocatorSummary (const StemLocator& l);
-    std::vector<int> phrasePlayOrder() const;
+    std::vector<int> phrasePlayOrder() const;            // phrase indexes in play order (a duplicated section appears again)
+    int phraseIndexOf (int kind, int index) const;      // the phrase of a list entry (kind 3 phrase, kind 4 a copy)
+    void setPlayOrder (const std::vector<int>& order);
     std::vector<ListEntry> shownEntries;
     float listRowsTop = 0.0f, listRowH = 24.0f;
     int dragPhrase = -1, dragTarget = -1;

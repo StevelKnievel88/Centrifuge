@@ -323,7 +323,7 @@ AudioTags AudioTags::read (const juce::File& file)
         if (readAt (in, 0, 12, h))
         {
             const auto magic = latin1 (h.data(), 4);
-            if (magic == "ID3")
+            if (magic.startsWith ("ID3"))   // "ID3" + its version byte
             {
                 Bytes tag;
                 const size_t size = syncsafe (h.data() + 6) + 10;

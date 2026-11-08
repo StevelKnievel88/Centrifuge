@@ -52,7 +52,14 @@ struct AppSettings
     double noteShowSeconds = 8.0;      // a note locator stays up this long after playback reaches it (0 = until the next one)
     double noteLeadSeconds = 2.0;      // ... and shows this long before
     juce::StringArray collapsedSections;   // Settings sections folded away
-    juce::String browserColumns;       // browser column order and widths
+    juce::String browserColumns;
+    bool browserInfoOpen = false;
+    juce::String windowState;          // the main window's position, size and maximised state      // the browser's track info panel
+    int phraseBars = 16;               // phrase meter length (bars)
+    bool phraseFollow = false;         // ... or follow the track's phrases
+    bool phraseBrackets = false;       // 4 / 16 / 32 / 64-bar brackets over the meter
+    int previewStyle = 1;              // browser preview column: 1 3-band, 2 RGB, 3 single colour, 4 stems
+    int previewShape = 1;              // 0 full, 1 half (bars from the bottom)       // browser column order and widths
     juce::uint32 singleColour = 0xff3d9bff;
     bool singleFollowsDeck = false;
     std::array<bool, 3> editView { true, true, true };   // decks 1, 2 and PREP: show the edited version (as it will play)    // single-colour waveforms use each deck's colour instead

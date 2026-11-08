@@ -68,6 +68,12 @@ public:
     void renameEditVersion (int deck, int index, const juce::String& name);
     void deleteEditVersion (int deck, int index);
 
+    /** Changes a library track's saved version (Centrifuge's; the rekordbox copy too while it's switched on) -
+        and any deck that has the track loaded takes the change straight away. For the browser's Clear menu and Analyse. */
+    void editLibraryTrack (juce::int64 libId, const std::function<void (TrackVersion&)>& fn);
+    /** A deck that has this library track loaded (-1 = none). */
+    int deckWithTrack (juce::int64 libId) const;
+
     void renameCue (int deck, bool hotCue, int index, const juce::String& name);
     juce::String cueName (int deck, bool hotCue, int index) const;
 

@@ -223,14 +223,14 @@ void paintLabel (juce::Graphics& g, const juce::String& t, juce::Rectangle<float
 {
     g.setFont (Fonts::label (h));
     g.setColour (c);
-    g.drawText (t.toUpperCase(), r, j, true);
+    g.drawText (t.toUpperCase(), r.toNearestInt(), j, true);   // whole pixels: sharper text
 }
 
 void paintTitle (juce::Graphics& g, const juce::String& t, juce::Rectangle<float> r, juce::Justification j, juce::Colour c, float h)
 {
     g.setFont (Fonts::title (h));
     g.setColour (c);
-    g.drawText (t.toUpperCase(), r, j, true);
+    g.drawText (t.toUpperCase(), r.toNearestInt(), j, true);   // whole pixels: sharper text
 }
 
 void paintStatus (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& t, juce::Colour c, bool on)

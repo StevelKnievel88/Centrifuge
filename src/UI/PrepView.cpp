@@ -4,6 +4,7 @@
 #include "Theme.h"
 #include "../Audio/MusicalKey.h"
 #include "../Library/PhrasePresets.h"
+#include "StemControl.h"
 
 namespace orbit
 {
@@ -427,8 +428,16 @@ std::vector<PrepView::ListEntry> PrepView::listEntries() const
     }
     else
     {
-        // In play order: the rearranged order if there is one
-        for (int i : phrasePlayOrder()) v.push_back ({ editor.phrases (deckIndex)[(size_t) i].startSec, 3, i });
+        // In play order: the rearranged order if there is one. A section played more than once (duplicated) shows
+        // again as a copy (kind 4, index = its place in the play order).
+        const auto order = phrasePlayOrder();
+        std::vector<bool> seen (editor.phrases (deckIndex).size(), false);
+        for (int k = 0; k < (int) order.size(); ++k)
+        {
+            const int i = order[(size_t) k];
+            v.push_back ({ editor.phrases (deckIndex)[(size_t) i].startSec, seen[(size_t) i] ? 4 : 3, seen[(size_t) i] ? k : i });
+            seen[(size_t) i] = true;
+        }
     }
     return v;
 }
@@ -441,9 +450,28 @@ std::vector<int> PrepView::phrasePlayOrder() const
     std::vector<bool> used (ph.size(), false);
     for (auto a : arr)
         for (int i = 0; i < (int) ph.size(); ++i)
-            if (! used[(size_t) i] && std::abs (ph[(size_t) i].startSec - a) < 0.05) { order.push_back (i); used[(size_t) i] = true; break; }
+            if (std::abs (ph[(size_t) i].startSec - a) < 0.05) { order.push_back (i); used[(size_t) i] = true; break; }
     for (int i = 0; i < (int) ph.size(); ++i) if (! used[(size_t) i]) order.push_back (i);
     return order;
+}
+
+int PrepView::phraseIndexOf (int kind, int index) const
+{
+    if (kind == 3) return index < (int) editor.phrases (deckIndex).size() ? index : -1;
+    if (kind != 4) return -1;
+    const auto order = phrasePlayOrder();
+    return index >= 0 && index < (int) order.size() ? order[(size_t) index] : -1;
+}
+
+void PrepView::setPlayOrder (const std::vector<int>& order)
+{
+    // Saved as the phrases' start times in play order (back to "as the track goes" if that's what it is)
+    bool natural = (int) order.size() == (int) editor.phrases (deckIndex).size();
+    for (int i = 0; natural && i < (int) order.size(); ++i) natural = order[(size_t) i] == i;
+    std::vector<double> times;
+    if (! natural)
+        for (int i : order) times.push_back (editor.phrases (deckIndex)[(size_t) i].startSec);
+    editor.setArrangement (deckIndex, times);
 }
 
 void PrepView::paintList (juce::Graphics& g, juce::Rectangle<float> r)
@@ -522,10 +550,11 @@ void PrepView::paintList (juce::Graphics& g, juce::Rectangle<float> r)
         const auto& e = entries[(size_t) k];
         auto row = r.removeFromTop (rowH);
         bool here = std::abs (now - e.time) < 0.05;
-        if (e.kind == 3)
+        const int pi = (e.kind == 3 || e.kind == 4) ? phraseIndexOf (e.kind, e.index) : -1;   // the phrase (copies too)
+        if (pi >= 0)
         {
-            const double end = e.index + 1 < (int) phrases.size() ? phrases[(size_t) e.index + 1].startSec : st.lengthSec.load();
-            here = now >= e.time && now < end;
+            const double end = pi + 1 < (int) phrases.size() ? phrases[(size_t) pi + 1].startSec : st.lengthSec.load();
+            here = e.kind == 3 && now >= e.time && now < end;
         }
         const bool sel = selection.count ({ e.kind, e.index }) > 0;
         g.setColour (sel ? Theme::sync.withAlpha (0.28f) : here ? Theme::accent.withAlpha (0.12f) : (k % 2 ? Theme::panel : juce::Colour (0xff0d0c17)));
@@ -550,12 +579,12 @@ void PrepView::paintList (juce::Graphics& g, juce::Rectangle<float> r)
             g.drawLine (c.x - d, c.y + d, c.x + d, c.y - d, hover ? 1.8f : 1.3f);
         }
 
-        if (e.kind == 3)
+        if (pi >= 0)
         {
-            // grip: drag to rearrange the phrases
+            // grip: drag to rearrange the phrases (by place in the play order)
             auto grip = row.removeFromLeft (12.0f);
-            regions.push_back ({ grip, key, 10 });
-            g.setColour (grip.contains (getMouseXYRelative().toFloat()) || dragPhrase == e.index ? Theme::sync : Theme::textFaint);
+            regions.push_back ({ grip, "slot:" + juce::String (k), 10 });
+            g.setColour (grip.contains (getMouseXYRelative().toFloat()) || dragPhrase == k ? Theme::sync : Theme::textFaint);
             for (int gy = 0; gy < 3; ++gy)
                 for (int gx = 0; gx < 2; ++gx)
                     g.fillRect (grip.getX() + 3.0f + (float) gx * 4.0f, grip.getCentreY() - 5.0f + (float) gy * 4.0f, 2.0f, 2.0f);
@@ -591,13 +620,14 @@ void PrepView::paintList (juce::Graphics& g, juce::Rectangle<float> r)
                 detail = "loop " + (beats > 0.0 ? juce::String (beats, std::abs (beats - std::round (beats)) < 0.05 ? 0 : 1) + " beats" : formatTime (len));
             }
         }
-        else if (e.kind == 3)
+        else if (pi >= 0)
         {
-            const auto& p = phrases[(size_t) e.index];
+            const auto& p = phrases[(size_t) pi];
             g.setColour (p.colour);
             g.fillRect (icon);
-            name = p.name.isNotEmpty() ? p.name : "Phrase";
-            const double end = e.index + 1 < (int) phrases.size() ? phrases[(size_t) e.index + 1].startSec
+            if (e.kind == 4) { g.setColour (juce::Colours::black.withAlpha (0.5f)); g.drawRect (icon.reduced (3.0f), 1.5f); }   // a copy
+            name = (p.name.isNotEmpty() ? p.name : "Phrase") + (e.kind == 4 ? juce::String (" (copy)") : juce::String());
+            const double end = pi + 1 < (int) phrases.size() ? phrases[(size_t) pi + 1].startSec
                              : (p.endSec > p.startSec ? p.endSec : st.lengthSec.load());
             const double bars = bpm > 0.0 ? (end - p.startSec) * bpm / 240.0 : 0.0;
             detail = bars > 0.0 ? juce::String (juce::roundToInt (bars)) + " bars" : formatTime (end - p.startSec);
@@ -607,6 +637,15 @@ void PrepView::paintList (juce::Graphics& g, juce::Rectangle<float> r)
             const bool lit = p.repeats > 1;
             chip (g, rep, "x" + juce::String (p.repeats), lit, Theme::sync, {});
             regions.push_back ({ rep, key, 11 });
+            // duplicate: another pass of this section straight after it (drag it anywhere)
+            auto dup = row.removeFromRight (22.0f).reduced (3.0f, 5.0f);
+            row.removeFromRight (2.0f);
+            regions.push_back ({ dup, "slot:" + juce::String (k), 15 });
+            const bool dh = dup.contains (getMouseXYRelative().toFloat());
+            g.setColour (dh ? Theme::sync : Theme::textFaint);
+            const auto d1 = dup.withTrimmedRight (dup.getWidth() * 0.3f).withTrimmedBottom (dup.getHeight() * 0.3f);
+            g.drawRect (d1, 1.0f);
+            g.drawRect (d1.translated (dup.getWidth() * 0.3f, dup.getHeight() * 0.3f), 1.0f);
         }
         else if (e.kind == 5)
         {
@@ -615,11 +654,7 @@ void PrepView::paintList (juce::Graphics& g, juce::Rectangle<float> r)
             {
                 auto b = juce::Rectangle<float> (icon.getX() + (float) (s % 2) * icon.getWidth() * 0.5f, icon.getY() + (float) (s / 2) * icon.getHeight() * 0.5f,
                                                  icon.getWidth() * 0.5f - 1.0f, icon.getHeight() * 0.5f - 1.0f);
-                const int t = l.target[(size_t) s];
-                g.setColour (Theme::stemColour (s).withAlpha (t > 0 ? 1.0f : t == 0 ? 0.25f : 0.0f));
-                g.fillRect (b);
-                g.setColour (Theme::stemColour (s).withAlpha (0.6f));
-                g.drawRect (b, 1.0f);
+                paintStemChangeIcon (g, b, s, l.target[(size_t) s], l.fadeBeats > 0.0f);
             }
             name = l.name.isNotEmpty() ? l.name : stemLocatorSummary (l);
             detail = (l.mode == 1 ? juce::String ("LP ") : l.mode == 2 ? juce::String ("HP ") : juce::String())
@@ -677,7 +712,8 @@ void PrepView::paintList (juce::Graphics& g, juce::Rectangle<float> r)
         g.drawText (formatTime (e.time), row.removeFromLeft (58.0f), juce::Justification::centredLeft);
         g.setColour (Theme::textDim);
         g.setFont (psyched::Fonts::value (10.5f));
-        auto detailArea = row.removeFromRight (104.0f).withTrimmedRight (4.0f);
+        // (phrases only need "16 bars" - leaves room for the name beside the repeat / duplicate buttons)
+        auto detailArea = row.removeFromRight (pi >= 0 ? 56.0f : 104.0f).withTrimmedRight (4.0f);
         if (e.kind == 0 && st.locEnd[(size_t) e.index].load() > st.locStart[(size_t) e.index].load())
         {
             // a loop locator's mode ("loop / active / cycle"): click it to step through the three
@@ -804,28 +840,56 @@ void PrepView::mouseDown (const juce::MouseEvent& e)
     {
         const int stem = r->action.getTrailingIntValue();
         if (e.mods.isPopupMenu()) { showStemModeMenu (stem, r->r); return; }
+        if (e.getNumberOfClicks() >= 2)
+        {
+            // double-click: back to the centre (and undo the first click's mute)
+            deck().post (Deck::Cmd::stemMuteToggle, 0.0, stem, true);
+            deck().post (Deck::Cmd::stemGain, 0.5, stem);
+            return;
+        }
         dragStem = stem;
         return;
     }
-    if (r->kind == 13)
+    if (r->kind == 13 || r->kind == 14)
     {
-        if (e.mods.isPopupMenu()) { showStemModeMenu (-1, r->r); return; }
-        const int m = (st.stemMode[0].load() + 1) % 3;
-        deck().post (Deck::Cmd::stemMode, (double) m, -1);
-        if (onStemModeChanged) onStemModeChanged (-1, m);
+        const int stem = r->kind == 14 ? r->action.getTrailingIntValue() : -1;
+        if (e.mods.isPopupMenu()) { showStemModeMenu (stem, r->r); return; }
+        int m;
+        if (stem >= 0) m = 1 - st.stemMode[(size_t) stem].load();
+        else
+        {
+            bool same = true;
+            for (size_t k = 1; k < 4; ++k) same = same && st.stemMode[k].load() == st.stemMode[0].load();
+            m = ! same ? 0 : 1 - st.stemMode[0].load();   // from MIX: all VOL
+        }
+        deck().post (Deck::Cmd::stemMode, (double) m, stem);
+        if (onStemModeChanged) onStemModeChanged (stem, m);
         return;
     }
     if (r->kind == 10 && ! e.mods.isPopupMenu())
     {
         // start dragging a phrase to a new place in the play order
-        dragPhrase = r->action.fromFirstOccurrenceOf (":", false, false).getIntValue();
+        dragPhrase = r->action.fromFirstOccurrenceOf (":", false, false).getIntValue();   // its place in the play order
         dragTarget = -1;
+        return;
+    }
+    if (r->kind == 15 && ! e.mods.isPopupMenu())
+    {
+        // duplicate the section: another pass straight after this one
+        const int slot = r->action.fromFirstOccurrenceOf (":", false, false).getIntValue();
+        auto order = phrasePlayOrder();
+        if (slot >= 0 && slot < (int) order.size())
+        {
+            order.insert (order.begin() + slot + 1, order[(size_t) slot]);
+            setPlayOrder (order);
+        }
         return;
     }
     if (r->kind == 11 && ! e.mods.isPopupMenu())
     {
-        const int idx = r->action.fromFirstOccurrenceOf (":", false, false).getIntValue();
-        if (idx < (int) editor.phrases (deckIndex).size())
+        const int idx = phraseIndexOf (r->action.upToFirstOccurrenceOf (":", false, false).getIntValue(),
+                                       r->action.fromFirstOccurrenceOf (":", false, false).getIntValue());
+        if (idx >= 0 && idx < (int) editor.phrases (deckIndex).size())
         {
             const int steps[] = { 1, 2, 3, 4, 8 };
             const int cur = editor.phrases (deckIndex)[(size_t) idx].repeats;
@@ -844,13 +908,15 @@ void PrepView::mouseDown (const juce::MouseEvent& e)
         const int kind = r->action.upToFirstOccurrenceOf (":", false, false).getIntValue();
         const int idx = r->action.fromFirstOccurrenceOf (":", false, false).getIntValue();
         const auto entry = entryFor (kind, idx);
-        if (kind == 3) phraseSelected = idx;
+        // a copy's name and colour are its section's
+        const auto named = kind == 4 ? entryFor (3, phraseIndexOf (4, idx)) : entry;
+        if (kind == 3 || kind == 4) phraseSelected = phraseIndexOf (kind, idx);
         if (r->kind == 7 && ! e.mods.isPopupMenu()) { deleteEntries ({ entry }); return; }
         if (r->kind == 9 && ! e.mods.isPopupMenu() && ! e.mods.isCtrlDown() && ! e.mods.isShiftDown())
         {
             selection = { { kind, idx } };
             anchor = { kind, idx };
-            startRename (entry);
+            startRename (named);
             return;
         }
         if (r->kind == 8 && ! e.mods.isPopupMenu())
@@ -867,11 +933,18 @@ void PrepView::mouseDown (const juce::MouseEvent& e)
             return;
         }
         if (kind == 6 && e.mods.isPopupMenu() && selection.size() <= 1) { showNoteMenu (idx, r->r); return; }
+        if (kind == 6 && r->kind == 6 && ! e.mods.isPopupMenu() && ! e.mods.isCtrlDown() && ! e.mods.isShiftDown())
+        {
+            selection = { { kind, idx } };
+            anchor = { kind, idx };
+            showNoteEditor (idx, r->r);   // the note's text, colour and timing
+            return;
+        }
         if (r->kind == 6 && ! e.mods.isPopupMenu() && ! e.mods.isCtrlDown() && ! e.mods.isShiftDown())
         {
             if (selection.count ({ kind, idx }) == 0) { selection = { { kind, idx } }; anchor = { kind, idx }; }
             repaint();
-            showColourMenu (entry, r->r);
+            showColourMenu (named, r->r);
             return;
         }
         if (e.mods.isPopupMenu())
@@ -879,7 +952,7 @@ void PrepView::mouseDown (const juce::MouseEvent& e)
             if (selection.count ({ kind, idx }) == 0) { selection = { { kind, idx } }; anchor = { kind, idx }; repaint(); }
             if (selection.size() > 1) { showColourMenu (entry, r->r); return; }   // several selected: colour / delete them all
             if (kind == 2) showPadMenu (idx, r->r);
-            else if (kind == 3) showPhraseMenu (idx, r->r);
+            else if (kind == 3 || kind == 4) showPhraseMenu (phraseIndexOf (kind, idx), r->r);
             else showEntryMenu (entry, r->r);
             return;
         }
@@ -947,20 +1020,14 @@ void PrepView::mouseUp (const juce::MouseEvent& e)
         repaint (listArea);
         if (target < 0) return;
         auto order = phrasePlayOrder();
-        const auto it = std::find (order.begin(), order.end(), dragged);
-        if (it == order.end()) return;
-        const int from = (int) (it - order.begin());
-        int to = target > from ? target - 1 : target;
+        const int from = dragged;
+        if (from < 0 || from >= (int) order.size()) return;
+        const int to = target > from ? target - 1 : target;
         if (to == from) return;
-        order.erase (it);
-        order.insert (order.begin() + juce::jlimit (0, (int) order.size(), to), dragged);
-        // Saved as the phrases' start times in play order (back to "as the track goes" if that's what it is)
-        bool natural = true;
-        for (int i = 0; i < (int) order.size(); ++i) natural = natural && order[(size_t) i] == i;
-        std::vector<double> times;
-        if (! natural)
-            for (int i : order) times.push_back (editor.phrases (deckIndex)[(size_t) i].startSec);
-        editor.setArrangement (deckIndex, times);
+        const int moving = order[(size_t) from];
+        order.erase (order.begin() + from);
+        order.insert (order.begin() + juce::jlimit (0, (int) order.size(), to), moving);
+        setPlayOrder (order);
         return;
     }
     if (resizingList)
@@ -1211,6 +1278,7 @@ PrepView::ListEntry PrepView::entryFor (int kind, int idx) const
     else if (kind == 2) time = st.hotStart[(size_t) idx].load();
     else if (kind == 5) { if (idx < (int) editor.stemLocators (deckIndex).size()) time = editor.stemLocators (deckIndex)[(size_t) idx].timeSec; }
     else if (kind == 6) { if (idx < (int) editor.notes (deckIndex).size()) time = editor.notes (deckIndex)[(size_t) idx].timeSec; }
+    else if (kind == 4) { if (const int pi = phraseIndexOf (4, idx); pi >= 0) time = editor.phrases (deckIndex)[(size_t) pi].startSec; }
     else if (idx < (int) editor.phrases (deckIndex).size()) time = editor.phrases (deckIndex)[(size_t) idx].startSec;
     return { time, kind, idx };
 }
@@ -1304,6 +1372,12 @@ void PrepView::deleteEntries (std::vector<ListEntry> targets)
         else if (t.kind == 1) deck().post (Deck::Cmd::skipDelete, 0.0, t.index);
         else if (t.kind == 2) deck().post (Deck::Cmd::hotCueDelete, 0.0, t.index);
         else if (t.kind == 3) editor.deletePhrase (deckIndex, t.index);
+        else if (t.kind == 4)
+        {
+            // a copy: just that pass comes out of the play order
+            auto order = phrasePlayOrder();
+            if (t.index >= 0 && t.index < (int) order.size()) { order.erase (order.begin() + t.index); setPlayOrder (order); }
+        }
         else if (t.kind == 5) editor.deleteStemLocator (deckIndex, t.index);
         else if (t.kind == 6) editor.deleteNote (deckIndex, t.index);
     }
@@ -1594,6 +1668,128 @@ namespace
     };
 }
 
+namespace
+{
+    /** Edits a note locator: its text, colour, how long before its point it shows and how long it stays up. */
+    class NoteEditor : public juce::Component
+    {
+    public:
+        NoteEditor (NoteLocator n, std::function<void (const NoteLocator&)> changed, std::function<void()> deleted)
+            : note (std::move (n)), onChange (std::move (changed)), onDelete (std::move (deleted))
+        {
+            addAndMakeVisible (text);
+            text.setFont (Theme::font (14.0f, true));
+            text.setText (note.text, false);
+            text.setTextToShowWhenEmpty ("What to remember here", Theme::textFaint);
+            text.onTextChange = [this] { note.text = text.getText(); notify(); };
+            text.onReturnKey = [this] { if (auto* box = findParentComponentOfClass<juce::CallOutBox>()) box->dismiss(); };
+            addAndMakeVisible (colour);
+            colour.getProperties().set ("psyched.swatch", true);
+            colour.setColour (juce::TextButton::buttonColourId, note.colour);
+            colour.setButtonText ("COLOUR");
+            colour.onClick = [this]
+            {
+                juce::PopupMenu m;
+                addCueColourItems (m, 100, note.colour);
+                juce::Component::SafePointer<NoteEditor> safe (this);
+                const auto screen = colour.getScreenBounds();
+                const auto cur = note.colour;
+                m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&colour), [safe, screen, cur] (int r)
+                {
+                    handleCueColourMenu (r, 100, screen, cur, [safe] (juce::Colour c)
+                    {
+                        if (safe == nullptr) return;
+                        safe->note.colour = c;
+                        safe->colour.setColour (juce::TextButton::buttonColourId, c);
+                        safe->notify();
+                    });
+                });
+            };
+            for (auto* sl : { &lead, &show })
+            {
+                addAndMakeVisible (*sl);
+                sl->setSliderStyle (juce::Slider::LinearHorizontal);
+                sl->setTextBoxStyle (juce::Slider::TextBoxRight, false, 60, 22);
+                sl->setScrollWheelEnabled (false);
+            }
+            lead.setRange (0.0, 16.0, 0.5);
+            lead.setValue (note.leadSec, juce::dontSendNotification);
+            lead.setTextValueSuffix (" s");
+            lead.onValueChange = [this] { note.leadSec = lead.getValue(); notify(); };
+            show.setRange (0.0, 60.0, 1.0);
+            show.setValue (note.showSec, juce::dontSendNotification);
+            show.textFromValueFunction = [] (double v) { return v <= 0.0 ? juce::String ("next") : juce::String ((int) v) + " s"; };
+            show.valueFromTextFunction = [] (const juce::String& t) { return t.trim().startsWithIgnoreCase ("n") ? 0.0 : t.getDoubleValue(); };
+            show.updateText();
+            show.onValueChange = [this] { note.showSec = show.getValue(); notify(); };
+            addAndMakeVisible (del);
+            del.onClick = [this]
+            {
+                if (onDelete) onDelete();
+                if (auto* box = findParentComponentOfClass<juce::CallOutBox>()) box->dismiss();
+            };
+            setSize (360, 168);
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            g.fillAll (juce::Colour (0xff141221));
+            auto r = getLocalBounds().reduced (8);
+            psyched::paintLabel (g, "Note locator - shows in each deck's NOTES box", r.removeFromTop (16).toFloat(), juce::Justification::centredLeft, Theme::textDim, 9.0f);
+            r.removeFromTop (4 + 28 + 8);
+            psyched::paintLabel (g, "SHOW BEFORE", r.removeFromTop (24).removeFromLeft (96).toFloat(), juce::Justification::centredLeft, Theme::textFaint, 9.0f);
+            r.removeFromTop (4);
+            psyched::paintLabel (g, "STAY UP FOR", r.removeFromTop (24).removeFromLeft (96).toFloat(), juce::Justification::centredLeft, Theme::textFaint, 9.0f);
+        }
+
+        void resized() override
+        {
+            auto r = getLocalBounds().reduced (8);
+            r.removeFromTop (20);
+            auto top = r.removeFromTop (28);
+            colour.setBounds (top.removeFromRight (80));
+            top.removeFromRight (6);
+            text.setBounds (top);
+            r.removeFromTop (8);
+            lead.setBounds (r.removeFromTop (24).withTrimmedLeft (96));
+            r.removeFromTop (4);
+            show.setBounds (r.removeFromTop (24).withTrimmedLeft (96));
+            r.removeFromTop (8);
+            del.setBounds (r.removeFromTop (26).removeFromRight (80));
+        }
+
+        void visibilityChanged() override { if (isShowing()) text.grabKeyboardFocus(); }
+
+    private:
+        void notify() { if (onChange) onChange (note); }
+        NoteLocator note;
+        std::function<void (const NoteLocator&)> onChange;
+        std::function<void()> onDelete;
+        juce::TextEditor text;
+        juce::TextButton colour, del { "DELETE" };
+        juce::Slider lead, show;
+    };
+}
+
+void PrepView::showNoteEditor (int index, juce::Rectangle<float> area)
+{
+    if (index < 0 || index >= (int) editor.notes (deckIndex).size()) return;
+    const auto n = editor.notes (deckIndex)[(size_t) index];
+    const double at = n.timeSec;
+    juce::Component::SafePointer<PrepView> safe (this);
+    auto indexOf = [safe, at]
+    {
+        if (safe == nullptr) return -1;
+        const auto& list = safe->editor.notes (deckIndex);
+        for (int i = 0; i < (int) list.size(); ++i) if (std::abs (list[(size_t) i].timeSec - at) < 0.01) return i;
+        return -1;
+    };
+    auto content = std::make_unique<NoteEditor> (n,
+        [safe, indexOf] (const NoteLocator& nl) { if (safe != nullptr) if (const int i = indexOf(); i >= 0) safe->editor.setNote (deckIndex, i, nl); },
+        [safe, indexOf] { if (safe != nullptr) if (const int i = indexOf(); i >= 0) safe->editor.deleteNote (deckIndex, i); });
+    juce::CallOutBox::launchAsynchronously (std::move (content), localAreaToGlobal (area.toNearestInt()), nullptr);
+}
+
 void PrepView::showStemEditor (int index, juce::Rectangle<float> area)
 {
     if (index < 0 || index >= (int) editor.stemLocators (deckIndex).size()) return;
@@ -1622,7 +1818,8 @@ void PrepView::showNoteMenu (int index, juce::Rectangle<float> area)
     m.addSectionHeader ("Note");
     addCueColourItems (m, 100, n.colour);
     m.addSeparator();
-    m.addItem (2, "Edit text");
+    m.addItem (3, "Edit (text, colour, timing)...");
+    m.addItem (2, "Rename here");
     m.addItem (1, "Delete");
     const auto screen = localAreaToGlobal (area.toNearestInt());
     juce::Component::SafePointer<PrepView> safe (this);
@@ -1631,6 +1828,7 @@ void PrepView::showNoteMenu (int index, juce::Rectangle<float> area)
         if (safe == nullptr || r == 0) return;
         if (r == 1) { safe->editor.deleteNote (deckIndex, index); return; }
         if (r == 2) { safe->startRename (safe->entryFor (6, index)); return; }
+        if (r == 3) { safe->showNoteEditor (index, safe->listArea.toFloat()); return; }
         auto set = [safe] (juce::Colour c) { if (safe != nullptr) safe->applyColour ({ safe->entryFor (6, safe->selection.empty() ? -1 : safe->selection.begin()->second) }, c); };
         auto setOne = [safe, index] (juce::Colour c) { if (safe != nullptr) safe->applyColour ({ safe->entryFor (6, index) }, c); };
         juce::ignoreUnused (set);
@@ -1719,15 +1917,13 @@ void PrepView::addNoteAtPlayhead()
     if (track == nullptr) return;
     double at = deck().state().positionSec.load();
     if (track->grid.isValid()) at = track->grid.timeAtBeat (std::round (track->grid.beatPosition (at)));
-    juce::Component::SafePointer<PrepView> safe (this);
-    askText ("Note at " + formatTime (at), {}, [safe, at] (juce::String text)
-    {
-        if (safe == nullptr || text.isEmpty()) return;
-        NoteLocator n;
-        n.timeSec = at;
-        n.text = text;
-        safe->editor.addNote (deckIndex, n);
-    });
+    NoteLocator n;
+    n.timeSec = at;
+    n.text = "Note";
+    editor.addNote (deckIndex, n);
+    const auto& list = editor.notes (deckIndex);
+    for (int i = 0; i < (int) list.size(); ++i)
+        if (std::abs (list[(size_t) i].timeSec - at) < 0.01) { listTab = 0; showNoteEditor (i, rowTransport.toFloat()); break; }
 }
 
 void PrepView::addStemLocatorAtPlayhead (juce::Rectangle<float> area)
@@ -1761,40 +1957,34 @@ void PrepView::addLoopLocatorAtPlayhead()
 
 void PrepView::paintStems (juce::Graphics& g, juce::Rectangle<float> r)
 {
-    // PREP's stem controls (click mutes, drag sets the level, right-click: level / low-pass / high-pass)
+    // PREP's stem controls: bipolar (centre = untouched); click mutes, drag sets, double-click centres;
+    // VOL / FILTER under each, and the button on the left sets all four
     const auto& st = deck().state();
     const bool ready = st.stemsReady.load();
     int m0 = st.stemMode[0].load();
     bool same = true;
     for (size_t k = 1; k < 4; ++k) same = same && st.stemMode[k].load() == m0;
-    const char* names[] = { "LVL", "LP", "HP" };
-    auto mc = r.removeFromLeft (36.0f);
-    psyched::paintChip (g, mc, same ? names[juce::jlimit (0, 2, m0)] : "MIX", Theme::sync, (! same || m0 != 0) ? psyched::ChipState::on : psyched::ChipState::off);
+    auto mc = r.removeFromLeft (48.0f).withSizeKeepingCentre (48.0f, juce::jmin (26.0f, r.getHeight()));
+    psyched::paintChip (g, mc, ! same ? "MIX" : m0 == 1 ? "FILTER" : "VOL", Theme::sync, (! same || m0 != 0) ? psyched::ChipState::on : psyched::ChipState::off);
     regions.push_back ({ mc, "stemmode", 13 });
     r.removeFromLeft (6.0f);
     const float sw = (r.getWidth() - 3 * 5.0f) / 4.0f;
     for (int s = 0; s < 4; ++s)
     {
         auto b = juce::Rectangle<float> (r.getX() + (float) s * (sw + 5.0f), r.getY(), sw, r.getHeight());
-        const float gain = st.stemGain[(size_t) s].load();
-        const auto sc = Theme::stemColour (s);
-        g.setColour (Theme::panelHi);
-        g.fillRect (b);
-        if (ready)
-        {
-            g.setColour (sc.withAlpha (gain <= 0.0f ? 0.12f : 0.6f));
-            g.fillRect (b.withTrimmedRight (b.getWidth() * (1.0f - juce::jmax (gain, 0.04f))));
-        }
-        g.setColour (ready ? sc.withAlpha (0.8f) : Theme::line);
-        g.drawRect (b.reduced (0.5f), 1.0f);
-        const int mode = st.stemMode[(size_t) s].load();
-        g.setColour (ready ? (gain <= 0.0f ? Theme::textFaint : Theme::text) : Theme::textFaint);
-        g.setFont (Theme::font (11.0f, true));
-        g.drawText (juce::String (stemName (s)).toUpperCase() + (mode == 1 ? " LP" : mode == 2 ? " HP" : ""), b, juce::Justification::centred);
-        regions.push_back ({ b, "stem." + juce::String (s), 12 });
+        juce::Rectangle<float> bar, modeBtn;
+        paintStemControl (g, b, s, st.stemGain[(size_t) s].load(), st.stemMode[(size_t) s].load(), ready, bar, modeBtn);
+        regions.push_back ({ bar, "stem." + juce::String (s), 12 });
+        regions.push_back ({ modeBtn, "stemmode." + juce::String (s), 14 });
     }
-    if (! ready)
-        psyched::paintLabel (g, track != nullptr ? "NO STEMS YET" : "", r.withY (r.getBottom() - 11.0f).withHeight (11.0f), juce::Justification::centred, Theme::textFaint, 8.0f);
+    if (! ready && track != nullptr)
+    {
+        // over the bars (their names are dimmed): no stems for this track yet
+        auto lab = r.withSizeKeepingCentre (juce::jmin (r.getWidth(), 120.0f), 16.0f).translated (0.0f, -6.0f);
+        g.setColour (psyched::Colours::void_.withAlpha (0.85f));
+        g.fillRect (lab);
+        psyched::paintLabel (g, "NO STEMS YET", lab, juce::Justification::centred, Theme::textDim, 9.5f);
+    }
 }
 
 void PrepView::showStemModeMenu (int stem, juce::Rectangle<float> area)
@@ -1802,15 +1992,15 @@ void PrepView::showStemModeMenu (int stem, juce::Rectangle<float> area)
     const auto& st = deck().state();
     const int cur = stem >= 0 ? st.stemMode[(size_t) stem].load() : -1;
     juce::PopupMenu m;
-    const char* labels[] = { "Level (volume)", "Low-pass filter (closes down as the control goes down)", "High-pass filter (closes up as the control goes down)" };
+    const char* labels[] = { "VOL - left of centre turns it down", "FILTER - left of centre low-pass, right high-pass" };
     if (stem >= 0)
     {
         m.addSectionHeader (juce::String (stemName (stem)) + " control");
-        for (int k = 0; k < 3; ++k) m.addItem (1 + k, labels[k], true, cur == k);
+        for (int k = 0; k < 2; ++k) m.addItem (1 + k, labels[k], true, cur == k);
         m.addSeparator();
     }
     m.addSectionHeader ("All four stems");
-    for (int k = 0; k < 3; ++k) m.addItem (11 + k, labels[k]);
+    for (int k = 0; k < 2; ++k) m.addItem (11 + k, labels[k]);
     juce::Component::SafePointer<PrepView> safe (this);
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (localAreaToGlobal (area.toNearestInt())),
                      [safe, stem] (int r)

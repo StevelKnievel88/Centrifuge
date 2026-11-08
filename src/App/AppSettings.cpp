@@ -114,12 +114,19 @@ void AppSettings::load()
     if (auto* arr = v["stemColours"].getArray())
         for (int i = 0; i < juce::jmin (4, arr->size()); ++i) stemColours[(size_t) i] = (juce::uint32) (juce::int64) (*arr)[i];
     if (auto* arr = v["stemModes"].getArray())
-        for (int i = 0; i < juce::jmin (12, arr->size()); ++i) stemModes[(size_t) i / 4][(size_t) i % 4] = juce::jlimit (0, 2, (int) (*arr)[i]);
+        for (int i = 0; i < juce::jmin (12, arr->size()); ++i) stemModes[(size_t) i / 4][(size_t) i % 4] = (int) (*arr)[i] > 0 ? 1 : 0;   // 0 VOL, 1 FILTER (older LP / HP = FILTER)
     num ("noteShowSeconds", noteShowSeconds);
     num ("noteLeadSeconds", noteLeadSeconds);
     if (auto* arr = v["collapsedSections"].getArray())
         for (auto& c : *arr) collapsedSections.addIfNotAlreadyThere (c.toString());
     str ("browserColumns", browserColumns);
+    boolean ("browserInfoOpen", browserInfoOpen);
+    str ("windowState", windowState);
+    num ("phraseBars", phraseBars);
+    boolean ("phraseFollow", phraseFollow);
+    boolean ("phraseBrackets", phraseBrackets);
+    num ("previewStyle", previewStyle);
+    num ("previewShape", previewShape);
     num ("overviewStyle", overviewStyle);
     num ("overviewShape", overviewShape);
     if (auto* ev = v["editView"].getArray())
@@ -171,6 +178,9 @@ void AppSettings::load()
     visibleSeconds = juce::jlimit (1.0, 60.0, visibleSeconds);
     overviewStyle = juce::jlimit (1, 3, overviewStyle);
     prepOverviewStyle = juce::jlimit (1, 3, prepOverviewStyle);
+    phraseBars = juce::jlimit (4, 64, phraseBars);
+    previewStyle = juce::jlimit (1, 4, previewStyle);
+    previewShape = juce::jlimit (0, 1, previewShape);
     prepOverviewShape = juce::jlimit (0, 1, prepOverviewShape);
     prepLaneSplit = juce::jlimit (0.1f, 0.9f, prepLaneSplit);
     prepVisibleSeconds = juce::jlimit (1.0, 120.0, prepVisibleSeconds);
@@ -221,6 +231,13 @@ void AppSettings::save() const
     o->setProperty ("noteShowSeconds", noteShowSeconds);
     o->setProperty ("noteLeadSeconds", noteLeadSeconds);
     o->setProperty ("browserColumns", browserColumns);
+    o->setProperty ("browserInfoOpen", browserInfoOpen);
+    o->setProperty ("windowState", windowState);
+    o->setProperty ("phraseBars", phraseBars);
+    o->setProperty ("phraseFollow", phraseFollow);
+    o->setProperty ("phraseBrackets", phraseBrackets);
+    o->setProperty ("previewStyle", previewStyle);
+    o->setProperty ("previewShape", previewShape);
 
     o->setProperty ("laneStyle", juce::Array<juce::var> { laneStyle[0][0], laneStyle[0][1], laneStyle[1][0], laneStyle[1][1] });
     o->setProperty ("laneShape", juce::Array<juce::var> { laneShape[0][0], laneShape[0][1], laneShape[1][0], laneShape[1][1] });

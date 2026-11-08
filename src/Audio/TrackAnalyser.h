@@ -28,7 +28,10 @@ public:
     static Result analyse (const TrackAudio& audio, const Options& options, const std::atomic<bool>* cancel = nullptr);
 
     /** Key only (chroma against key profiles). */
-    static juce::String detectKey (const TrackAudio& audio);
+    static juce::String detectKey (const TrackAudio& audio);   // the first method (whole-mix chroma, Krumhansl profiles)
+    /** Key v2: tuning corrected; root from the bass (the bass stem when given, weighted to bar downbeats and phrase
+        starts / ends when beats are given), major / minor from the harmony (inst + vocal stems, or the mix). */
+    static juce::String detectKeyV2 (const TrackAudio& audio, const StemAudio* stems, const std::vector<Beat>* beats);
 
     /** Parts exposed for tests. */
     static double estimateTempo (const std::vector<float>& envelope, double framesPerSecond, double minBpm, double maxBpm);

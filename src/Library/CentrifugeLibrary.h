@@ -99,6 +99,8 @@ public:
     void addPlay (juce::int64 id);
     void resetPlays (juce::int64 id);
     void setRating (juce::int64 id, int stars);
+    /** Replaces a track's info (title, artist, genre, key, BPM ...) - the batch editor and Analyse. */
+    void setInfo (juce::int64 id, const TrackInfo& info);
 
     /** Saves one or both versions of a track (null = leave as it is). */
     void saveVersions (juce::int64 id, const TrackVersion* rb, const TrackVersion* cf);

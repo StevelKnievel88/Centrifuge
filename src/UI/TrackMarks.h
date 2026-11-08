@@ -192,41 +192,80 @@ inline void paintOverviewMarks (juce::Graphics& g, juce::Rectangle<float> r, con
             }
 }
 
-/** A stem locator on a zoomed waveform: a line, a flag with the four stems (filled = on, crossed = off,
-    outline = left as it is) and, when it fades, a ramp across the fade. */
-inline void paintStemLocatorFlag (juce::Graphics& g, const StemLocator& l, float x, float top, float fadeWidth, float height)
+/** A stem locator's icon for one stem: a filled square = on straight away, an X = off straight away, a ramp up
+    (bottom-left to top-right, the triangle under it filled) = fades in, a ramp down = fades out, a faint outline = no change. */
+inline void paintStemChangeIcon (juce::Graphics& g, juce::Rectangle<float> b, int stem, int target, bool fades)
 {
-    const auto mint = juce::Colour (0xff7dffd6);
-    g.setColour (mint.withAlpha (0.85f));
-    g.fillRect (x - 0.75f, top, 1.5f, height);
-    if (fadeWidth > 2.0f)
+    const auto c = Theme::stemColour (stem);
+    if (target < 0) { g.setColour (c.withAlpha (0.35f)); g.drawRect (b, 1.0f); return; }
+    g.setColour (c.withAlpha (0.9f));
+    if (! fades)
     {
-        juce::Path ramp;
-        ramp.startNewSubPath (x, top + height);
-        ramp.lineTo (x + fadeWidth, top + height * 0.4f);
-        g.setColour (mint.withAlpha (0.5f));
-        g.strokePath (ramp, juce::PathStrokeType (1.2f));
-        g.setColour (mint.withAlpha (0.08f));
-        g.fillRect (juce::Rectangle<float> (x, top, fadeWidth, height));
-    }
-    auto flag = juce::Rectangle<float> (x, top, 4 * 10.0f + 4.0f, 12.0f);
-    g.setColour (psyched::Colours::void_.withAlpha (0.85f));
-    g.fillRect (flag);
-    for (int s = 0; s < 4; ++s)
-    {
-        auto b = juce::Rectangle<float> (flag.getX() + 2.0f + (float) s * 10.0f, flag.getY() + 2.0f, 8.0f, 8.0f);
-        const auto c = Theme::stemColour (s);
-        const int t = l.target[(size_t) s];
-        if (t > 0) { g.setColour (c); g.fillRect (b); }
-        else if (t == 0)
+        if (target > 0) g.fillRect (b);
+        else
         {
-            g.setColour (c.withAlpha (0.8f));
             g.drawRect (b, 1.0f);
             g.drawLine (b.getX(), b.getY(), b.getRight(), b.getBottom(), 1.2f);
             g.drawLine (b.getX(), b.getBottom(), b.getRight(), b.getY(), 1.2f);
         }
-        else { g.setColour (c.withAlpha (0.35f)); g.drawRect (b, 1.0f); }
+        return;
     }
+    juce::Path tri;
+    if (target > 0) tri.addTriangle (b.getX(), b.getBottom(), b.getRight(), b.getY(), b.getRight(), b.getBottom());   // fades in
+    else tri.addTriangle (b.getX(), b.getY(), b.getX(), b.getBottom(), b.getRight(), b.getBottom());                 // fades out
+    g.fillPath (tri);
+    g.drawRect (b, 1.0f);
+}
+
+/** A stem locator on a zoomed waveform: a line, a flag with the four stems' icons and, for each stem it changes,
+    a line in the stem's colour - rising across the fade for a fade in, falling for a fade out (straight down for a cut).
+    `area` is the waveform; with `stemRows` (stems a row each) each stem's line is drawn in its own row, otherwise the
+    lines sit side by side across the whole height. */
+inline void paintStemLocatorFlag (juce::Graphics& g, const StemLocator& l, float x, float flagTop, float fadeWidth,
+                                  juce::Rectangle<float> area, bool stemRows, bool withFlag = true)
+{
+    const auto mint = juce::Colour (0xff7dffd6);
+    g.setColour (mint.withAlpha (0.6f));
+    g.fillRect (x - 0.5f, area.getY(), 1.0f, area.getHeight());
+    const bool fades = fadeWidth > 2.0f;
+    if (fades)
+    {
+        g.setColour (mint.withAlpha (0.06f));
+        g.fillRect (juce::Rectangle<float> (x, area.getY(), fadeWidth, area.getHeight()));
+    }
+    int k = 0;
+    for (int s = 0; s < 4; ++s)
+    {
+        const int t = l.target[(size_t) s];
+        if (t < 0) continue;
+        auto row = area;
+        float off = 0.0f;
+        if (stemRows)
+        {
+            const float rh = area.getHeight() / 4.0f;
+            row = juce::Rectangle<float> (area.getX(), area.getY() + rh * (float) s, area.getWidth(), rh).reduced (0.0f, 2.0f);
+        }
+        else
+            off = (float) k++ * 3.0f;   // side by side
+        g.setColour (Theme::stemColour (s));
+        if (fades)
+        {
+            juce::Path ramp;
+            const float y0 = t > 0 ? row.getBottom() : row.getY(), y1 = t > 0 ? row.getY() : row.getBottom();
+            ramp.startNewSubPath (x + off, y0);
+            ramp.lineTo (x + off + fadeWidth, y1);
+            g.strokePath (ramp, juce::PathStrokeType (1.6f));
+        }
+        else
+            g.fillRect (x + off - 0.75f, row.getY(), 1.5f, row.getHeight());
+    }
+    if (! withFlag) return;
+    auto flag = juce::Rectangle<float> (x, flagTop, 4 * 10.0f + 4.0f, 12.0f);
+    g.setColour (psyched::Colours::void_.withAlpha (0.85f));
+    g.fillRect (flag);
+    for (int s = 0; s < 4; ++s)
+        paintStemChangeIcon (g, juce::Rectangle<float> (flag.getX() + 2.0f + (float) s * 10.0f, flag.getY() + 2.0f, 8.0f, 8.0f),
+                             s, l.target[(size_t) s], fades);
 }
 
 /** Phrase bars under a scrolling waveform: coloured blocks with their names, `xOf` maps track time to x. */
@@ -314,7 +353,7 @@ inline void paintOverviewGrid (juce::Graphics& g, juce::Rectangle<float> r, cons
         });
     }
     // minute marks along the top
-    g.setFont (psyched::Fonts::mono (8.5f, true));
+    g.setFont (psyched::Fonts::mono (9.5f, true));
     for (int m = 1; m * 60.0 < dlen; ++m)
     {
         const float x = xOfD (m * 60.0);

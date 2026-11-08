@@ -32,8 +32,8 @@ ActionRouter::ActionRouter (AudioEngine& e) : engine (e)
     {
         for (int s = 0; s < 4; ++s)
         {
-            stemVolume[(size_t) d][(size_t) s] = 1.0f;
-            controlVolume[(size_t) d][(size_t) s] = 1.0f;
+            stemVolume[(size_t) d][(size_t) s] = 0.5f;      // stem controls are bipolar: centre = unchanged
+            controlVolume[(size_t) d][(size_t) s] = 0.5f;
             stemMute[(size_t) d][(size_t) s] = false;
             controlMute[(size_t) d][(size_t) s] = false;
         }
@@ -58,7 +58,8 @@ std::array<int, 4> ActionRouter::getStemMatrix() const
 
 void ActionRouter::updateStems (int d)
 {
-    // Each stem follows the lowest of: its own volume and every matrix control it's ticked on.
+    // Stem controls are bipolar (centre = unchanged). Each stem follows whichever of its own control and the matrix
+    // controls it's ticked on is turned furthest from the centre.
     for (int s = 0; s < 4; ++s)
     {
         float g = stemVolume[(size_t) d][(size_t) s].load();
@@ -66,7 +67,8 @@ void ActionRouter::updateStems (int d)
         for (int c = 0; c < 4; ++c)
             if ((matrix[(size_t) c].load() >> s) & 1)
             {
-                g = std::min (g, controlVolume[(size_t) d][(size_t) c].load());
+                const float cv = controlVolume[(size_t) d][(size_t) c].load();
+                if (std::abs (cv - 0.5f) > std::abs (g - 0.5f)) g = cv;
                 muted = muted || controlMute[(size_t) d][(size_t) c].load();
             }
         engine.deck (d).post (Deck::Cmd::stemGain, muted ? 0.0 : (double) g, s);
@@ -253,7 +255,7 @@ void ActionRouter::perform (const ActionDef& a, const ActionValue& v)
         {
             for (int s = 0; s < 4; ++s)
             {
-                stemVolume[(size_t) d][(size_t) s] = 1.0f; controlVolume[(size_t) d][(size_t) s] = 1.0f;
+                stemVolume[(size_t) d][(size_t) s] = 0.5f; controlVolume[(size_t) d][(size_t) s] = 0.5f;
                 stemMute[(size_t) d][(size_t) s] = false;  controlMute[(size_t) d][(size_t) s] = false;
             }
             updateStems (d);

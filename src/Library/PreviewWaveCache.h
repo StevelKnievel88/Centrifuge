@@ -1,5 +1,7 @@
 #pragma once
 #include "../Audio/WaveformData.h"
+#include "../Audio/TrackAudio.h"
+#include <array>
 #include <juce_core/juce_core.h>
 #include <vector>
 
@@ -12,6 +14,13 @@ struct PreviewWave
 {
     std::vector<uint8_t> low, mid, high;
     bool isEmpty() const noexcept { return low.empty(); }
+};
+
+/** The four stems' preview (drums, bass, inst, vocals), 160 points each, kept once a track's stems exist. */
+struct PreviewStems
+{
+    std::array<std::vector<uint8_t>, 4> stem;
+    bool isEmpty() const noexcept { return stem[0].empty(); }
 };
 
 namespace PreviewWaveCache
@@ -61,6 +70,58 @@ namespace PreviewWaveCache
         out.write (p.mid.data(), p.mid.size());
         out.write (p.high.data(), p.high.size());
         fileFor (audioPath).replaceWithData (out.getData(), out.getDataSize());
+    }
+
+    inline juce::File stemsFileFor (const juce::String& audioPath)
+    {
+        return folder().getChildFile (juce::String::toHexString (audioPath.hashCode64()) + ".ps");
+    }
+
+    /** Peaks of each stem over 160 points (call from a background thread: it reads the whole track). */
+    inline PreviewStems makeStems (const StemAudio& a)
+    {
+        PreviewStems p;
+        const auto n = juce::jmin (a.numFrames, a.validFrames.load());
+        if (n <= 0) return p;
+        for (auto& v : p.stem) v.assign (points, 0);
+        const int64_t step = juce::jmax ((int64_t) 1, n / (points * 64));   // sample every so often - plenty for a peak
+        for (int s = 0; s < 4; ++s)
+        {
+            const auto& L = a.channels[(size_t) s * 2];
+            const auto& R = a.channels[(size_t) s * 2 + 1];
+            std::array<int, points> peak {};
+            for (int64_t i = 0; i < n; i += step)
+            {
+                const int b = (int) juce::jmin ((int64_t) points - 1, i * points / n);
+                peak[(size_t) b] = juce::jmax (peak[(size_t) b], std::abs ((int) L[(size_t) i]), std::abs ((int) R[(size_t) i]));
+            }
+            for (int b = 0; b < points; ++b)   // stems are stored with 6 dB of headroom
+                p.stem[(size_t) s][(size_t) b] = (uint8_t) juce::jlimit (0, 255, peak[(size_t) b] * 2 * 255 / 32767);
+        }
+        return p;
+    }
+
+    inline void saveStems (const juce::String& audioPath, const PreviewStems& p)
+    {
+        if (p.isEmpty() || audioPath.isEmpty()) return;
+        folder().createDirectory();
+        juce::MemoryOutputStream out;
+        out.writeString ("PS1");
+        out.writeInt ((int) p.stem[0].size());
+        for (auto& v : p.stem) out.write (v.data(), v.size());
+        stemsFileFor (audioPath).replaceWithData (out.getData(), out.getDataSize());
+    }
+
+    inline bool loadStems (const juce::String& audioPath, PreviewStems& p)
+    {
+        juce::MemoryBlock mb;
+        if (! stemsFileFor (audioPath).loadFileAsData (mb)) return false;
+        juce::MemoryInputStream in (mb, false);
+        if (in.readString() != "PS1") return false;
+        const int n = in.readInt();
+        if (n <= 0 || n > 4096 || in.getNumBytesRemaining() < (juce::int64) n * 4) return false;
+        for (auto& v : p.stem) { v.resize ((size_t) n); in.read (v.data(), n); }
+        return true;
     }
 
     inline bool load (const juce::String& audioPath, PreviewWave& p)

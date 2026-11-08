@@ -79,7 +79,7 @@ public:
         locatorLoopMode,  // index = locator, value = mode (0 normal, 1 active, 2 cycle), value2 = cycles
         locatorLoopAdd,   // value = start, value2 = end: a loop locator (orange)
         swapTrackData,  // same audio, new grid / cues (ptr = LoadedTrack*); playback carries on
-        stemMode        // index = stem (-1 = all four), value = 0 level, 1 low-pass filter, 2 high-pass filter
+        stemMode        // index = stem (-1 = all four), value = 0 VOL, 1 FILTER (the bipolar control: left low-pass, right high-pass)
     };
 
     static constexpr int maxLocators = 32;
@@ -162,7 +162,7 @@ public:
         std::atomic<double> skipPendingFrom { -1.0 };
         std::atomic<int> playSegment { -1 };          // which stretch of the play map is playing (-1 = none)
         std::array<std::atomic<float>, 4> stemAuto;   // stem locators' gain on each stem (1 = untouched)
-        std::array<std::atomic<int>, 4> stemMode;     // what each stem's control does: 0 level, 1 low-pass, 2 high-pass
+        std::array<std::atomic<int>, 4> stemMode;     // what each stem's control does: 0 VOL, 1 FILTER
         /** Counts edits to hot cues, locators and skips (so the app knows to save them). */
         std::atomic<int> cueEdits { 0 };
         /** Increases when the track's grid / cue data is swapped (e.g. switching rekordbox / Centrifuge version). */
@@ -180,7 +180,7 @@ public:
             for (auto& h : hotStart) h = -1.0;
             for (auto& h : hotEnd) h = -1.0;
             for (auto& c : hotColour) c = 0;
-            for (auto& g : stemGain) g = 1.0f;
+            for (auto& g : stemGain) g = 0.5f;   // the stem controls: centre = untouched
             for (auto& g : stemAuto) g = 1.0f;
             for (auto& m : stemMode) m = 0;
         }
@@ -287,15 +287,16 @@ private:
     bool masterRequested = false;
 
     // Stems
-    std::array<float, 4> stemTarget { 1, 1, 1, 1 };
+    std::array<float, 4> stemTarget { 0.5f, 0.5f, 0.5f, 0.5f };   // the stem controls: bipolar, centre = untouched
     std::array<float, 4> stemCurrent { 1, 1, 1, 1 };
     std::array<bool, 4> stemMuted { false, false, false, false };
     std::array<float, 4> stemAutoNow { 1, 1, 1, 1 };
     int playSeg = -1;                // current stretch of track->playMap
     void stemAutomationAt (double sec, std::array<float, 4>& g, std::array<int, 4>* modes = nullptr) const noexcept;
     // Stem controls as filters: what each stem's control does, and a state-variable filter per stem (stereo)
-    std::array<int, 4> stemMode { 0, 0, 0, 0 };
-    struct StemFilter { float s1L = 0, s2L = 0, s1R = 0, s2R = 0; int mode = 0; bool on = false; };
+    std::array<int, 4> stemMode { 0, 0, 0, 0 };     // 0 VOL, 1 FILTER
+    std::array<float, 4> stemLpNow { 1, 1, 1, 1 }, stemHpNow { 1, 1, 1, 1 };   // how open each stem's filters are
+    struct StemFilter { float lp1L = 0, lp2L = 0, lp1R = 0, lp2R = 0, hp1L = 0, hp2L = 0, hp1R = 0, hp2R = 0; bool on = false; };
     std::array<StemFilter, 4> stemFilters;
     int64_t stemsValid = 0;
 

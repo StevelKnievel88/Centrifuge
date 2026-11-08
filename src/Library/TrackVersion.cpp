@@ -128,6 +128,8 @@ juce::var TrackVersion::toVar() const
             no->setProperty ("s", r3 (n.timeSec));
             no->setProperty ("t", n.text);
             no->setProperty ("c", n.colour.toString());
+            if (std::abs (n.leadSec - 2.0) > 1.0e-3) no->setProperty ("lead", n.leadSec);
+            if (std::abs (n.showSec - 8.0) > 1.0e-3) no->setProperty ("show", n.showSec);
             a.add (juce::var (no));
         }
         o->setProperty ("note", a);
@@ -202,6 +204,8 @@ TrackVersion TrackVersion::fromVar (const juce::var& v)
             x.timeSec = (double) n.getProperty ("s", 0.0);
             x.text = n.getProperty ("t", {}).toString();
             if (n.hasProperty ("c")) x.colour = juce::Colour::fromString (n["c"].toString());
+            x.leadSec = juce::jlimit (0.0, 60.0, (double) n.getProperty ("lead", 2.0));
+            x.showSec = juce::jlimit (0.0, 600.0, (double) n.getProperty ("show", 8.0));
             t.notes.push_back (x);
         }
     std::sort (t.notes.begin(), t.notes.end(), [] (auto& a, auto& b) { return a.timeSec < b.timeSec; });

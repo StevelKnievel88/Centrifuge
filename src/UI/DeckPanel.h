@@ -52,8 +52,6 @@ public:
     /** Bar lines and minute marks over the overview. */
     void setOverviewGrid (bool on) { if (on != overviewGrid) { overviewGrid = on; repaint(); } }
     std::function<void()> onOverviewGridToggled;
-    /** How long a note locator shows: from `lead` seconds before it to `show` seconds after (0 = until the next note). */
-    void setNoteTiming (double lead, double show) { noteLead = lead; noteShow = show; repaint(); }
     /** A stem's control (or all four: stem -1) changed between level / low-pass / high-pass. */
     std::function<void (int deck, int stem, int mode)> onStemModeChanged;
 
@@ -107,7 +105,7 @@ private:
     void showStemModeMenu (int stem, juce::Rectangle<float> area);
     void setStemMode (int stem, int mode);
     bool overviewGrid = false;
-    double noteLead = 2.0, noteShow = 8.0;
+
     const NoteLocator* noteShowing (double pos) const;
     bool dropHover = false;
     bool tempoDrag = false;

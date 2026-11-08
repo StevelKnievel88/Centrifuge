@@ -50,6 +50,10 @@ public:
     void showAbout() { about.show(); }
     ScrollingWaveforms& getWaves() { return waves; }
     PrepView& getPrep() { return prepView; }
+    juce::String getWindowState() const { return settings.windowState; }
+    void setWindowState (const juce::String& s) { settings.windowState = s; settings.save(); }
+    /** Demo / tests: change settings and apply them. */
+    void demoSettings (const std::function<void (AppSettings&)>& fn) { fn (settings); applySettings(); resized(); repaint(); }
     DeckPanel& getDeckPanel (int d) { return d == 0 ? deck1 : deck2; }
     void importForDemo (std::shared_ptr<const LibrarySource> s) { runImport (s, {}); }
     bool isImporting() const { return importing.load(); }
@@ -77,6 +81,9 @@ private:
     void startPreview (const TrackInfo& info, bool fromPc, double fraction);
     void trackAction (const std::vector<TrackInfo>& tracks, const juce::String& action);
     void countPlays();
+    void clearTracks (const std::vector<TrackInfo>& tracks, const juce::String& action);
+    void analyseTracks (const std::vector<TrackInfo>& tracks, bool replace);
+    void writeTags (const std::vector<TrackInfo>& tracks);
     juce::int64 libraryIdFor (const TrackInfo& t, bool addIfMissing);
     juce::Rectangle<int> phaseArea;
     PhaseMeter phaseMeter { engine };
@@ -135,6 +142,9 @@ private:
     std::array<std::shared_ptr<const LibrarySource>, 2> sourceCache;
     std::array<int, 2> sourceCacheVersion { -1, -1 };
     int dragging = 0, dragStartValue = 0;
+    bool browserExpanded = false;
+    std::array<int, AudioEngine::totalDecks> stemPreviewSerial {};   // the track whose stems preview was saved
+    juce::ThreadPool stemPreviewPool { 1 };
     std::unique_ptr<CentrifugeSplash> splash;
     juce::String midiStatus, audioStatus, stemStatus;
     bool xdjConnected = false;

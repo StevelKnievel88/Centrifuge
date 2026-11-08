@@ -1,5 +1,6 @@
 #pragma once
 #include "TrackMarks.h"
+#include "TrackInfoPanel.h"
 #include "../Library/LibraryManager.h"
 #include "../Stems/StemManager.h"
 #include "../Audio/WaveformData.h"
@@ -41,6 +42,12 @@ public:
     void notePreviewWaveform (const juce::String& filePath, const WaveformData& w);
     /** Hot cues, locators, skips and phrases for a track's preview (e.g. straight after an edit on a deck). */
     void notePreviewMarks (const juce::String& filePath, const TrackMarks& marks);
+    /** The preview column's look: style 1 3-band, 2 RGB, 3 single colour, 4 stems; half = bars from the bottom. */
+    void setPreviewStyle (int style, bool half, juce::Colour single) { previewStyle = style; previewHalf = half; previewTint = single; table.repaint(); }
+    /** A track's stems preview (when its stems are made or loaded). */
+    void notePreviewStems (const juce::String& filePath, const std::array<std::vector<uint8_t>, 4>& stems) { previewWaves[filePath].stems = stems; table.repaint(); }
+    /** Looks a track's preview up again (after it was analysed or cleared). */
+    void forgetPreview (const juce::String& filePath) { previewWaves.erase (filePath); table.repaint(); }
     /** The library version of a track, for its preview marks (empty when it isn't in the library). */
     std::function<std::optional<TrackVersion> (const TrackInfo&)> versionFor;
 
@@ -81,6 +88,14 @@ public:
     juce::String getColumnState() const { return table.getHeader().toString(); }
     void setColumnState (const juce::String& s) { if (s.isNotEmpty()) { table.getHeader().restoreFromString (s); lastColumnState = getColumnState(); } }
     std::function<void (const juce::String&)> onColumnsChanged;
+    /** The fold-out info panel's edits (field, value) for the selected tracks, and "write to file tags". */
+    std::function<void (const std::vector<TrackInfo>&, const juce::String& field, const juce::String& value)> onEditInfo;
+    std::function<void (const std::vector<TrackInfo>&)> onWriteTags;
+    void setInfoPanelOpen (bool open) { infoOpen = open; infoButton.setToggleState (open, juce::dontSendNotification); infoPanel.setVisible (open); if (open) infoPanel.setTracks (getSelectedTracks()); resized(); }
+    std::function<void (bool)> onInfoPanelToggled;
+    /** The browser's EXPAND button: fill the screen (over the decks / PREP) or go back. */
+    std::function<void()> onExpandToggled;
+    void setExpanded (bool e) { expandButton.setToggleState (e, juce::dontSendNotification); expandButton.setButtonText (e ? "RESTORE" : "EXPAND"); }
   private:
     juce::String lastColumnState;
   public:
@@ -116,7 +131,10 @@ private:
     std::unique_ptr<juce::TreeViewItem> rootItem;
     juce::TableListBox table { "tracks", this };
     juce::TextEditor search;
-    juce::TextButton load1 { "LOAD 1" }, load2 { "LOAD 2" };
+    juce::TextButton load1 { "LOAD 1" }, load2 { "LOAD 2" }, expandButton { "EXPAND" }, infoButton { "INFO" };
+    TrackInfoPanel infoPanel;
+    bool infoOpen = false;
+    void selectedRowsChanged (int) override { infoPanel.setTracks (getSelectedTracks()); }
     juce::TextButton importButton { "IMPORT" }, exportButton { "EXPORT" }, viewR { "REKORDBOX" }, viewC { "CENTRIFUGE" };
     int libView = 1;
     void setLibraryView (int v);
@@ -132,14 +150,31 @@ private:
     {
         std::vector<uint8_t> low, mid, high;   // empty = being loaded / no analysis
         bool missing = false;                  // looked: the track hasn't been analysed yet
+        std::array<std::vector<uint8_t>, 4> stems;   // stem previews (empty = no stems yet)
         TrackMarks marks;
         bool haveMarks = false;
     };
     std::map<juce::String, PreviewData> previewWaves;   // by file path
     juce::ThreadPool previewPool { 1 };
     void requestPreviewWave (const TrackInfo& t);
+    int previewStyle = 1;
+    bool previewHalf = true;
+    juce::Colour previewTint { 0xff3d9bff };
+    void paintPreview (juce::Graphics& g, juce::Rectangle<float> area, const PreviewData& pd) const;
     int sortColumn = 0;
     bool sortForwards = true;
+    bool settingSort = false;
+    // # column: each track keeps its number in the list's own order (saved per list with "Save this order")
+    std::unordered_map<int, int> numbers;   // track index -> number
+    int numberOf (int trackIndex) const { auto it = numbers.find (trackIndex); return it != numbers.end() ? it->second : 0; }
+    int stemQualityOf (const TrackInfo& t) const;
+    class Header;
+    friend class Header;
+  public:
+    /** Makes the current order (as sorted now) the list's # order, and turns sorting off. */
+    void saveOrderAsDefault();
+    void resetSavedOrder();
+  private:
 };
 
 } // namespace orbit

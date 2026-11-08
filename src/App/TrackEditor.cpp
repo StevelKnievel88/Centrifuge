@@ -1,4 +1,5 @@
 #include "TrackEditor.h"
+#include "Features.h"
 #include "../Library/GridOps.h"
 
 namespace orbit
@@ -506,6 +507,36 @@ void TrackEditor::editVersion (int deck, const std::function<void (TrackVersion&
     save (s, s.r, s.c);
     swapDeck (deck, playing (s));
     syncOthers (deck);
+}
+
+int TrackEditor::deckWithTrack (juce::int64 libId) const
+{
+    if (libId <= 0) return -1;
+    for (int d = 0; d < AudioEngine::totalDecks; ++d)
+        if (sessions[(size_t) d].track != nullptr && sessions[(size_t) d].libId == libId) return d;
+    return -1;
+}
+
+void TrackEditor::editLibraryTrack (juce::int64 libId, const std::function<void (TrackVersion&)>& fn)
+{
+    if (libId <= 0) return;
+    if (const int d = deckWithTrack (libId); d >= 0)
+    {
+        editVersion (d, fn);   // saves, updates the deck and any other deck with the same track
+        return;
+    }
+    auto t = library.get (libId);
+    if (! t) return;
+    auto cf = t->cf;
+    fn (cf);
+    if (Features::rekordboxCopy)
+    {
+        auto rb = t->rb;
+        fn (rb);
+        library.saveVersions (libId, &rb, &cf);
+    }
+    else
+        library.saveVersions (libId, nullptr, &cf);
 }
 
 void TrackEditor::setPhraseRepeats (int deck, int index, int repeats)

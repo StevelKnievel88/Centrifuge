@@ -2,6 +2,10 @@
 #include "Features.h"
 #include "../Audio/MusicalKey.h"
 #include "../Library/RekordboxMasterDb.h"
+#include "ShowInExplorer.h"
+#include "../Audio/TrackAnalyser.h"
+#include "../Library/TagWriter.h"
+#include "../Library/PreviewWaveCache.h"
 
 namespace orbit
 {
@@ -111,6 +115,37 @@ MainComponent::MainComponent()
     prepView.getWaves().onLaneSplitChanged = [this] (int, float share) { settings.prepLaneSplit = share; settings.save(); };
     prepView.getWaves().onEditViewChanged = [this] (int, bool on) { settings.editView[2] = on; settings.save(); applySettings(); };
     browser.setColumnState (settings.browserColumns);
+    browser.setInfoPanelOpen (settings.browserInfoOpen);
+    browser.onInfoPanelToggled = [this] (bool open) { settings.browserInfoOpen = open; settings.save(); };
+    browser.onEditInfo = [this] (const std::vector<TrackInfo>& tracks, const juce::String& field, const juce::String& value)
+    {
+        // batch edit: the field is set on every selected track (in Centrifuge's library)
+        for (auto& t : tracks)
+        {
+            const auto id = libraryIdFor (t, true);
+            if (id == 0) continue;
+            if (field == "rating") { centrifugeLibrary.setRating (id, value.getIntValue()); continue; }
+            auto lt = centrifugeLibrary.get (id);
+            if (! lt) continue;
+            auto info = lt->info;
+            if (field == "title") info.title = value;
+            else if (field == "artist") info.artist = value;
+            else if (field == "album") info.album = value;
+            else if (field == "genre") info.genre = value;
+            else if (field == "label") info.label = value;
+            else if (field == "comment") info.comment = value;
+            else if (field == "key")
+            {
+                auto k = MusicalKey::parse (value);
+                if (k.isValid()) { k.camelotStyle = false; info.key = k.toString(); } else info.key = value;
+            }
+            else if (field == "colour") info.colour = value.getIntValue() > 0 ? rekordboxTrackColour (value.getIntValue()) : juce::Colour();
+            centrifugeLibrary.setInfo (id, info);
+        }
+        flash ("Set " + field + " on " + juce::String ((int) tracks.size()) + (tracks.size() == 1 ? " track" : " tracks"));
+    };
+    browser.onWriteTags = [this] (const std::vector<TrackInfo>& tracks) { writeTags (tracks); };
+    browser.onExpandToggled = [this] { browserExpanded = ! browserExpanded; browser.setExpanded (browserExpanded); resized(); };
     browser.onColumnsChanged = [this] (const juce::String& cols) { settings.browserColumns = cols; settings.save(); };
     waves.onTrackDropped = [this] (int d) { loadDragged (d); };
     prepView.onTrackDropped = [this] { loadDragged (AudioEngine::prepDeck); };
@@ -119,6 +154,14 @@ MainComponent::MainComponent()
     prepView.onEditViewToggled = [this] { settings.editView[2] = ! settings.editView[2]; settings.save(); applySettings(); };
     phaseMeter.foldFor = [this] (int d) -> const TimeFold* { return d < 2 ? &waves.foldFor (d) : d == AudioEngine::prepDeck ? &prepView.getWaves().foldFor (0) : nullptr; };
     prepView.setListWidth (settings.prepListWidth);
+    phaseMeter.setOptions (settings.phraseBars, settings.phraseFollow, settings.phraseBrackets);
+    phaseMeter.onOptionsChanged = [this] (int bars, bool follow, bool br)
+    {
+        settings.phraseBars = bars; settings.phraseFollow = follow; settings.phraseBrackets = br;
+        settings.save();
+        resized();
+        repaint();
+    };
     prepView.onListWidthChanged = [this] (int w) { settings.prepListWidth = w; settings.save(); };
     browser.versionFor = [this] (const TrackInfo& t) { return editor.versionToLoad (0, t); };
     browser.onPreview = [this] (const TrackInfo& t, bool pc, double f) { startPreview (t, pc, f); };
@@ -198,6 +241,7 @@ MainComponent::~MainComponent()
 {
     stopImport = true;
     importPool.removeAllJobs (false, 20000);
+    stemPreviewPool.removeAllJobs (true, 5000);
     settings.audioDeviceState = engine.saveDeviceState();
     settings.browserColumns = browser.getColumnState();
     settings.save();
@@ -253,7 +297,6 @@ void MainComponent::applySettings()
     for (auto* dp : { &deck1, &deck2 })
     {
         dp->setOverviewGrid (settings.overviewGrid);
-        dp->setNoteTiming (settings.noteLeadSeconds, settings.noteShowSeconds);
     }
     // What each stem control does (level / low-pass / high-pass), per deck
     for (int d = 0; d < 3; ++d)
@@ -267,6 +310,8 @@ void MainComponent::applySettings()
         dp->setOverviewStyle (settings.overviewStyle, settings.overviewShape == 1,
                               settings.singleFollowsDeck ? Theme::deckColour (dp == &deck1 ? 0 : 1) : juce::Colour (settings.singleColour));
     router.setStemMatrix (settings.stemMatrix);
+    browser.setPreviewStyle (settings.previewStyle, settings.previewShape == 1, juce::Colour (settings.singleColour));
+    phaseMeter.setOptions (settings.phraseBars, settings.phraseFollow, settings.phraseBrackets);
 
     // Quantize: applied at start-up and when the setting changes (each deck's button can still toggle it).
     if (appliedQuantize != (int) settings.quantize)
@@ -350,11 +395,11 @@ void MainComponent::showPage (int p)
     if (p == 3) settingsView.refreshValues();
     if (p == 2) stemSettingsView.refreshValues();
 
-    deck1.setVisible (p == 0);
-    deck2.setVisible (p == 0);
-    waves.setVisible (p == 0);
-    browser.setVisible ((p == 0 && settings.showBrowser) || p == 4);
-    prepView.setVisible (p == 4);
+    deck1.setVisible (p == 0 && ! browserExpanded);
+    deck2.setVisible (p == 0 && ! browserExpanded);
+    waves.setVisible (p == 0 && ! browserExpanded);
+    browser.setVisible ((p == 0 && (settings.showBrowser || browserExpanded)) || p == 4);
+    prepView.setVisible (p == 4 && ! browserExpanded);
     phaseMeter.setPrepOnly (p == 4);
     mapping.setVisible (p == 1);
     stemsView.setVisible (p == 2);
@@ -377,6 +422,26 @@ void MainComponent::timerCallback()
         marksSig[(size_t) d] = sig;
         if (auto t = engine.deck (d).getLoadedTrack())
             browser.notePreviewMarks (t->info.file.getFullPathName(), TrackMarks::fromDeck (dst, t->phrases));
+    }
+
+    // Stems finished (or loaded from the cache) on a deck: keep a small stems preview for the browser
+    for (int d = 0; d < 3; ++d)
+    {
+        const auto& dst = engine.deck (d).state();
+        const int serial = dst.trackSerial.load();
+        if (serial == 0 || serial == stemPreviewSerial[(size_t) d] || ! dst.stemsReady.load() || dst.stemsProgress.load() < 0.999f) continue;
+        auto stemsNow = engine.deck (d).getStemsForUi();
+        auto t = engine.deck (d).getLoadedTrack();
+        if (stemsNow == nullptr || t == nullptr) continue;
+        stemPreviewSerial[(size_t) d] = serial;
+        const auto path = t->info.file.getFullPathName();
+        juce::Component::SafePointer<MainComponent> safe (this);
+        stemPreviewPool.addJob ([safe, stemsNow, path]
+        {
+            const auto ps = PreviewWaveCache::makeStems (*stemsNow);
+            PreviewWaveCache::saveStems (path, ps);
+            juce::MessageManager::callAsync ([safe, ps, path] { if (safe != nullptr && ! ps.isEmpty()) safe->browser.notePreviewStems (path, ps.stem); });
+        });
     }
 
     // The preview column follows the preview deck
@@ -439,7 +504,7 @@ void MainComponent::paint (juce::Graphics& g)
     psyched::paintWordmark (g, logo.withTrimmedLeft (40.0f), "Centrifuge", 0, psyched::Signature::spin, 17.0f);
 
     // Status pills (right side)
-    auto pills = topBar.reduced (10, 9).withLeft (phaseArea.getRight() + 14).toFloat();
+    auto pills = topBar.withSizeKeepingCentre (topBar.getWidth(), 34).reduced (10, 0).withLeft (phaseArea.getRight() + 14).toFloat();
     auto pill = [&] (const juce::String& text, juce::Colour dot, float w)
     {
         auto pr = pills.removeFromRight (w);
@@ -472,9 +537,12 @@ void MainComponent::resized()
     exportView.setBounds (getLocalBounds());
     conflictsView.setBounds (getLocalBounds());
     auto r = getLocalBounds();
-    topBar = r.removeFromTop (52);
+    // the top bar grows a little while the phrase meter shows its bar brackets
+    const int bracketRoom = settings.phraseBrackets ? (int) std::ceil (PhaseMeter::bracketLevels (settings.phraseFollow ? 64 : settings.phraseBars)
+                                                                       * PhaseMeter::bracketStep + 2.0f) * (page == 4 ? 1 : 2) : 0;
+    topBar = r.removeFromTop (52 + bracketRoom);
 
-    auto tabs = topBar.withTrimmedLeft (262).withWidth (5 * 92).reduced (0, 12);
+    auto tabs = topBar.withTrimmedLeft (262).withWidth (5 * 92).withSizeKeepingCentre (5 * 92, 28);
     for (auto* t : { &tabPlay, &tabPrep, &tabMapping, &tabStems, &tabSettings })
     {
         t->setBounds (tabs.removeFromLeft (92));
@@ -484,13 +552,26 @@ void MainComponent::resized()
     phaseArea = juce::Rectangle<int> (262 + 5 * 92 + 18, topBar.getY() + 10, juce::jlimit (220, 520, (getWidth() - 262 - 5 * 92 - 18) / 2), topBar.getHeight() - 20);
     phaseMeter.setBounds (phaseArea);
 
-    if (page == 0)
+    deck1.setVisible (page == 0 && ! browserExpanded);
+    deck2.setVisible (page == 0 && ! browserExpanded);
+    waves.setVisible (page == 0 && ! browserExpanded);
+    prepView.setVisible (page == 4 && ! browserExpanded);
+    if ((page == 0 || page == 4) && browserExpanded)
     {
+        // The browser fills the screen (EXPAND / RESTORE on the browser)
+        dividerDecks = dividerBrowser = {};
+        browser.setVisible (true);
+        browser.setBounds (r);
+    }
+    else if (page == 0)
+    {
+        // The decks keep a fixed height
         const int deckH = juce::jlimit (150, juce::jmax (150, r.getHeight() / 2), settings.deckPanelHeight);
         auto decks = r.removeFromTop (deckH);
         deck1.setBounds (decks.removeFromLeft (decks.getWidth() / 2).withTrimmedRight (1));
         deck2.setBounds (decks);
-        dividerDecks = r.removeFromTop (5);
+        dividerDecks = {};
+        r.removeFromTop (4);
 
         if (settings.showBrowser)
         {
@@ -524,7 +605,7 @@ void MainComponent::resized()
 
 void MainComponent::mouseMove (const juce::MouseEvent& e)
 {
-    const bool over = page == 0 && (dividerDecks.contains (e.getPosition()) || dividerBrowser.contains (e.getPosition()));
+    const bool over = page == 0 && dividerBrowser.contains (e.getPosition());
     setMouseCursor (over ? juce::MouseCursor::UpDownResizeCursor
                          : logoArea.contains (e.getPosition()) ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
 }
@@ -534,7 +615,6 @@ void MainComponent::mouseDown (const juce::MouseEvent& e)
     dragging = 0;
     if (logoArea.contains (e.getPosition())) { about.show(); return; }
     if (page != 0) return;
-    if (dividerDecks.contains (e.getPosition()))   { dragging = 1; dragStartValue = settings.deckPanelHeight; }
     if (dividerBrowser.contains (e.getPosition())) { dragging = 2; dragStartValue = browser.getHeight(); }
 }
 
@@ -760,6 +840,38 @@ void MainComponent::trackAction (const std::vector<TrackInfo>& tracks, const juc
                + " - tracks that already have stems at this quality are skipped");
         return;
     }
+    if (action == "reveal")
+    {
+        juce::Array<juce::File> files;
+        for (auto& t : tracks) files.add (t.file);
+        showInExplorer (files);
+        return;
+    }
+    if (action == "analyse" || action == "analyse.again")
+    {
+        analyseTracks (tracks, action == "analyse.again");
+        return;
+    }
+    if (action.startsWith ("clear."))
+    {
+        const juce::String what = action == "clear.locators" ? "all locators" : action == "clear.skips" ? "all skips"
+                                : action == "clear.hotcues" ? "all hot cues" : action == "clear.phrases" ? "all phrases"
+                                : action == "clear.stemlocs" ? "all stem locators" : action == "clear.notes" ? "all notes"
+                                : action == "clear.order" ? "the phrase order and repeats" : action == "clear.editversions" ? "the saved edit versions"
+                                : "every locator, skip, hot cue, phrase, stem locator, note, phrase order and edit version";
+        const auto n = juce::String ((int) tracks.size()) + (tracks.size() == 1 ? " track" : " tracks");
+        juce::Component::SafePointer<MainComponent> safe (this);
+        juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Clear " + what + "?",
+                                            "From " + n + " (" + tracks.front().displayArtistTitle() + (tracks.size() > 1 ? ", ..." : "") + ").\n"
+                                            "The beat grid stays. This can't be undone.",
+                                            "Clear", "Cancel", nullptr,
+                                            juce::ModalCallbackFunction::create ([safe, tracks, action] (int r)
+        {
+            if (safe == nullptr || r != 1) return;
+            safe->clearTracks (tracks, action);
+        }));
+        return;
+    }
     if (action.startsWith ("load."))
     {
         const int d = action.getTrailingIntValue();
@@ -782,6 +894,145 @@ void MainComponent::trackAction (const std::vector<TrackInfo>& tracks, const juc
     if (action == "remove.cf")        flash ("Removed " + what + " from Centrifuge's library (your music files are untouched)");
     else if (action == "remove.rb")   flash ("Removed " + what + " from the rekordbox copy (rekordbox itself is unchanged)");
     else if (action == "plays.reset") flash ("Play count reset for " + what);
+}
+
+void MainComponent::clearTracks (const std::vector<TrackInfo>& tracks, const juce::String& action)
+{
+    auto fn = [action] (TrackVersion& v)
+    {
+        const bool all = action == "clear.all";
+        if (all || action == "clear.locators") v.memory.clear();
+        if (all || action == "clear.skips") v.skips.clear();
+        if (all || action == "clear.hotcues") for (auto& h : v.hot) h.reset();
+        if (all || action == "clear.phrases") { v.phrases = std::vector<Phrase>(); v.arrangement.clear(); }
+        if (all || action == "clear.stemlocs") v.stemLocs.clear();
+        if (all || action == "clear.notes") v.notes.clear();
+        if (all || action == "clear.order")
+        {
+            v.arrangement.clear();
+            if (v.phrases) for (auto& p : *v.phrases) p.repeats = 1;
+        }
+        if (all || action == "clear.editversions") { v.editVersions.clear(); v.activeEdit = {}; }
+    };
+    int n = 0;
+    for (auto& t : tracks)
+    {
+        const auto id = libraryIdFor (t, true);
+        if (id == 0) continue;
+        editor.editLibraryTrack (id, fn);
+        browser.forgetPreview (t.file.getFullPathName());
+        ++n;
+    }
+    flash (n > 0 ? "Cleared on " + juce::String (n) + (n == 1 ? " track" : " tracks") : juce::String ("Nothing to clear"));
+}
+
+void MainComponent::analyseTracks (const std::vector<TrackInfo>& tracks, bool replace)
+{
+    if (importing.load()) { flash ("Another job is running - try again when it's done"); return; }
+    importing = true;
+    importProgress = 0.0f;
+    {
+        const juce::ScopedLock sl (importNameLock);
+        importName = "Analysing";
+    }
+    FileImporter::Options o;
+    std::tie (o.minBpm, o.maxBpm) = settings.analysisBpmRange();
+    o.mp3OffsetMs = settings.mp3OffsetMs;
+    juce::Component::SafePointer<MainComponent> safe (this);
+    importPool.addJob ([this, safe, tracks, o, replace]
+    {
+        int done = 0, failed = 0;
+        for (size_t i = 0; i < tracks.size() && ! stopImport.load(); ++i)
+        {
+            const auto& t = tracks[i];
+            {
+                const juce::ScopedLock sl (importNameLock);
+                importName = "Analysing " + t.displayArtistTitle();
+            }
+            importProgress = (float) i / (float) tracks.size();
+            TrackInfo info;
+            TrackVersion version;
+            juce::String error;
+            if (! FileImporter::analyseFile (fileLoader, t.file, o, info, version, error, &stopImport)) { ++failed; continue; }
+            ++done;
+            // Stems already made: the key from the bass stem (root) and the instrument / vocal stems (major or minor)
+            if (stems.hasCachedStems (t))
+                if (auto audio = fileLoader.load (t.file, error, &stopImport))
+                    if (auto st = stems.loadCachedStems (t, *audio))
+                        if (auto k = TrackAnalyser::detectKeyV2 (*audio, st.get(), &version.beats); k.isNotEmpty())
+                            info.key = k;
+            juce::MessageManager::callAsync ([safe, t, info, version, replace]
+            {
+                if (safe == nullptr) return;
+                auto& self = *safe;
+                const auto id = self.libraryIdFor (t, true);
+                if (id != 0)
+                {
+                    // the grid: replaced, or only where there isn't one yet
+                    self.editor.editLibraryTrack (id, [&version, replace] (TrackVersion& v)
+                    {
+                        if (replace || v.beats.size() < 2) v.beats = version.beats;
+                    });
+                    if (auto lt = self.centrifugeLibrary.get (id))
+                    {
+                        auto ni = lt->info;
+                        if (replace || ni.bpm <= 0.0) ni.bpm = info.bpm;
+                        if (replace || ni.key.isEmpty()) ni.key = info.key;
+                        if (ni.durationSec <= 0.0) ni.durationSec = info.durationSec;
+                        self.centrifugeLibrary.setInfo (id, ni);
+                    }
+                }
+                self.browser.forgetPreview (t.file.getFullPathName());
+            });
+        }
+        juce::MessageManager::callAsync ([safe, done, failed]
+        {
+            if (safe == nullptr) return;
+            safe->importing = false;
+            safe->browser.refreshSources();
+            safe->flash ("Analysed " + juce::String (done) + (done == 1 ? " track" : " tracks") + (failed > 0 ? ", " + juce::String (failed) + " couldn't be read" : juce::String()));
+        });
+    });
+}
+
+void MainComponent::writeTags (const std::vector<TrackInfo>& tracks)
+{
+    if (importing.load()) { flash ("Another job is running - try again when it's done"); return; }
+    // the library's info (with your edits) for each track
+    std::vector<std::pair<juce::File, TagWriter::Fields>> jobs;
+    for (auto& t : tracks)
+    {
+        auto info = t;
+        if (const auto id = libraryIdFor (t, false); id != 0)
+            if (auto lt = centrifugeLibrary.get (id)) info = lt->info;
+        TagWriter::Fields f { info.title, info.artist, info.album, info.genre, info.label, info.comment, MusicalKey::display (info.key) };
+        jobs.push_back ({ t.file, f });
+    }
+    importing = true;
+    importProgress = 0.0f;
+    {
+        const juce::ScopedLock sl (importNameLock);
+        importName = "Writing tags";
+    }
+    juce::Component::SafePointer<MainComponent> safe (this);
+    importPool.addJob ([this, safe, jobs]
+    {
+        int done = 0;
+        juce::StringArray errors;
+        for (size_t i = 0; i < jobs.size() && ! stopImport.load(); ++i)
+        {
+            importProgress = (float) i / (float) jobs.size();
+            juce::String err;
+            if (TagWriter::write (jobs[i].first, jobs[i].second, err)) ++done; else errors.add (err);
+        }
+        juce::MessageManager::callAsync ([safe, done, errors]
+        {
+            if (safe == nullptr) return;
+            safe->importing = false;
+            safe->flash ("Wrote tags to " + juce::String (done) + (done == 1 ? " file" : " files")
+                         + (errors.isEmpty() ? juce::String() : " - " + juce::String (errors.size()) + " not written: " + errors[0]));
+        });
+    });
 }
 
 void MainComponent::countPlays()

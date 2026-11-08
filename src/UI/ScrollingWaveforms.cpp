@@ -18,7 +18,7 @@ namespace
         auto mix = [&h] (double v) { h ^= (juce::uint64) std::llround (v * 1000.0); h *= 1099511628211ull; };
         mix (st.loopActive.load()); mix (st.loopInSec.load()); mix (st.loopOutSec.load()); mix (st.cuePointSec.load());
         for (size_t i = 0; i < 8; ++i) { mix (st.hotStart[i].load()); mix ((double) st.hotColour[i].load()); }
-        for (size_t i = 0; i < 4; ++i) mix (st.stemGain[i].load());
+        for (size_t i = 0; i < 4; ++i) { mix (st.stemGain[i].load()); mix (st.stemMode[i].load()); }
         mix (std::floor (st.stemsProgress.load() * 100.0f));
         mix (st.stemsReady.load());
         mix (st.numLocators.load()); mix (st.numSkips.load()); mix (st.skipsOn.load()); mix (st.skipPendingFrom.load());
@@ -421,7 +421,10 @@ void ScrollingWaveforms::paintLane (juce::Graphics& g, int d, int lane, juce::Re
                           [sw, s, col, o] (double first, double epp, int w, int h)
                           { return renderStemStrip (*sw, s, col, sw->computed.load(), first, epp, w, h, o); });
             tc.setValidEntries (valid);
-            const float gain = st.stemGain[(size_t) s].load();
+            // how much of the stem is let through (its control is bipolar: centre = all of it)
+            const float cv = st.stemGain[(size_t) s].load();
+            const float gain = st.stemMode[(size_t) s].load() == 0 ? juce::jmin (1.0f, cv * 2.0f)
+                             : cv < 0.48f ? cv / 0.48f : cv > 0.52f ? (1.0f - cv) / 0.48f : 1.0f;
             tc.draw (g, area, t, px, (gain <= 0.001f ? 0.12f : 0.3f + 0.7f * gain) * (stemsSeparate ? 1.0f : stemOpacity[(size_t) juce::jlimit (0, 3, s)]));
         }
     }
@@ -462,10 +465,10 @@ void ScrollingWaveforms::paintLane (juce::Graphics& g, int d, int lane, juce::Re
         }
 
     juce::ignoreUnused (tStart, tEnd);
-    paintOverlays (g, d, wave, r, flags);
+    paintOverlays (g, d, wave, r, flags, showStems && stemsSeparate);
 }
 
-void ScrollingWaveforms::paintOverlays (juce::Graphics& g, int d, juce::Rectangle<int> wave, juce::Rectangle<int> r, bool withFlags)
+void ScrollingWaveforms::paintOverlays (juce::Graphics& g, int d, juce::Rectangle<int> wave, juce::Rectangle<int> r, bool withFlags, bool stemRows)
 {
     auto& dv = decks[(size_t) d];
     const auto& st = engine.deck (engineDeck (d)).state();
@@ -654,7 +657,7 @@ void ScrollingWaveforms::paintOverlays (juce::Graphics& g, int d, juce::Rectangl
     for (auto& l : track->stemLocs)
         if (visible (l.timeSec))
             paintStemLocatorFlag (g, l, xOf (l.timeSec), withFlags ? flagTop + markerBand : (float) wave.getY(), (float) (l.fadeSec * pps),
-                                  (float) wave.getBottom() - (withFlags ? flagTop + markerBand : (float) wave.getY()));
+                                  wave.toFloat(), stemRows, withFlags);
     for (auto& n : track->notes)
         if (visible (n.timeSec))
         {

@@ -104,6 +104,19 @@ public:
         add (&fps, 28, "Frame rate limit");
         add (&zoom, 28, "Visible seconds");
 
+        addSection ("BROWSER");
+        previewRow.style.addItemList ({ "3-Band", "RGB", "Single colour", "Stems (tracks with stems; others 3-band)" }, 1);
+        previewRow.shape.addItemList ({ "Full waveform", "Half (bars grow up)" }, 1);
+        previewRow.style.setSelectedId (settings.previewStyle, juce::dontSendNotification);
+        previewRow.shape.setSelectedId (settings.previewShape + 1, juce::dontSendNotification);
+        previewRow.style.onChange = previewRow.shape.onChange = [this]
+        {
+            settings.previewStyle = previewRow.style.getSelectedId();
+            settings.previewShape = previewRow.shape.getSelectedId() - 1;
+            onChanged();
+        };
+        add (&previewRow, 28, "Preview column waveform");
+
         addSection ("PREP - WAVEFORMS");
         for (int i = 0; i < 2; ++i)
         {
@@ -208,14 +221,6 @@ public:
             sl.setColour (juce::Slider::trackColourId, Theme::stemColour (st));
             sl.onValueChange = [this, st] { settings.stemOpacity[(size_t) st] = (float) stemOpacity[(size_t) st].getValue() / 100.0f; onChanged(); };
         }
-        addSection ("NOTE LOCATORS");
-        add (&noteLead, 28, "Show before (seconds)");
-        setupSlider (noteLead, 0.0, 10.0, 0.5, settings.noteLeadSeconds);
-        noteLead.onValueChange = [this] { settings.noteLeadSeconds = noteLead.getValue(); onChanged(); };
-        add (&noteShow, 28, "Stay up for (s, 0 = till next)");
-        setupSlider (noteShow, 0.0, 60.0, 1.0, settings.noteShowSeconds);
-        noteShow.onValueChange = [this] { settings.noteShowSeconds = noteShow.getValue(); onChanged(); };
-
         addSection ("CONTROLLER");
         add (&quantize, 28, {});
         quantize.setButtonText ("Quantize on at start-up (each deck's QUANTIZE button turns it on / off)");
@@ -463,7 +468,7 @@ private:
     bool showing() const { return inStems == stemsOnly; }
     void addSection (const juce::String& title)
     {
-        inStems = title == "STEMS";
+        inStems = title == "STEMS" || title == "STEM COLOURS AND LAYERS";
         if (showing()) rows.push_back ({ nullptr, 0, title, {} });
     }
     void add (juce::Component* c, int h, const juce::String& label)
@@ -514,7 +519,7 @@ private:
     };
     std::array<PairRow, 4> laneRows;
     std::array<PairRow, 2> prepLaneRows;
-    PairRow prepOverviewRow;
+    PairRow prepOverviewRow, previewRow;
     juce::TextButton prepColour;
     struct StemColourRow : juce::Component
     {
@@ -530,7 +535,6 @@ private:
             for (auto& b : buttons) { b.setBounds (r.removeFromLeft (w)); r.removeFromLeft (6); }
         }
     } stemColourRow;
-    juce::Slider noteLead, noteShow;
     static void fillLaneStyles (juce::ComboBox& c, bool allowOff)
     {
         // ids are style + 2 (style -1 = off)
