@@ -53,7 +53,7 @@ namespace
             if (hdr[3] < 3) { error = file.getFileName() + " has an old ID3v2." + juce::String ((int) hdr[3]) + " tag - not changed"; return false; }
             if ((flags & 0x80) != 0) { error = file.getFileName() + "'s tag uses unsynchronisation - not changed"; return false; }
             juce::MemoryBlock body;
-            in.readIntoMemoryBlock (body, (ssize_t) size);
+            in.readIntoMemoryBlock (body, (juce::int64) size);
             auto* d = static_cast<const uint8_t*> (body.getData());
             size_t pos = 0;
             if ((flags & 0x40) != 0 && body.getSize() >= 4)   // extended header: skip it
