@@ -1,4 +1,5 @@
 #include "App/MainComponent.h"
+#include "App/EditExporter.h"
 #include "Library/TagWriter.h"
 #include "Library/TagReader.h"
 #include "Library/RekordboxMasterDb.h"
@@ -797,6 +798,42 @@ private:
             if (k == 85)
             {
                 std::printf ("slip: after loop off %.2f s on (expect ~2.25)\n", vs.positionSec.load() - vt);
+                {
+                    // export PREP's edited track (play map: Intro, Chorus x2, Verse, Chorus copy, Outro)
+                    auto pt = main.getEngine().deck (AudioEngine::prepDeck).getLoadedTrack();
+                    juce::String err;
+                    const auto out = juce::File::getCurrentWorkingDirectory().getChildFile ("export-test");
+                    const bool ok = EditExporter::render (pt, nullptr, out, false, nullptr, err);
+                    std::unique_ptr<juce::AudioFormatReader> rd (juce::WavAudioFormat().createReaderFor (new juce::FileInputStream (out.withFileExtension ("wav")), true));
+                    std::printf ("export: ok %d %s length %.1f s (track %.1f s)\n", (int) ok, err.toRawUTF8(),
+                                 rd != nullptr ? (double) rd->lengthInSamples / rd->sampleRate : -1.0, pt != nullptr ? pt->audio->lengthSeconds() : -1.0);
+                }
+                {
+                    // combos and short / long presses
+                    auto& midi = main.getMidi();
+                    auto saved = midi.getBindings();
+                    auto mk = [] (const char* id, int note, int mod, int press)
+                    {
+                        MidiBinding b; b.actionId = id; b.channel = 1; b.type = MidiBinding::Type::note; b.number = note;
+                        if (mod >= 0) { b.modType = MidiBinding::Type::note; b.modChannel = 1; b.modNumber = mod; }
+                        b.press = press;
+                        return b;
+                    };
+                    midi.setBindings ({ mk ("d2.quantize", 0x10, -1, 1), mk ("d2.keylock", 0x10, -1, 2),
+                                        mk ("d2.master", 0x11, -1, 0), mk ("d2.slip", 0x11, 0x20, 0) });
+                    const auto& s2 = main.getEngine().deck (1).state();
+                    auto on = [&] (int n) { midi.injectForTest (juce::MidiMessage::noteOn (1, n, (juce::uint8) 127)); };
+                    auto off = [&] (int n) { midi.injectForTest (juce::MidiMessage::noteOff (1, n)); };
+                    auto settle = [&] { for (int i = 0; i < 5; ++i) { juce::Thread::sleep (20); } };
+                    const bool q0 = s2.quantize.load(), k0 = s2.keyLock.load(), sl0 = s2.slip.load();
+                    on (0x10); off (0x10); settle();                                                  // short
+                    on (0x10); juce::Thread::sleep (700); midi.pollForTest(); off (0x10); settle();   // long
+                    on (0x20); on (0x11); off (0x11); off (0x20); settle();                           // SHIFT + 0x11
+                    juce::Thread::sleep (100);
+                    std::printf ("midi: short->quantize %d, long->keylock %d, combo->slip %d (each 1 = changed)\n",
+                                 (int) (s2.quantize.load() != q0), (int) (s2.keyLock.load() != k0), (int) (s2.slip.load() != sl0));
+                    midi.setBindings (saved);
+                }
                 std::printf ("edit test done\n"); std::fflush (stdout); stage = 40;
             }
         }

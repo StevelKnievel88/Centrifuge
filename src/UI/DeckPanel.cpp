@@ -368,7 +368,7 @@ void DeckPanel::paint (juce::Graphics& g)
                         g.setColour (juce::Colours::black.withAlpha (st.skipsOn.load() ? 0.62f : 0.35f));
                         g.fillRect (juce::Rectangle<float>::leftTopRightBottom (x0, r.getY(), x1, r.getBottom()));
                     }
-                if (overviewGrid) paintOverviewGrid (g, r, track->grid, len, &fold);
+                if (overviewGrid) paintOverviewGrid (g, r, track->grid, len, &fold, track->phrases.empty() ? 0.0f : juce::jmax (2.0f, juce::jmin (6.0f, r.getHeight() * 0.14f)));
                 if (viewWindow)
                 {
                     // the part the scrolling waveform shows
@@ -555,7 +555,7 @@ void DeckPanel::paint (juce::Graphics& g)
         // Locator (memory) and skip: SKIP once to start, again to end
         r.removeFromLeft (6.0f);
         auto memBtn = vfit (r.removeFromLeft (66.0f));
-        chip (g, memBtn, "LOCATOR", false, Theme::bad);
+        chip (g, memBtn, "MARKER", false, Theme::bad);
         regions.push_back ({ memBtn, p + "locator.add", 0 });
         r.removeFromLeft (6.0f);
         auto skipBtn = vfit (r.removeFromLeft (56.0f));

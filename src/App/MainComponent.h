@@ -52,6 +52,7 @@ public:
     TrackEditor& getEditor() { return editor; }
     LibraryManager& getLibrary() { return library; }
     ActionRouter& getRouter() { return router; }
+    MidiManager& getMidi() { return midi; }
     void showPage (int page);
     void showAbout() { about.show(); }
     ScrollingWaveforms& getWaves() { return waves; }

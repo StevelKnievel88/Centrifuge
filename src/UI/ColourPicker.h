@@ -126,7 +126,7 @@ inline bool handleCueColourMenu (int result, int baseId, juce::Rectangle<int> sc
 inline void addLoopModeItems (juce::PopupMenu& m, int baseId, int mode, int cycles)
 {
     m.addSectionHeader ("Loop");
-    m.addItem (baseId, "Ordinary loop (called up with the locator)", true, mode == 0);
+    m.addItem (baseId, "Ordinary loop (called up with the marker)", true, mode == 0);
     m.addItem (baseId + 1, "Active loop (engages when playback runs into it)", true, mode == 1);
     juce::PopupMenu cyc;
     for (int n : { 2, 4, 8, 16, 32 })

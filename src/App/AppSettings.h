@@ -61,7 +61,8 @@ struct AppSettings
     int previewStyle = 1;              // browser preview column: 1 3-band, 2 RGB, 3 single colour, 4 stems
     int previewShape = 1;              // 0 full, 1 half (bars from the bottom)       // browser column order and widths
     juce::uint32 singleColour = 0xff3d9bff;
-    juce::uint32 previewColour = 0xff3d9bff;   // the browser preview column's single colour
+    juce::uint32 previewColour = 0xff3d9bff;
+    float markerScale = 1.0f;                  // size of the markers on overviews and browser previews   // the browser preview column's single colour
     bool singleFollowsDeck = false;
     std::array<bool, 3> editView { true, true, true };   // decks 1, 2 and PREP: show the edited version (as it will play)    // single-colour waveforms use each deck's colour instead
     std::array<int, 4> stemLayerOrder { 2, 1, 3, 0 };          // stems from back to front (0 drums, 1 bass, 2 inst, 3 vocals)
@@ -81,6 +82,7 @@ struct AppSettings
     bool quantize = true;              // quantize on for both decks at start-up
     double jogTicksPerRev = 720.0;
     bool ledFeedback = true;
+    double longPressSec = 0.5;         // a button held this long is a long press (0.25 - 1 s)
     // Vinyl speed adjust, per deck: brake (stop), start, release after a scratch (seconds), and brake / start on or off
     std::array<double, 2> brakeSec { 0.8, 0.8 }, startSec { 0.4, 0.4 }, releaseSec { 0.0, 0.0 };
     std::array<bool, 2> brakeOn { false, false }, startOn { false, false };
@@ -98,6 +100,7 @@ struct AppSettings
     int stemQualityOnLoad = 0;         // 0 Fast, 1 Better, 2 High, 3 Best (see StemQuality)
     int stemQualityBatch = 1;          // for pre-analysis
     int stemThreads = 0;
+    bool stemsLossless = false;        // stems kept as FLAC at the track's own sample rate (much bigger) instead of Ogg
 
     // UI
     bool showBrowser = true;

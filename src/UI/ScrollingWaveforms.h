@@ -34,7 +34,11 @@ public:
     }
     std::function<void (int deck)> onTrackDropped;
     int dropDeck = -1;
-    enum LaneStyle { laneOff = -1, stems = 0, threeBand = 1, rgb = 2, singleColour = 3, stemsSplit = 4 };
+    enum LaneStyle { laneOff = -1, stems = 0, threeBand = 1, rgb = 2, singleColour = 3, stemsSplit = 4,
+                     stemDrums = 5, stemBass = 6, stemInst = 7, stemVocals = 8 };   // 5..8: one stem on its own
+    static bool isSingleStem (int style) { return style >= stemDrums && style <= stemVocals; }
+    /** Picked from the lane's name box (or the second lane switched on / off): deck, lane (0 / 1), style. */
+    std::function<void (int deck, int lane, int style)> onLaneStyleChosen;
     struct LaneConfig { int style = threeBand; int shape = StripOptions::full; };
 
     /** deckIds: the engine decks shown, top to bottom ({ 0, 1 } on the play page, { prepDeck } on PREP). */
@@ -48,7 +52,7 @@ public:
     void setScrubWhilePlaying (bool b) { scrubWhilePlaying = b; }
     /** Highlighted phrase in the phrase strip (PREP's list selection); -1 = none. */
     std::function<int()> selectedPhrase;
-    /** Size for "Add loop locator here" (beats). */
+    /** Size for "Add loop marker here" (beats). */
     std::function<double()> loopBeatsForMenu;
     double getVisibleSeconds() const { return visibleSeconds; }
     void setMaxFps (int fps) { maxFps = juce::jlimit (15, 240, fps); }
@@ -118,7 +122,11 @@ private:
     void paintDeck (juce::Graphics& g, int deck, juce::Rectangle<int> r);
     void paintLane (juce::Graphics& g, int deck, int lane, juce::Rectangle<int> r);
     void paintOverlays (juce::Graphics& g, int deck, juce::Rectangle<int> wave, juce::Rectangle<int> lane, bool withFlags, bool stemRows = false);
-    void drawLabel (juce::Graphics& g, juce::Rectangle<int> lane, const juce::String& text, bool atTop);
+    juce::Rectangle<int> drawLabel (juce::Graphics& g, juce::Rectangle<int> lane, const juce::String& text, bool atTop);
+    std::array<std::array<juce::Rectangle<int>, 2>, 2> labelRects;   // lane name boxes (click: change the lane's type)
+    std::array<juce::Rectangle<int>, 2> laneToggleRects;             // second lane on / off
+    std::array<int, 2> lastBottomStyle { 1, 1 };
+    void showLaneStyleMenu (int slot, int lane);
     juce::Rectangle<int> deckBounds (int deck) const;
     juce::Rectangle<int> dividerBounds (int deck) const;
     int dividerAt (juce::Point<int> p) const;

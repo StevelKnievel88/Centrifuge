@@ -23,12 +23,21 @@ struct MidiBinding
     double sensitivity = 1.0;   // encoders: multiplier on steps
     int ledOn = 127, ledOff = 0;  // values sent to light the button (pads that take a colour from the value)
 
+    // Combo: only while this other button is held (e.g. SHIFT + LOAD = eject). modNumber < 0 = no combo.
+    Type modType = Type::note;
+    int modChannel = 1, modNumber = -1;
+    bool hasModifier() const noexcept { return modNumber >= 0; }
+
+    // Press length: 0 any, 1 short (a quick press), 2 long (held past the long-press time) - one button, two functions
+    int press = 0;
+
     juce::String describe() const;
     juce::var toVar() const;
     static MidiBinding fromVar (const juce::var& v);
     bool sameControl (const MidiBinding& o) const noexcept
     {
-        return channel == o.channel && type == o.type && number == o.number && device == o.device;
+        return channel == o.channel && type == o.type && number == o.number && device == o.device
+            && modNumber == o.modNumber && (modNumber < 0 || (modType == o.modType && modChannel == o.modChannel)) && press == o.press;
     }
 };
 
@@ -104,8 +113,14 @@ public:
     };
     std::vector<SeenControl> getSeenControls() const;
 
+    /** Feeds a message in as if it came from a controller (tests). */
+    void injectForTest (const juce::MidiMessage& m) { handleIncomingMidiMessage (nullptr, m); }
+    void pollForTest() { timerCallback(); }
+
     // LEDs --------------------------------------------------------------------
     void setLedFeedbackEnabled (bool on) { ledFeedback = on; }
+    /** How long a press has to be held to count as a long press (seconds, 0.25 - 1). */
+    void setLongPressSeconds (double s) { longPressMs = juce::jlimit (250.0, 1000.0, s * 1000.0); }
 
 private:
     void handleIncomingMidiMessage (juce::MidiInput* source, const juce::MidiMessage& m) override;
@@ -131,7 +146,14 @@ private:
     mutable juce::CriticalSection learnLock;
     juce::String learnAction;
     bool learnAdd = false;
-    struct Candidate { MidiBinding b; std::vector<int> values; double firstMs = 0.0; bool saw14 = false; };
+    struct Candidate { MidiBinding b; std::vector<int> values; double firstMs = 0.0; bool saw14 = false;
+                       std::vector<MidiBinding> heldWith; };   // buttons held down when this one was pressed (combos)
+    std::map<juce::String, MidiBinding> held;      // buttons held down right now, by control
+    std::map<juce::String, std::vector<juce::String>> pressedActions;   // which actions a held control's press went to
+    struct PendingPress { double ms = 0.0; std::vector<std::pair<const ActionDef*, ActionValue>> shortHits, longHits; bool longFired = false; };
+    std::map<juce::String, PendingPress> pendingPresses;   // short / long: waiting to see how long the button is held
+    std::atomic<double> longPressMs { 500.0 };
+    void firePending (const std::vector<std::pair<const ActionDef*, ActionValue>>& hits, bool down);
     std::vector<Candidate> learnCands;
     std::vector<LearnChoice> pendingChoice;
     std::vector<Candidate> pendingCands;

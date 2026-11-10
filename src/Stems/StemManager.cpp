@@ -52,7 +52,7 @@ bool StemManager::hasCachedStems (const TrackInfo& info) const
 {
     const auto dir = cacheFolderFor (info);
     for (auto* n : cacheNames)
-        if (! dir.getChildFile (juce::String (n) + ".ogg").existsAsFile())
+        if (! dir.getChildFile (juce::String (n) + ".ogg").existsAsFile() && ! dir.getChildFile (juce::String (n) + ".flac").existsAsFile())
             return false;
     return true;
 }
@@ -364,6 +364,9 @@ bool StemManager::writeCache (const TrackInfo& info, const StemAudio& stems, Ste
     dir.getChildFile ("quality.txt").deleteFile();
 
     juce::OggVorbisAudioFormat ogg;
+    juce::FlacAudioFormat flac;
+    const bool lossless = getSettings().lossless;
+    const juce::String ext = lossless ? ".flac" : ".ogg";
     const int quality = getSettings().oggQualityIndex;
     constexpr int block = 1 << 15;
     juce::AudioBuffer<float> buf (2, block);
@@ -376,7 +379,11 @@ bool StemManager::writeCache (const TrackInfo& info, const StemAudio& stems, Ste
         std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::FileOutputStream> (tmp);
         if (! static_cast<juce::FileOutputStream*> (stream.get())->openedOk()) return false;
 
-        auto writer = ogg.createWriterFor (stream, juce::AudioFormatWriterOptions{}
+        auto writer = lossless ? flac.createWriterFor (stream, juce::AudioFormatWriterOptions{}
+                                                                  .withSampleRate (stems.sampleRate)
+                                                                  .withNumChannels (2)
+                                                                  .withBitsPerSample (24))
+                               : ogg.createWriterFor (stream, juce::AudioFormatWriterOptions{}
                                                        .withSampleRate (stems.sampleRate)
                                                        .withNumChannels (2)
                                                        .withBitsPerSample (16)
@@ -395,7 +402,9 @@ bool StemManager::writeCache (const TrackInfo& info, const StemAudio& stems, Ste
             writer->writeFromAudioSampleBuffer (buf, 0, n);
         }
         writer.reset();
-        tmp.moveFileTo (dir.getChildFile (juce::String (cacheNames[c]) + ".ogg"));
+        // one copy only: the other format goes
+        dir.getChildFile (juce::String (cacheNames[c]) + (lossless ? ".ogg" : ".flac")).deleteFile();
+        tmp.moveFileTo (dir.getChildFile (juce::String (cacheNames[c]) + ext));
     }
     dir.getChildFile ("quality.txt").replaceWithText (juce::String ((int) q));
     return true;
@@ -405,6 +414,7 @@ StemAudio::Ptr StemManager::readCache (const TrackInfo& info, const TrackAudio& 
 {
     const auto dir = cacheFolderFor (info);
     juce::OggVorbisAudioFormat ogg;
+    juce::FlacAudioFormat flac;
 
     StemAudio::Ptr stems = new StemAudio();
     stems->sampleRate = audio.sampleRate;
@@ -419,8 +429,11 @@ StemAudio::Ptr StemManager::readCache (const TrackInfo& info, const TrackAudio& 
 
     for (int c = 0; c < 3; ++c)
     {
-        auto f = dir.getChildFile (juce::String (cacheNames[c]) + ".ogg");
-        std::unique_ptr<juce::AudioFormatReader> reader (ogg.createReaderFor (new juce::FileInputStream (f), true));
+        auto f = dir.getChildFile (juce::String (cacheNames[c]) + ".flac");
+        const bool isFlac = f.existsAsFile();
+        if (! isFlac) f = dir.getChildFile (juce::String (cacheNames[c]) + ".ogg");
+        std::unique_ptr<juce::AudioFormatReader> reader (isFlac ? flac.createReaderFor (new juce::FileInputStream (f), true)
+                                                                : ogg.createReaderFor (new juce::FileInputStream (f), true));
         if (reader == nullptr) return {};
 
         const int s = cacheStemIndex[c];

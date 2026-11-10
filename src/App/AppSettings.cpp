@@ -88,7 +88,7 @@ void AppSettings::load()
     // Lanes (older settings had one main-lane mode and one original-lane style for both decks)
     if (auto* arr = v["laneStyle"].getArray())
     {
-        for (int i = 0; i < juce::jmin (4, arr->size()); ++i) laneStyle[(size_t) i / 2][(size_t) i % 2] = juce::jlimit (0, 4, (int) (*arr)[i]);
+        for (int i = 0; i < juce::jmin (4, arr->size()); ++i) laneStyle[(size_t) i / 2][(size_t) i % 2] = juce::jlimit (i % 2 == 1 ? -1 : 0, 8, (int) (*arr)[i]);
     }
     else if (v.hasProperty ("mainLaneMode") || v.hasProperty ("waveformStyle"))
     {
@@ -103,7 +103,7 @@ void AppSettings::load()
         for (auto& d : laneStyle) for (auto& l : d) if (l == 0) l = 4;
     if (auto* arr = v["prepLane"].getArray(); arr != nullptr && arr->size() == 4)
     {
-        prepLaneStyle = { juce::jlimit (0, 4, (int) (*arr)[0]), juce::jlimit (-1, 4, (int) (*arr)[1]) };
+        prepLaneStyle = { juce::jlimit (0, 8, (int) (*arr)[0]), juce::jlimit (-1, 8, (int) (*arr)[1]) };
         prepLaneShape = { juce::jlimit (0, 2, (int) (*arr)[2]), juce::jlimit (0, 2, (int) (*arr)[3]) };
     }
     num ("prepLaneSplit", prepLaneSplit);
@@ -174,6 +174,10 @@ void AppSettings::load()
         str (("deckController" + n).toRawUTF8(), deckController[(size_t) d]);
     }
     boolean ("throwOn", throwOn);
+    num ("longPressSec", longPressSec);
+    longPressSec = juce::jlimit (0.25, 1.0, longPressSec);
+    num ("markerScale", markerScale);
+    markerScale = juce::jlimit (0.75f, 3.0f, markerScale);
     if (v.hasProperty ("previewColour")) previewColour = (juce::uint32) (juce::int64) v["previewColour"];
     else previewColour = singleColour;
     num ("throwSpeed", throwSpeed);
@@ -189,6 +193,7 @@ void AppSettings::load()
     num ("stemQualityOnLoad", stemQualityOnLoad);
     num ("stemQualityBatch", stemQualityBatch);
     num ("stemThreads", stemThreads);
+    boolean ("stemsLossless", stemsLossless);
 
     boolean ("showBrowser", showBrowser);
     num ("browserHeight", browserHeight);
@@ -288,6 +293,9 @@ void AppSettings::save() const
         o->setProperty ("deckController" + n, deckController[(size_t) d]);
     }
     o->setProperty ("throwOn", throwOn);
+    o->setProperty ("longPressSec", longPressSec);
+    o->setProperty ("stemsLossless", stemsLossless);
+    o->setProperty ("markerScale", (double) markerScale);
     o->setProperty ("previewColour", (juce::int64) previewColour);
     o->setProperty ("throwSpeed", throwSpeed);
     o->setProperty ("autoGain", autoGain);

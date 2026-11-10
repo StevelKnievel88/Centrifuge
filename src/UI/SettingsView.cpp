@@ -51,7 +51,7 @@ public:
         for (int i = 0; i < 4; ++i)
         {
             auto& row = laneRows[(size_t) i];
-            fillLaneStyles (row.style, false);
+            fillLaneStyles (row.style, i % 2 == 1);
             row.shape.addItemList ({ "Full waveform", "Half (bars grow up)", "Half (bars grow down)" }, 1);
             row.style.setSelectedId (settings.laneStyle[(size_t) i / 2][(size_t) i % 2] + 2, juce::dontSendNotification);
             row.shape.setSelectedId (settings.laneShape[(size_t) i / 2][(size_t) i % 2] + 1, juce::dontSendNotification);
@@ -98,6 +98,9 @@ public:
         foldSkips.setButtonText ("Edited view on every deck: waveforms show the track as it will play (each deck's EDITED chip switches its own)");
         foldSkips.setToggleState (settings.editView[0] && settings.editView[1] && settings.editView[2], juce::dontSendNotification);
         foldSkips.onClick = [this] { const bool on = foldSkips.getToggleState(); settings.editView = { on, on, on }; onChanged(); };
+        add (&markerSize, 28, "Overview marker size (%)");
+        setupSlider (markerSize, 75.0, 300.0, 5.0, settings.markerScale * 100.0);
+        markerSize.onValueChange = [this] { settings.markerScale = (float) markerSize.getValue() / 100.0f; onChanged(); };
         add (&playhead, 28, "Playhead position (%)");
         setupSlider (playhead, 10.0, 90.0, 1.0, settings.playheadPosition * 100.0);
         playhead.onValueChange = [this] { settings.playheadPosition = (float) playhead.getValue() / 100.0f; onChanged(); };
@@ -244,6 +247,9 @@ public:
         add (&jogTicks, 28, "Jog ticks / revolution");
         add (&leds, 28, {});
         leds.setButtonText ("Send LED feedback to the XDJ-XZ");
+        add (&longPress, 28, "Long press time (s)");
+        setupSlider (longPress, 0.25, 1.0, 0.05, settings.longPressSec);
+        longPress.onValueChange = [this] { settings.longPressSec = longPress.getValue(); onChanged(); };
 
         addSection ("VINYL");
         for (int d = 0; d < 2; ++d)
@@ -285,6 +291,11 @@ public:
         stemsOnLoad.setButtonText ("Separate stems automatically when a track is loaded");
         add (&stemsGpu, 28, {});
         stemsGpu.setButtonText ("Use the graphics card (DirectML) - much lower CPU use");
+        add (&stemFormat, 28, "Saved stems");
+        stemFormat.addItem ("Compressed (Ogg Vorbis 160 kbps - small)", 1);
+        stemFormat.addItem ("Original quality (FLAC 24-bit, the track's own sample rate - roughly 8-10x bigger)", 2);
+        stemFormat.setSelectedId (settings.stemsLossless ? 2 : 1, juce::dontSendNotification);
+        stemFormat.onChange = [this] { settings.stemsLossless = stemFormat.getSelectedId() == 2; onChanged(); };
         add (&qualityOnLoad, 28, "Quality when loading");
         add (&qualityBatch, 28, "Quality when pre-analysing");
         for (auto* q : { &qualityOnLoad, &qualityBatch })
@@ -381,6 +392,10 @@ public:
         playhead.setValue (settings.playheadPosition * 100.0, juce::dontSendNotification);
         zoom.setValue (settings.visibleSeconds, juce::dontSendNotification);
         prepColour.setColour (juce::TextButton::buttonColourId, juce::Colour (settings.deckColours[2]));
+        for (int i = 0; i < 4; ++i)
+            laneRows[(size_t) i].style.setSelectedId (settings.laneStyle[(size_t) i / 2][(size_t) i % 2] + 2, juce::dontSendNotification);
+        for (int i = 0; i < 2; ++i)
+            prepLaneRows[(size_t) i].style.setSelectedId (settings.prepLaneStyle[(size_t) i] + 2, juce::dontSendNotification);
         for (int d = 0; d < 2; ++d)
         {
             vinyl[(size_t) d].brakeOn.setToggleState (settings.brakeOn[(size_t) d], juce::dontSendNotification);
@@ -600,6 +615,8 @@ private:
         c.addItem ("3-Band", 3);
         c.addItem ("RGB", 4);
         c.addItem ("Single colour", 5);
+        const char* one[] = { "Drums only", "Bass only", "Inst only", "Vocals only" };
+        for (int s = 0; s < 4; ++s) c.addItem (one[s], 7 + s);
     }
     struct LayerRow : juce::Component
     {
@@ -703,7 +720,8 @@ private:
     struct VinylRow { juce::ToggleButton brakeOn, startOn; juce::Slider brake, start, release; };
     std::array<VinylRow, 2> vinyl;
     juce::ToggleButton throwOn, autoGain;
-    juce::Slider throwSpeed;
+    juce::Slider throwSpeed, markerSize, longPress;
+    juce::ComboBox stemFormat;
     std::unique_ptr<juce::FileChooser> chooser;
 };
 

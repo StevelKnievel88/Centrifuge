@@ -137,7 +137,7 @@ void ExportView::paint (juce::Graphics& g)
     const juce::String note = usb
         ? "Copies the music to the stick and writes rekordbox's database and analysis files, so the XDJ-XZ reads it like a rekordbox "
           "export. The stick's previous rekordbox database is kept as a backup next to the new one. Your extras (skips, extra "
-          "locators) are kept on the stick for Centrifuge. Test with a spare stick first."
+          "markers) are kept on the stick for Centrifuge. Test with a spare stick first."
         : "In rekordbox's Preferences, set this file as the \"rekordbox xml\" library. It then shows up in rekordbox's "
           "\"rekordbox xml\" tree, where you can import tracks and playlists into your collection.";
     g.drawFittedText (note, r.removeFromTop (54), juce::Justification::topLeft, 4);

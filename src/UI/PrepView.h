@@ -76,6 +76,8 @@ private:
     void showPhraseMenu (int index, juce::Rectangle<float> area);
     void showPhraseAddMenu();
     void recolourPhrasesFromPresets();
+    void exportEditAudio (bool withStems);
+    std::unique_ptr<juce::FileChooser> exportChooser;
     bool keyPressed (const juce::KeyPress&) override;
 
     // List selection (like a file browser: click, ctrl + click to add / remove one, shift + click for a range)

@@ -735,11 +735,11 @@ void BrowserView::showTrackMenu (int)
     {
         // Clear marks / edits (asks first)
         juce::PopupMenu clear;
-        clear.addItem (30, "All locators (and loop locators)");
+        clear.addItem (30, "All markers (and loop markers)");
         clear.addItem (31, "All skips");
         clear.addItem (32, "All hot cues");
         clear.addItem (33, "All phrases");
-        clear.addItem (34, "All stem locators");
+        clear.addItem (34, "All stem markers");
         clear.addItem (35, "All notes");
         clear.addItem (36, "Phrase order and repeats");
         clear.addItem (37, "Saved edit versions");

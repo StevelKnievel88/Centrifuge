@@ -123,6 +123,13 @@ MainComponent::MainComponent()
     };
     prepView.getWaves().onZoomChanged = [this] (double sec) { settings.prepVisibleSeconds = sec; settings.save(); };
     prepView.getWaves().onLaneSplitChanged = [this] (int, float share) { settings.prepLaneSplit = share; settings.save(); };
+    prepView.getWaves().onLaneStyleChosen = [this] (int, int lane, int style)
+    {
+        settings.prepLaneStyle[(size_t) lane] = style;
+        settings.save();
+        applySettings();
+        settingsView.refreshValues();
+    };
     prepView.getWaves().onEditViewChanged = [this] (int, bool on) { settings.editView[2] = on; settings.save(); applySettings(); };
     browser.setColumnState (settings.browserColumns);
     browser.setInfoPanelOpen (settings.browserInfoOpen);
@@ -205,6 +212,14 @@ MainComponent::MainComponent()
 
     waves.onZoomChanged = [this] (double s) { settings.visibleSeconds = s; settings.save(); };
     waves.onLaneSplitChanged = [this] (int d, float share) { settings.laneSplit[(size_t) d] = share; settings.save(); };
+    waves.onLaneStyleChosen = [this] (int d, int lane, int style)
+    {
+        if (d < 0 || d > 1) return;
+        settings.laneStyle[(size_t) d][(size_t) lane] = style;
+        settings.save();
+        applySettings();
+        settingsView.refreshValues();
+    };
     waves.onPlayheadMoved = [this] (float f) { settings.playheadPosition = f; settings.save(); };
     waves.onEditViewChanged = [this] (int d, bool on) { settings.editView[(size_t) d] = on; settings.save(); applySettings(); };
     engine.onDeviceChanged = [this] { settingsView.refreshRouting(); };
@@ -279,6 +294,8 @@ void MainComponent::applySettings()
     Theme::deckColours()[2] = juce::Colour (settings.deckColours[2]);
     for (size_t s = 0; s < 4; ++s) Theme::stemColours()[s] = juce::Colour (settings.stemColours[s]);
     MusicalKey::camelotDisplay() = settings.camelotKeys;
+    overviewMarkerScale() = settings.markerScale;
+    for (auto* dp : { &deck1, &deck2 }) dp->repaint();
     engine.setPreviewOutput (settings.previewOutput);
     repaint();
     browser.repaint();
@@ -301,6 +318,7 @@ void MainComponent::applySettings()
     engine.setMasterVolume (settings.masterVolume);
     midi.setDeckControllers (settings.deckController[0], settings.deckController[1]);
     midi.setLedFeedbackEnabled (settings.ledFeedback);
+    midi.setLongPressSeconds (settings.longPressSec);
     waves.setVisibleSeconds (settings.visibleSeconds);
     waves.setMaxFps (settings.maxFps);
     for (int d = 0; d < 2; ++d)
@@ -368,6 +386,7 @@ void MainComponent::applySettings()
     ss.separateOnLoad = settings.stemsOnLoad;
     ss.qualityOnLoad = (StemQuality) juce::jlimit (0, 3, settings.stemQualityOnLoad);
     ss.qualityBatch = (StemQuality) juce::jlimit (0, 3, settings.stemQualityBatch);
+    ss.lossless = settings.stemsLossless;
     ss.findModel = [s = settings] (const juce::String& n) { return s.findModel (n); };
     stems.setSettings (ss);
 
@@ -845,7 +864,7 @@ void MainComponent::showExportMenu (juce::Component& anchor)
 
 void MainComponent::askRename (int deck, bool hotCue, int index, const juce::String& current)
 {
-    auto* w = new juce::AlertWindow (hotCue ? "Name hot cue " + juce::String::charToString ((juce::juce_wchar) ('A' + index)) : juce::String ("Name locator"),
+    auto* w = new juce::AlertWindow (hotCue ? "Name hot cue " + juce::String::charToString ((juce::juce_wchar) ('A' + index)) : juce::String ("Name marker"),
                                      "Saved to the library versions that are switched on (R / C).", juce::MessageBoxIconType::NoIcon);
     w->addTextEditor ("name", current);
     w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
@@ -918,11 +937,11 @@ void MainComponent::trackAction (const std::vector<TrackInfo>& tracks, const juc
     }
     if (action.startsWith ("clear."))
     {
-        const juce::String what = action == "clear.locators" ? "all locators" : action == "clear.skips" ? "all skips"
+        const juce::String what = action == "clear.locators" ? "all markers" : action == "clear.skips" ? "all skips"
                                 : action == "clear.hotcues" ? "all hot cues" : action == "clear.phrases" ? "all phrases"
-                                : action == "clear.stemlocs" ? "all stem locators" : action == "clear.notes" ? "all notes"
+                                : action == "clear.stemlocs" ? "all stem markers" : action == "clear.notes" ? "all notes"
                                 : action == "clear.order" ? "the phrase order and repeats" : action == "clear.editversions" ? "the saved edit versions"
-                                : "every locator, skip, hot cue, phrase, stem locator, note, phrase order and edit version";
+                                : "every marker, skip, hot cue, phrase, stem marker, note, phrase order and edit version";
         const auto n = juce::String ((int) tracks.size()) + (tracks.size() == 1 ? " track" : " tracks");
         juce::Component::SafePointer<MainComponent> safe (this);
         juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Clear " + what + "?",

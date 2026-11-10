@@ -49,15 +49,15 @@ static std::vector<ActionDef> buildActions()
             add (p + "hotcue." + juce::String (h + 1) + ".delete", "Delete hot cue " + letter, D + " - Hot cues", B, d);
         }
 
-        add (p + "callprev",       "Previous marker (when stopped)", D + " - Locators & skips", B, d);
-        add (p + "callnext",       "Next marker (when stopped)",     D + " - Locators & skips", B, d);
-        add (p + "locator.add",    "Locator: add (memory)",       D + " - Locators & skips", B, d);
-        add (p + "locator.delete", "Locator: delete current",     D + " - Locators & skips", B, d);
-        add (p + "skip.set",       "Skip: set start, then end (press twice)", D + " - Locators & skips", B, d, true);
-        add (p + "skip.in",        "Skip: start (skip from)",     D + " - Locators & skips", B, d, true);
-        add (p + "skip.out",       "Skip: end (skip to)",         D + " - Locators & skips", B, d);
-        add (p + "skip.delete",    "Skip: delete nearest",        D + " - Locators & skips", B, d);
-        add (p + "skip.toggle",    "Skips on / off",              D + " - Locators & skips", B, d, true);
+        add (p + "callprev",       "Previous marker (when stopped)", D + " - Markers & skips", B, d);
+        add (p + "callnext",       "Next marker (when stopped)",     D + " - Markers & skips", B, d);
+        add (p + "locator.add",    "Marker: add (memory)",       D + " - Markers & skips", B, d);
+        add (p + "locator.delete", "Marker: delete current",     D + " - Markers & skips", B, d);
+        add (p + "skip.set",       "Skip: set start, then end (press twice)", D + " - Markers & skips", B, d, true);
+        add (p + "skip.in",        "Skip: start (skip from)",     D + " - Markers & skips", B, d, true);
+        add (p + "skip.out",       "Skip: end (skip to)",         D + " - Markers & skips", B, d);
+        add (p + "skip.delete",    "Skip: delete nearest",        D + " - Markers & skips", B, d);
+        add (p + "skip.toggle",    "Skips on / off",              D + " - Markers & skips", B, d, true);
 
         add (p + "loop.in",     "Loop in",               D + " - Loops", B, d, true);
         add (p + "loop.out",    "Loop out",              D + " - Loops", B, d, true);

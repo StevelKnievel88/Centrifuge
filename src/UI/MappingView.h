@@ -81,7 +81,7 @@ private:
     std::array<juce::ComboBox, 2> controllerBox;
     std::array<juce::String, 2> deckController;
     juce::StringArray lastDevices;
-    juce::ComboBox modeBox;
+    juce::ComboBox modeBox, pressBox;
     juce::Slider sensitivity;
     juce::Label sensLabel, banner, status;
 

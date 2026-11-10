@@ -95,6 +95,18 @@ inline void paintOverviewViewBox (juce::Graphics& g, juce::Rectangle<float> r, f
     g.drawRect (box, 1.0f);
 }
 
+/** Size of the markers on overviews and browser previews (Settings > WAVEFORMS), 1 = standard. */
+inline float& overviewMarkerScale() { static float s = 1.0f; return s; }
+
+/** A marker shape with a thin dark outline, so it reads on bright waveforms. */
+inline void fillOutlined (juce::Graphics& g, const juce::Path& p, juce::Colour c)
+{
+    g.setColour (c);
+    g.fillPath (p);
+    g.setColour (juce::Colours::black.withAlpha (0.85f));
+    g.strokePath (p, juce::PathStrokeType (1.0f));
+}
+
 inline void paintOverviewMarks (juce::Graphics& g, juce::Rectangle<float> r, const TrackMarks& m, bool compact = false,
                                 const TimeFold* fold = nullptr)
 {
@@ -109,7 +121,7 @@ inline void paintOverviewMarks (juce::Graphics& g, juce::Rectangle<float> r, con
         else for (auto d : fold->allDisplay (sec)) xs.push_back (xOfDisp (d));
         return xs;
     };
-    const float tri = compact ? 3.0f : 4.0f;
+    const float tri = (compact ? 3.0f : 4.0f) * overviewMarkerScale();
 
     // Phrases along the bottom
     float bottom = r.getBottom();
@@ -152,11 +164,10 @@ inline void paintOverviewMarks (juce::Graphics& g, juce::Rectangle<float> r, con
         {
             if (k.kind == 2)
             {
-                g.setColour (k.colour);
                 juce::Path p;
                 p.addTriangle (x, r.getY(), x, r.getY() + tri * 1.5f, x + tri * 1.2f, r.getY() + tri * 0.75f);
                 p.addTriangle (x + tri, r.getY(), x + tri, r.getY() + tri * 1.5f, x + tri * 2.2f, r.getY() + tri * 0.75f);
-                g.fillPath (p);
+                fillOutlined (g, p, k.colour);
             }
             else if (k.kind == 0)
             {
@@ -172,10 +183,9 @@ inline void paintOverviewMarks (juce::Graphics& g, juce::Rectangle<float> r, con
                         g.fillRect (x - 0.5f, r.getY(), 1.5f, bottom - r.getY());
                     }
                 }
-                g.setColour (k.colour);
                 juce::Path p;
                 p.addTriangle (x - tri, r.getY(), x + tri, r.getY(), x, r.getY() + tri * 1.3f);
-                g.fillPath (p);
+                fillOutlined (g, p, k.colour);
             }
             else if (k.kind == 3)
             {
@@ -190,8 +200,9 @@ inline void paintOverviewMarks (juce::Graphics& g, juce::Rectangle<float> r, con
             else if (k.kind == 4)
             {
                 // note: a dot
-                g.setColour (k.colour);
-                g.fillEllipse (x - tri * 0.7f, r.getY() + 1.0f, tri * 1.4f, tri * 1.4f);
+                juce::Path p;
+                p.addEllipse (x - tri * 0.7f, r.getY() + 1.0f, tri * 1.4f, tri * 1.4f);
+                fillOutlined (g, p, k.colour);
             }
         }
     }
@@ -202,8 +213,7 @@ inline void paintOverviewMarks (juce::Graphics& g, juce::Rectangle<float> r, con
             {
                 juce::Path p;
                 p.addTriangle (x - tri, bottom, x + tri, bottom, x, bottom - tri * 1.4f);
-                g.setColour (k.colour);
-                g.fillPath (p);
+                fillOutlined (g, p, k.colour);
             }
 }
 
@@ -344,42 +354,66 @@ inline void paintPhraseStripFolded (juce::Graphics& g, juce::Rectangle<float> st
 
 /** Bar lines and minute marks over an overview (the overview grid toggle). Minutes are of the track as it plays
     (the edited view's timeline); bar lines are drawn every 4, 8, 16 ... bars so they never crowd. */
-inline void paintOverviewGrid (juce::Graphics& g, juce::Rectangle<float> r, const BeatGrid& grid, double sourceLength, const TimeFold* fold)
+/** The overview's grid: a ruler along the top (a short tick per bar, longer every 4, 16 and 64 bars), stronger lines
+    down through the waveform every 16 bars (or wider when zoomed out), and minute marks along the bottom, above the
+    phrase strip (`bottomInset` = its height). */
+inline void paintOverviewGrid (juce::Graphics& g, juce::Rectangle<float> r, const BeatGrid& grid, double sourceLength, const TimeFold* fold,
+                               float bottomInset = 0.0f)
 {
     if (sourceLength <= 0.0) return;
     const double dlen = juce::jmax (0.001, fold != nullptr ? fold->displayLength (sourceLength) : sourceLength);
     auto xOfD = [&] (double d) { return r.getX() + (float) (d / dlen) * r.getWidth(); };
     juce::Graphics::ScopedSaveState ss (g);
     g.reduceClipRegion (r.toNearestInt());
+    const float bottom = r.getBottom() - bottomInset;
     if (grid.isValid())
     {
-        // bars per line: the smallest power of two (from 4) that keeps lines at least 7 px apart
         const double barSec = grid.beatLengthAt (sourceLength * 0.5) * 4.0;
         const double pxPerBar = r.getWidth() * barSec / dlen;
-        int every = 4;
-        while (every < 256 && pxPerBar * every < 7.0) every *= 2;
+        // the finest level that still leaves room between ticks
+        int finest = 1;
+        while (finest < 64 && pxPerBar * finest < 3.0) finest *= 4;
+        int lineEvery = 16;
+        while (lineEvery < 256 && pxPerBar * lineEvery < 14.0) lineEvery *= 4;
         int bar = 0;
         grid.forEachBeat (0.0, sourceLength, [&] (double t, int beatInBar, int)
         {
             if (beatInBar != 1) return;
-            const bool major = bar % (every * 4) == 0;
-            if (bar++ % every != 0) return;
-            g.setColour (juce::Colours::white.withAlpha (major ? 0.32f : 0.14f));
-            if (fold == nullptr || fold->isEmpty()) g.fillRect (xOfD (t) - 0.5f, r.getY(), 1.0f, r.getHeight());
-            else for (double d : fold->allDisplay (t)) g.fillRect (xOfD (d) - 0.5f, r.getY(), 1.0f, r.getHeight());
+            const int b = bar++;
+            if (b % finest != 0) return;
+            const float len = b % 64 == 0 ? 10.0f : b % 16 == 0 ? 7.0f : b % 4 == 0 ? 4.0f : 2.0f;
+            const bool line = b % lineEvery == 0;
+            auto draw = [&] (float x)
+            {
+                x = std::round (x) + 0.5f;
+                if (line)
+                {
+                    g.setColour (juce::Colours::white.withAlpha (0.3f));
+                    g.fillRect (x - 0.5f, r.getY(), 1.0f, bottom - r.getY());
+                }
+                g.setColour (juce::Colours::black.withAlpha (0.6f));
+                g.fillRect (x - 1.0f, r.getY(), 2.0f, len + 1.0f);
+                g.setColour (juce::Colours::white.withAlpha (0.92f));
+                g.fillRect (x - 0.5f, r.getY(), 1.0f, len);
+            };
+            if (fold == nullptr || fold->isEmpty()) draw (xOfD (t));
+            else for (double d : fold->allDisplay (t)) draw (xOfD (d));
         });
     }
-    // minute marks along the top
-    g.setFont (psyched::Fonts::mono (9.5f, true));
+    // minute marks along the bottom (like rekordbox), with the minute
+    g.setFont (psyched::Fonts::mono (8.5f, true));
     for (int m = 1; m * 60.0 < dlen; ++m)
     {
-        const float x = xOfD (m * 60.0);
-        g.setColour (juce::Colours::white.withAlpha (0.75f));
-        g.fillRect (x - 0.5f, r.getY(), 1.0f, 5.0f);
+        const float x = std::round (xOfD (m * 60.0)) + 0.5f;
         g.setColour (juce::Colours::black.withAlpha (0.6f));
-        g.fillRect (x + 1.0f, r.getY(), 14.0f, 10.0f);
-        g.setColour (juce::Colours::white.withAlpha (0.85f));
-        g.drawText (juce::String (m), juce::Rectangle<float> (x + 1.0f, r.getY(), 14.0f, 10.0f), juce::Justification::centredLeft);
+        g.fillRect (x - 1.0f, bottom - 6.0f, 3.0f, 6.0f);
+        g.setColour (juce::Colours::white);
+        g.fillRect (x - 0.5f, bottom - 5.0f, 1.5f, 5.0f);
+        auto lab = juce::Rectangle<float> (x + 2.0f, bottom - 9.0f, 12.0f, 9.0f);
+        g.setColour (juce::Colours::black.withAlpha (0.55f));
+        g.fillRect (lab);
+        g.setColour (juce::Colours::white.withAlpha (0.9f));
+        g.drawText (juce::String (m), lab, juce::Justification::centredLeft);
     }
 }
 

@@ -1,4 +1,5 @@
 #include "PrepView.h"
+#include "../App/EditExporter.h"
 #include "TrackMarks.h"
 #include "../App/Features.h"
 #include "Theme.h"
@@ -241,7 +242,7 @@ void PrepView::paint (juce::Graphics& g)
                 auto xOfD = [&] (double d) { return r.getX() + (float) juce::jlimit (0.0, 1.0, d / len) * r.getWidth(); };
                 g.setColour (juce::Colours::black.withAlpha (0.45f));
                 g.fillRect (r.withRight (xOfD (t)));
-                if (overviewGrid) paintOverviewGrid (g, r, track->grid, st.lengthSec.load(), &fold);
+                if (overviewGrid) paintOverviewGrid (g, r, track->grid, st.lengthSec.load(), &fold, track->phrases.empty() ? 0.0f : juce::jmax (2.0f, juce::jmin (6.0f, r.getHeight() * 0.14f)));
                 {
                     // the part the zoomed waveform shows (under the marks, above the phrases)
                     const double vis = waves.getVisibleSeconds();
@@ -279,11 +280,11 @@ void PrepView::paint (juce::Graphics& g)
         chip (g, r.removeFromLeft (46.0f).reduced (1.0f, 0.0f), sizeText, st.loopActive.load(), Theme::accent, "loop.toggle");
         chip (g, r.removeFromLeft (24.0f), ">", false, Theme::accent, "loopsize.double");
         r.removeFromLeft (8.0f);
-        chip (g, r.removeFromLeft (70.0f), "LOCATOR", false, Theme::bad, "locator.add");
+        chip (g, r.removeFromLeft (70.0f), "MARKER", false, Theme::bad, "locator.add");
         r.removeFromLeft (4.0f);
-        chip (g, r.removeFromLeft (76.0f), "LOOP LOC", false, juce::Colour (activeLoopLine), "looploc.add");
+        chip (g, r.removeFromLeft (76.0f), "LOOP MARK", false, juce::Colour (activeLoopLine), "looploc.add");
         r.removeFromLeft (4.0f);
-        chip (g, r.removeFromLeft (76.0f), "STEM LOC", false, Theme::stemColour (3), "stemloc.add");
+        chip (g, r.removeFromLeft (76.0f), "STEM MARK", false, Theme::stemColour (3), "stemloc.add");
         r.removeFromLeft (4.0f);
         chip (g, r.removeFromLeft (56.0f), "NOTE", false, Theme::text, "note.add");
         r.removeFromLeft (4.0f);
@@ -517,7 +518,7 @@ void PrepView::paintList (juce::Graphics& g, juce::Rectangle<float> r)
     // Tabs: locators / loops / skips, hot cues, phrases
     {
         auto tabs = r.removeFromTop (24.0f);
-        const char* names[] = { "LOCATORS", "HOT CUES", "PHRASES" };
+        const char* names[] = { "MARKERS", "HOT CUES", "PHRASES" };
         const float w = (tabs.getWidth() - 8.0f) / 3.0f;
         for (int k = 0; k < 3; ++k)
         {
@@ -560,7 +561,7 @@ void PrepView::paintList (juce::Graphics& g, juce::Rectangle<float> r)
            ? std::next (it) : selection.erase (it);
     if (entries.empty())
     {
-        const char* empty[] = { "Nothing yet. LOCATOR adds a locator (or a loop locator when a loop is set at the playhead); "
+        const char* empty[] = { "Nothing yet. MARKER adds a marker (or a loop marker when a loop is set at the playhead); "
                                 "SKIP once, then again, adds a skip.",
                                 "No hot cues yet. Press an empty pad (A-H) to set one.",
                                 "No phrases. Tracks analysed by rekordbox bring their phrases with them; "
@@ -750,7 +751,7 @@ void PrepView::paintList (juce::Graphics& g, juce::Rectangle<float> r)
                 g.fillPath (p);
             }
             name = editor.cueName (deckIndex, false, e.index);
-            if (name.isEmpty()) name = en > s ? "Loop" : "Locator";
+            if (name.isEmpty()) name = en > s ? "Loop" : "Marker";
         }
         g.setFont (psyched::Fonts::value (11.5f));
         g.setColour (Theme::text);
@@ -1134,7 +1135,7 @@ void PrepView::showEntryMenu (const ListEntry& entry, juce::Rectangle<float> are
     else
     {
         const bool loop = st.locEnd[(size_t) i].load() > st.locStart[(size_t) i].load();
-        m.addSectionHeader (loop ? "Loop locator" : "Locator");
+        m.addSectionHeader (loop ? "Loop marker" : "Marker");
         if (loop) { addLoopModeItems (m, 200, st.locMode[(size_t) i].load(), st.locCycles[(size_t) i].load()); m.addSeparator(); }
         addCueColourItems (m, 100, juce::Colour (st.locColour[(size_t) i].load()));
         m.addSeparator();
@@ -1840,7 +1841,7 @@ namespace
         void paint (juce::Graphics& g) override
         {
             g.fillAll (juce::Colour (0xff141221));
-            psyched::paintLabel (g, "Stem locator - click a stem: no change / fade out / fade in; each has its own way and time",
+            psyched::paintLabel (g, "Stem marker - click a stem: no change / fade out / fade in; each has its own way and time",
                                  getLocalBounds().removeFromTop (22).reduced (8, 0).toFloat(), juce::Justification::centredLeft, Theme::textDim, 9.0f);
             auto r = getLocalBounds().reduced (8);
             r.removeFromTop (18 + 44 + 6);
@@ -1978,7 +1979,7 @@ namespace
         {
             g.fillAll (juce::Colour (0xff141221));
             auto r = getLocalBounds().reduced (8);
-            psyched::paintLabel (g, "Note locator - shows in each deck's NOTES box", r.removeFromTop (16).toFloat(), juce::Justification::centredLeft, Theme::textDim, 9.0f);
+            psyched::paintLabel (g, "Note marker - shows in each deck's NOTES box", r.removeFromTop (16).toFloat(), juce::Justification::centredLeft, Theme::textDim, 9.0f);
             r.removeFromTop (4 + 28 + 8);
             psyched::paintLabel (g, "SHOW BEFORE", r.removeFromTop (24).removeFromLeft (96).toFloat(), juce::Justification::centredLeft, Theme::textFaint, 9.0f);
             r.removeFromTop (4);
@@ -2084,9 +2085,9 @@ void PrepView::showAddMenu (juce::Rectangle<float> area)
     if (track == nullptr) return;
     juce::PopupMenu m;
     m.addSectionHeader ("Add at the playhead");
-    m.addItem (1, "Locator  (a loop locator if a loop is set here)");
-    m.addItem (4, "Loop locator  (" + juce::String (loopBeats, loopBeats < 1.0 ? 2 : 0) + " beats from here)");
-    m.addItem (2, "Stem locator - change the stems from here...");
+    m.addItem (1, "Marker  (a loop marker if a loop is set here)");
+    m.addItem (4, "Loop marker  (" + juce::String (loopBeats, loopBeats < 1.0 ? 2 : 0) + " beats from here)");
+    m.addItem (2, "Stem marker - change the stems from here...");
     m.addItem (3, "Note - a reminder that pops up on the deck...");
     juce::Component::SafePointer<PrepView> safe (this);
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (localAreaToGlobal (area.toNearestInt())),
@@ -2104,13 +2105,53 @@ void PrepView::showAddMenu (juce::Rectangle<float> area)
     });
 }
 
+void PrepView::exportEditAudio (bool withStems)
+{
+    auto t = deck().getLoadedTrack();
+    if (t == nullptr) return;
+    auto stems = deck().getStemsForUi();
+    juce::String name = t->info.displayArtistTitle();
+    if (editor.activeEdit (deckIndex).isNotEmpty()) name << " (" << editor.activeEdit (deckIndex) << ")";
+    name = juce::File::createLegalFileName (name);
+    const auto start = t->info.file.getParentDirectory().getChildFile (name + ".wav");
+    exportChooser = std::make_unique<juce::FileChooser> (withStems ? "Export the mix + stems (each stem gets its own file next to it)" : "Export the mix",
+                                                          start, "*.wav");
+    juce::Component::SafePointer<PrepView> safe (this);
+    exportChooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
+                                  | juce::FileBrowserComponent::warnAboutOverwriting,
+                                [safe, t, stems, withStems] (const juce::FileChooser& fc)
+    {
+        const auto f = fc.getResult();
+        if (safe == nullptr || f == juce::File()) return;
+        struct Job : juce::ThreadWithProgressWindow
+        {
+            Job (LoadedTrack::Ptr tr, StemAudio::Ptr st, juce::File fl, bool ws)
+                : juce::ThreadWithProgressWindow ("Exporting " + fl.getFileNameWithoutExtension(), true, true), track (tr), stems (st), file (fl), withStems (ws) {}
+            void run() override
+            {
+                ok = EditExporter::render (track, stems, file.withFileExtension (""), withStems,
+                                           [this] (float p) { setProgress (p); return ! threadShouldExit(); }, error);
+            }
+            void threadComplete (bool cancelled) override
+            {
+                if (ok) juce::AlertWindow::showAsync (juce::MessageBoxOptions().withTitle ("Exported").withMessage (file.getFullPathName()
+                                                          + (withStems ? "\n(+ a file per stem next to it)" : "")).withButton ("OK"), nullptr);
+                else if (! cancelled) juce::AlertWindow::showAsync (juce::MessageBoxOptions().withTitle ("Export failed").withMessage (error).withButton ("OK"), nullptr);
+                delete this;
+            }
+            LoadedTrack::Ptr track; StemAudio::Ptr stems; juce::File file; bool withStems; bool ok = false; juce::String error;
+        };
+        (new Job (t, stems, f.withFileExtension ("wav"), withStems))->launchThread();
+    });
+}
+
 void PrepView::showEditVersionMenu (juce::Rectangle<float> area)
 {
     if (track == nullptr) return;
     const auto names = editor.editVersionNames (deckIndex);
     const auto active = editor.activeEdit (deckIndex);
     juce::PopupMenu m;
-    m.addSectionHeader ("Edit versions - skips, loop modes, stem locators, phrase order and repeats");
+    m.addSectionHeader ("Edit versions - skips, loop modes, stem markers, phrase order and repeats");
     for (int i = 0; i < (int) names.size(); ++i)
         m.addItem (10 + i, names[(size_t) i], true, names[(size_t) i] == active);
     m.addItem (1, "Original (the track as recorded)", true, active.isEmpty() && ! editor.hasEdits (deckIndex));
@@ -2129,12 +2170,17 @@ void PrepView::showEditVersionMenu (juce::Rectangle<float> area)
         m.addSubMenu ("Rename", ren);
         m.addSubMenu ("Delete", del);
     }
+    m.addSeparator();
+    const bool stemsReady = deck().getStemsForUi() != nullptr && deck().getStemsForUi()->isComplete();
+    m.addItem (300, "Export as audio: the mix (WAV)...");
+    m.addItem (301, "Export as audio: the mix + each stem (WAV)" + juce::String (stemsReady ? "..." : " - needs stems"), stemsReady);
     juce::Component::SafePointer<PrepView> safe (this);
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (localAreaToGlobal (area.toNearestInt())),
                      [safe, names, active] (int r)
     {
         if (safe == nullptr || r == 0) return;
         auto& ed = safe->editor;
+        if (r == 300 || r == 301) { safe->exportEditAudio (r == 301); return; }
         if (r == 1) ed.applyNoEdits (deckIndex);
         else if (r == 2)
             safe->askText ("Name this edit version (e.g. Radio edit, Extended, Peak-time)", {}, [safe] (juce::String n)

@@ -22,6 +22,14 @@ juce::String MidiBinding::describe() const
         default: break;
     }
     if (invert) s << " inv";
+    if (press == 1) s << " (short)";
+    if (press == 2) s << " (long)";
+    if (hasModifier())
+    {
+        MidiBinding m;
+        m.channel = modChannel; m.type = modType; m.number = modNumber;
+        s = "[" + m.describe() + "] + " + s;
+    }
     return s;
 }
 
@@ -39,6 +47,13 @@ juce::var MidiBinding::toVar() const
     o->setProperty ("sensitivity", sensitivity);
     if (ledOn != 127) o->setProperty ("ledOn", ledOn);
     if (ledOff != 0) o->setProperty ("ledOff", ledOff);
+    if (press != 0) o->setProperty ("press", press);
+    if (hasModifier())
+    {
+        o->setProperty ("modType", modType == Type::note ? "note" : "cc");
+        o->setProperty ("modChannel", modChannel);
+        o->setProperty ("modNumber", modNumber);
+    }
     return juce::var (o);
 }
 
@@ -59,6 +74,13 @@ MidiBinding MidiBinding::fromVar (const juce::var& v)
     if (b.sensitivity == 0.0) b.sensitivity = 1.0;
     b.ledOn = v.hasProperty ("ledOn") ? juce::jlimit (0, 127, (int) v["ledOn"]) : 127;
     b.ledOff = v.hasProperty ("ledOff") ? juce::jlimit (0, 127, (int) v["ledOff"]) : 0;
+    b.press = juce::jlimit (0, 2, (int) v.getProperty ("press", 0));
+    if (v.hasProperty ("modNumber"))
+    {
+        b.modType = v["modType"].toString() == "cc" ? Type::cc : Type::note;
+        b.modChannel = juce::jlimit (1, 16, (int) v["modChannel"]);
+        b.modNumber = juce::jlimit (0, 127, (int) v["modNumber"]);
+    }
     return b;
 }
 
@@ -354,6 +376,26 @@ void MidiManager::finishLearn()
         action = learnAction;
     }
 
+    // A button pressed while another was held: offer the combo (held + pressed) as well, as the best guess
+    {
+        std::vector<Candidate> extra;
+        for (auto& c : cands)
+            for (auto& h : c.heldWith)
+            {
+                bool isCand = false;
+                for (auto& o : cands) isCand = isCand || (o.b.device == h.device && o.b.type == h.type && o.b.channel == h.channel && o.b.number == h.number && &o == &c);
+                if (isCand || h.type == MidiBinding::Type::pitchBend) continue;
+                auto combo = c;
+                combo.heldWith.clear();
+                combo.b.modType = h.type;
+                combo.b.modChannel = h.channel;
+                combo.b.modNumber = h.number;
+                extra.push_back (combo);
+            }
+        // the held button on its own isn't a choice when it was held before listening began
+        for (auto& e : extra) cands.push_back (e);
+    }
+
     if (cands.size() == 1)
     {
         {
@@ -378,14 +420,16 @@ void MidiManager::finishLearn()
         const bool isNote = c.b.type == MidiBinding::Type::note;
         const int presses = (int) std::count_if (c.values.begin(), c.values.end(), [] (int v) { return v > 0; });
         juce::String what;
-        if (isNote) what = presses <= 1 ? "pressed once" : "pressed " + juce::String (presses) + "x";
+        if (c.b.hasModifier()) what = "combo: hold the first, press the second";
+        else if (isNote) what = presses <= 1 ? "pressed once" : "pressed " + juce::String (presses) + "x";
         else if (c.b.type == MidiBinding::Type::pitchBend) what = "moved";
         else if (distinct.size() <= 2) what = "button / touch";
         else what = "turned / moved (" + juce::String ((int) c.values.size()) + " messages)";
 
         double score = 0.0;
         if (kind == ActionKind::button)
-            score = (isNote ? 100.0 : 0.0) + (distinct.size() <= 2 ? 50.0 : 0.0) - (double) c.values.size() - (c.firstMs - cands.front().firstMs) * 0.01;
+            score = (isNote ? 100.0 : 0.0) + (distinct.size() <= 2 ? 50.0 : 0.0) - (double) c.values.size() - (c.firstMs - cands.front().firstMs) * 0.01
+                  + (c.b.hasModifier() ? 500.0 + (c.firstMs - cands.front().firstMs) * 0.02 : 0.0);
         else
             score = (double) distinct.size() * 10.0 + (double) c.values.size() - (isNote ? 1000.0 : 0.0);
         if (score > bestScore) { bestScore = score; best = (int) i; }
@@ -450,6 +494,25 @@ void MidiManager::handleIncomingMidiMessage (juce::MidiInput* source, const juce
     else return;
 
     ++messageCounter;
+
+    // Buttons held down right now (for combos: SHIFT + LOAD ...)
+    const auto ctlKey = device + "|" + juce::String ((int) type) + "|" + juce::String (ch) + "|" + juce::String (number);
+    std::vector<MidiBinding> heldNow;
+    {
+        const juce::ScopedLock sl (learnLock);
+        for (auto& [k, hb] : held) if (k != ctlKey) heldNow.push_back (hb);
+        const bool buttonLike = type == MidiBinding::Type::note || (type == MidiBinding::Type::cc && (raw == 127 || raw == 0));
+        if (buttonLike)
+        {
+            if (raw > 0)
+            {
+                MidiBinding hb;
+                hb.device = device; hb.channel = ch; hb.type = type; hb.number = number;
+                held[ctlKey] = hb;
+            }
+            else held.erase (ctlKey);
+        }
+    }
 
     // --- Monitor ------------------------------------------------------------
     {
@@ -517,6 +580,7 @@ void MidiManager::handleIncomingMidiMessage (juce::MidiInput* source, const juce
                 return;   // a release on its own isn't a control being pressed
 
             Candidate c;
+            c.heldWith = heldNow;
             c.b.actionId = learnAction;
             c.b.device = device;
             c.b.channel = ch;
@@ -531,11 +595,44 @@ void MidiManager::handleIncomingMidiMessage (juce::MidiInput* source, const juce
     }
 
     // --- Dispatch --------------------------------------------------------------
-    struct Hit { const ActionDef* def; ActionValue v; };
+    struct Hit { const ActionDef* def; ActionValue v; bool combo; int press; };
+    const bool isPress = (type == MidiBinding::Type::note && raw > 0) || (type == MidiBinding::Type::cc && raw > 0);
+    const bool isLift = (type == MidiBinding::Type::note && raw == 0) || (type == MidiBinding::Type::cc && raw == 0);
+
+    // Short / long presses: the release (or holding past the long-press time) decides which one fires
+    if (isLift)
+    {
+        PendingPress pp;
+        bool had = false;
+        {
+            const juce::ScopedLock sl (learnLock);
+            if (auto it = pendingPresses.find (ctlKey); it != pendingPresses.end()) { pp = it->second; pendingPresses.erase (it); had = true; }
+        }
+        if (had)
+        {
+            if (pp.longFired) firePending (pp.longHits, false);
+            else { firePending (pp.shortHits, true); firePending (pp.shortHits, false); }
+        }
+    }
     juce::Array<Hit> hits;
+
+    // A button's release goes to whatever its press went to (even if the combo's held button was let go first)
+    std::vector<juce::String> releaseTo;
+    if (isLift)
+    {
+        const juce::ScopedLock sl (learnLock);
+        if (auto it = pressedActions.find (ctlKey); it != pressedActions.end()) { releaseTo = it->second; pressedActions.erase (it); }
+    }
 
     {
         const juce::ScopedLock sl (bindingLock);
+        auto modHeld = [&] (const MidiBinding& b)
+        {
+            for (auto& h : heldNow)
+                if (h.type == b.modType && h.channel == b.modChannel && h.number == b.modNumber && (b.device.isEmpty() || h.device == b.device))
+                    return true;
+            return false;
+        };
         for (auto& b : bindings)
         {
             if (b.channel != ch || b.type != type) continue;
@@ -549,6 +646,11 @@ void MidiManager::handleIncomingMidiMessage (juce::MidiInput* source, const juce
             if (def == nullptr) continue;
             if (def->deck >= 0 && def->deck < 2 && deckDevice[(size_t) def->deck].isNotEmpty() && deckDevice[(size_t) def->deck] != device)
                 continue;   // this deck is driven by another controller
+            if (! releaseTo.empty())
+            {
+                if (std::find (releaseTo.begin(), releaseTo.end(), b.actionId) == releaseTo.end()) continue;
+            }
+            else if (b.hasModifier() && ! modHeld (b)) continue;
 
             ActionValue v;
             double value = raw / 127.0;
@@ -592,8 +694,39 @@ void MidiManager::handleIncomingMidiMessage (juce::MidiInput* source, const juce
                 if (v.delta == 0.0) continue;
             }
 
-            hits.add ({ def, v });
+            hits.add ({ def, v, b.hasModifier(), def->kind == ActionKind::button ? b.press : 0 });
         }
+    }
+
+    // A combo that matches takes over the control: SHIFT + LOAD ejects instead of loading
+    bool anyCombo = false;
+    for (auto& h : hits) anyCombo = anyCombo || h.combo;
+    if (anyCombo && releaseTo.empty())
+        hits.removeIf ([] (const Hit& h) { return ! h.combo; });
+
+    if (isPress)
+    {
+        PendingPress pp;
+        pp.ms = juce::Time::getMillisecondCounterHiRes();
+        for (auto& h : hits)
+            if (h.press == 1) pp.shortHits.push_back ({ h.def, h.v });
+            else if (h.press == 2) pp.longHits.push_back ({ h.def, h.v });
+        if (! pp.shortHits.empty() || ! pp.longHits.empty())
+        {
+            const juce::ScopedLock sl (learnLock);
+            pendingPresses[ctlKey] = pp;
+        }
+        hits.removeIf ([] (const Hit& h) { return h.press != 0; });
+    }
+    else if (isLift)
+        hits.removeIf ([] (const Hit& h) { return h.press != 0; });
+
+    if (isPress && ! hits.isEmpty())
+    {
+        std::vector<juce::String> ids;
+        for (auto& h : hits) ids.push_back (h.def->id);
+        const juce::ScopedLock sl (learnLock);
+        pressedActions[ctlKey] = ids;
     }
 
     for (auto& h : hits)
@@ -619,15 +752,44 @@ std::vector<MidiManager::SeenControl> MidiManager::getSeenControls() const
     return r;
 }
 
+void MidiManager::firePending (const std::vector<std::pair<const ActionDef*, ActionValue>>& hits, bool down)
+{
+    for (auto [def, v] : hits)
+    {
+        v.down = down;
+        if (def != nullptr) router.perform (*def, v);
+    }
+}
+
 void MidiManager::timerCallback()
 {
+    // Long presses: held past the long-press time
+    {
+        std::vector<std::vector<std::pair<const ActionDef*, ActionValue>>> fire;
+        {
+            const juce::ScopedLock sl (learnLock);
+            const double now = juce::Time::getMillisecondCounterHiRes();
+            for (auto& [k, pp] : pendingPresses)
+                if (! pp.longFired && ! pp.longHits.empty() && now - pp.ms >= longPressMs.load())
+                {
+                    pp.longFired = true;
+                    fire.push_back (pp.longHits);
+                }
+        }
+        for (auto& f : fire) firePending (f, true);
+    }
+
     // Finish learning continuous / encoder controls after a short listening window.
     bool finish = false;
     {
         const juce::ScopedLock sl (learnLock);
         // listen a little after the first control so a "touch" followed by a "turn" are both heard
-        finish = learnAction.isNotEmpty() && ! learnCands.empty() && ! choosing
-                 && juce::Time::getMillisecondCounterHiRes() - learnFirstMs > 650.0;
+        // ... and while a button heard is still held down (the first half of a combo), keep listening for up to 5 s
+        bool stillHeld = false;
+        for (auto& c : learnCands)
+            stillHeld = stillHeld || held.count (c.b.device + "|" + juce::String ((int) c.b.type) + "|" + juce::String (c.b.channel) + "|" + juce::String (c.b.number)) > 0;
+        const double el = juce::Time::getMillisecondCounterHiRes() - learnFirstMs;
+        finish = learnAction.isNotEmpty() && ! learnCands.empty() && ! choosing && el > 650.0 && (! stillHeld || el > 5000.0);
     }
     if (finish) finishLearn();
 

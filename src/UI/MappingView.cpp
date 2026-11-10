@@ -106,6 +106,25 @@ MappingView::MappingView (MidiManager& m, std::function<void()> saveFn) : midi (
         table.repaint();
     };
 
+    addAndMakeVisible (pressBox);
+    pressBox.addItemList ({ "Any press", "Short press", "Long press" }, 1);
+    pressBox.setTooltip ("One button, two functions: map both to it (LEARN + ADD), then make one Short and the other Long. "
+                         "Long = held past the long-press time (Settings > CONTROLLER)");
+    pressBox.onChange = [this]
+    {
+        auto* a = selectedAction();
+        if (a == nullptr) return;
+        auto all = midi.getBindings();
+        for (int i = 0; i < (int) all.size(); ++i)
+            if (all[(size_t) i].actionId == a->id)
+            {
+                all[(size_t) i].press = pressBox.getSelectedId() - 1;
+                midi.updateBinding (i, all[(size_t) i]);
+            }
+        save();
+        table.repaint();
+    };
+
     addAndMakeVisible (sensitivity);
     sensitivity.setSliderStyle (juce::Slider::LinearHorizontal);
     sensitivity.setScrollWheelEnabled (false);
@@ -286,6 +305,8 @@ void MappingView::resized()
     ledButton.setBounds (bottom.removeFromLeft (70).reduced (0, 3));
     bottom.removeFromLeft (12);
     modeBox.setBounds (bottom.removeFromLeft (210).reduced (0, 4));
+    bottom.removeFromLeft (8);
+    pressBox.setBounds (bottom.removeFromLeft (130).reduced (0, 4));
     bottom.removeFromLeft (12);
     sensLabel.setBounds (bottom.removeFromLeft (76));
     sensitivity.setBounds (bottom.removeFromLeft (220).reduced (0, 4));
@@ -419,7 +440,9 @@ void MappingView::updateDetail()
         modeBox.setSelectedId ((int) bs.front().mode + 1, juce::dontSendNotification);
         invertButton.setToggleState (bs.front().invert, juce::dontSendNotification);
         sensitivity.setValue (bs.front().sensitivity, juce::dontSendNotification);
+        pressBox.setSelectedId (bs.front().press + 1, juce::dontSendNotification);
     }
+    pressBox.setEnabled (a->kind == ActionKind::button && ! bs.empty());
     const bool encoder = a->kind == ActionKind::encoder;
     sensitivity.setEnabled (encoder);
     sensLabel.setEnabled (encoder);
