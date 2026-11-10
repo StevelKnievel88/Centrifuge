@@ -48,6 +48,7 @@ MappingView::MappingView (MidiManager& m, std::function<void()> saveFn) : midi (
     stopButton.onClick = [this]
     {
         guidedIndex = -1;
+        pausedGuided = -1;
         midi.cancelLearn();
         skipButton.setVisible (false);
         stopButton.setVisible (false);
@@ -379,8 +380,29 @@ void MappingView::learnSelected (bool add)
     table.repaint();
 }
 
+void MappingView::visibilityChanged()
+{
+    if (! isShowing())
+    {
+        if (guidedIndex >= 0) pausedGuided = guidedIndex;
+        guidedIndex = -1;
+        midi.cancelLearn();
+        return;
+    }
+    if (pausedGuided >= 0 && pausedGuided < (int) guidedSteps.size())
+    {
+        // back on the page: carry on from the step we were on
+        guidedIndex = pausedGuided - 1;
+        pausedGuided = -1;
+        skipButton.setVisible (true);
+        stopButton.setVisible (true);
+        advanceGuided (false);
+    }
+}
+
 void MappingView::startGuided()
 {
+    pausedGuided = -1;
     guidedSteps.clear();
     for (int d = 1; d <= 2; ++d)
     {

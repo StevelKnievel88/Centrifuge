@@ -17,6 +17,9 @@ public:
 
     void resized() override;
     void paint (juce::Graphics&) override;
+    /** Leaving the page stops listening for a control (otherwise every press would keep being learned instead of
+        working); guided setup picks up at the same step when you come back. */
+    void visibilityChanged() override;
 
 private:
     // actions table
@@ -70,6 +73,7 @@ private:
 
     std::vector<juce::String> guidedSteps;
     int guidedIndex = -1;
+    int pausedGuided = -1;
 };
 
 } // namespace orbit
