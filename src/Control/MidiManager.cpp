@@ -248,6 +248,10 @@ bool MidiManager::saveToFile (const juce::File& f) const
     juce::Array<juce::var> skip;
     for (auto& id : getNoMap()) skip.add (id);
     root->setProperty ("dontMap", skip);
+    juce::Array<juce::var> pads;
+    for (auto& p : padColours) pads.add (p.load());
+    root->setProperty ("padColours", pads);
+    root->setProperty ("hotCueColours", hotCueColours.load());
     f.getParentDirectory().createDirectory();
     return f.replaceWithText (juce::JSON::toString (juce::var (root)));
 }
@@ -269,6 +273,9 @@ bool MidiManager::loadFromFile (const juce::File& f)
         noMap.clear();
         if (auto* arr = v["dontMap"].getArray())
             for (auto& id : *arr) noMap.insert (id.toString());
+        if (auto* arr = v["padColours"].getArray())
+            for (int i = 0; i < juce::jmin (numPadColours, arr->size()); ++i) padColours[(size_t) i] = juce::jlimit (0, 127, (int) (*arr)[i]);
+        hotCueColours = (bool) v.getProperty ("hotCueColours", true);
     }
     return true;
 }
@@ -803,27 +810,133 @@ void MidiManager::timerCallback()
         sendLeds();
 }
 
+const char* MidiManager::padColourName (int i)
+{
+    static const char* n[numPadColours] = { "Pink", "Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple", "White" };
+    return n[juce::jlimit (0, numPadColours - 1, i)];
+}
+
+juce::Colour MidiManager::padColourRef (int i)
+{
+    return i < 8 ? rekordboxTrackColour (i + 1) : juce::Colours::white;
+}
+
+int MidiManager::padWheelNumber (juce::Colour c, bool dim)
+{
+    // The XDJ-XZ's pad colours run round the colour wheel: blue > cyan > green > yellow > orange > red > pink >
+    // purple > back to blue, over 1 - 63 (bright) and again over 64 - 127 (dim).
+    if (c.getSaturation() < 0.15f) return -1;   // no white / grey on the wheel
+    const double hue = c.getHue() * 360.0;
+    double pos = std::fmod (240.0 - hue + 720.0, 360.0) / 360.0;   // 0 at blue, going towards cyan
+    const int n = 1 + (int) std::lround (pos * 62.0);
+    return dim ? juce::jmin (127, n + 63) : n;
+}
+
+int MidiManager::padNumberFor (juce::Colour c) const
+{
+    // named colours you've set take priority; otherwise straight from the colour wheel
+    bool anySet = false;
+    for (auto& p : padColours) anySet = anySet || p.load() > 0;
+    if (! anySet) return padWheelNumber (c, false);
+    int best = -1;
+    float bestD = 1.0e9f;
+    for (int i = 0; i < numPadColours; ++i)
+    {
+        const int n = padColours[(size_t) i].load();
+        if (n <= 0) continue;
+        const auto r = padColourRef (i);
+        // hue matters most; white is matched by low saturation
+        const float dh = std::abs (c.getHue() - r.getHue()), hueD = juce::jmin (dh, 1.0f - dh);
+        const float d = (i == 8 ? 0.0f : hueD * 4.0f) + std::abs (c.getSaturation() - r.getSaturation()) + 0.5f * std::abs (c.getBrightness() - r.getBrightness());
+        if (d < bestD) { bestD = d; best = n; }
+    }
+    return best;
+}
+
+void MidiManager::sendToXdj (const juce::MidiMessage& m)
+{
+    for (auto& [name, out] : outputs)
+        if (name.containsIgnoreCase ("XDJ"))
+            out->sendMessageNow (m);
+}
+
+void MidiManager::sendJogDisplays()
+{
+    // Channel 12 CCs (from the XDJ-XZ MIDI message list): position bar (0 - 359 degrees, MSB cc d / LSB cc 32 + d),
+    // cue marker (MSB cc 4 + d / LSB cc 36 + d, 0x7F 0x7F hides it); the LOAD buttons light with note d on channel 12.
+    constexpr double secondsPerRev = 60.0 / (100.0 / 3.0);   // 33 1/3 rpm
+    for (int d = 0; d < 2; ++d)
+    {
+        const auto& st = router.deckState (d);
+        const bool loaded = st.trackSerial.load() != 0;
+        auto angle = [&] (double sec) { const double r = std::fmod (sec / secondsPerRev, 1.0); return juce::jlimit (0, 359, (int) ((r < 0 ? r + 1.0 : r) * 360.0)); };
+        const int pos = loaded ? angle (st.positionSec.load()) : 0;
+        const int cue = loaded ? angle (st.cuePointSec.load()) : 0x3fff;
+        const int load = st.playing.load() ? 0 : 127;   // LOAD lights on a deck that isn't playing (safe to load)
+        const int vals[3] = { pos, cue, load };
+        for (int k = 0; k < 3; ++k)
+        {
+            auto& c = jogCache[(size_t) (d * 3 + k)];
+            if (c == vals[k]) continue;
+            c = vals[k];
+            if (k == 2) { sendToXdj (juce::MidiMessage::noteOn (12, d, (juce::uint8) vals[k])); continue; }
+            const int base = k == 0 ? d : 4 + d;
+            const int msb = vals[k] == 0x3fff ? 0x7f : vals[k] >> 7, lsb = vals[k] == 0x3fff ? 0x7f : vals[k] & 0x7f;
+            sendToXdj (juce::MidiMessage::controllerEvent (12, base, msb));
+            sendToXdj (juce::MidiMessage::controllerEvent (12, base + 32, lsb));
+        }
+    }
+}
+
 void MidiManager::sendLeds()
 {
+    if (jogDisplay.load()) sendJogDisplays();
     auto all = getBindings();
+    std::set<juce::String> heldNow;
+    {
+        const juce::ScopedLock sl (learnLock);
+        for (auto& [k, h] : held) heldNow.insert (k);
+    }
     for (auto& b : all)
     {
         const auto* def = findAction (b.actionId);
-        if (def == nullptr || ! def->hasLed || b.type == MidiBinding::Type::pitchBend) continue;
+        if (def == nullptr || b.type == MidiBinding::Type::pitchBend || def->kind != ActionKind::button) continue;   // buttons / pads only
 
-        const bool on = router.ledState (*def);
-        const auto key = b.device + "|" + b.describe();
-        auto it = ledCache.find (key);
-        if (it != ledCache.end() && it->second == on) continue;
-        ledCache[key] = on;
+        int value;
+        const auto name = b.actionId.fromFirstOccurrenceOf (".", false, false);
+        if (def->deck >= 0 && def->deck < 2 && name.startsWith ("hotcue.") && ! name.endsWith (".delete"))
+        {
+            // hot cue pads: the cue's own colour (when pad colours are set), dim when empty
+            const int idx = name.fromFirstOccurrenceOf (".", false, false).getIntValue() - 1;
+            const auto& st = router.deckState (def->deck);
+            const bool set = idx >= 0 && idx < 8 && st.hotStart[(size_t) idx].load() >= 0.0;
+            const int coloured = set && hotCueColours.load() ? padNumberFor (juce::Colour (st.hotColour[(size_t) idx].load())) : -1;
+            value = ! set ? b.ledOff : coloured > 0 ? coloured : b.ledOn;
+        }
+        else if (def->hasLed)
+            value = router.ledState (*def) ? b.ledOn : b.ledOff;
+        else
+        {
+            // one-shot functions (beat jump, delete ...): their unlit colour, lit while pressed
+            const auto key = b.device + "|" + juce::String ((int) b.type) + "|" + juce::String (b.channel) + "|" + juce::String (b.number);
+            bool pressed = false;
+            for (auto& k : heldNow) pressed = pressed || (k.endsWith (key.fromFirstOccurrenceOf ("|", true, false)) && (b.device.isEmpty() || k.startsWith (b.device)));
+            value = pressed ? b.ledOn : b.ledOff;
+        }
 
-        const int value = on ? b.ledOn : b.ledOff;
+        const auto cacheKey = b.device + "|" + b.describe() + "|" + b.actionId;
+        {
+            const juce::ScopedLock sl (bindingLock);
+            auto it = ledCache.find (cacheKey);
+            if (it != ledCache.end() && it->second == value) continue;
+            ledCache[cacheKey] = value;
+        }
         const auto msg = b.type == MidiBinding::Type::note
                            ? juce::MidiMessage::noteOn (b.channel, b.number, (juce::uint8) value)
                            : juce::MidiMessage::controllerEvent (b.channel, b.number, value);
 
-        for (auto& [name, out] : outputs)
-            if (b.device.isEmpty() || name == b.device)
+        for (auto& [nm, out] : outputs)
+            if (b.device.isEmpty() || nm == b.device)
                 out->sendMessageNow (msg);
     }
 }

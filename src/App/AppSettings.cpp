@@ -175,6 +175,8 @@ void AppSettings::load()
     }
     boolean ("throwOn", throwOn);
     num ("longPressSec", longPressSec);
+    boolean ("hotCuePadColours", hotCuePadColours);
+    boolean ("jogDisplay", jogDisplay);
     longPressSec = juce::jlimit (0.25, 1.0, longPressSec);
     num ("markerScale", markerScale);
     markerScale = juce::jlimit (0.75f, 3.0f, markerScale);
@@ -294,6 +296,8 @@ void AppSettings::save() const
     }
     o->setProperty ("throwOn", throwOn);
     o->setProperty ("longPressSec", longPressSec);
+    o->setProperty ("hotCuePadColours", hotCuePadColours);
+    o->setProperty ("jogDisplay", jogDisplay);
     o->setProperty ("stemsLossless", stemsLossless);
     o->setProperty ("markerScale", (double) markerScale);
     o->setProperty ("previewColour", (juce::int64) previewColour);

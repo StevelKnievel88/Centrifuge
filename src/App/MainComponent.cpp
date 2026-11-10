@@ -320,6 +320,8 @@ void MainComponent::applySettings()
     midi.setDeckControllers (settings.deckController[0], settings.deckController[1]);
     midi.setLedFeedbackEnabled (settings.ledFeedback);
     midi.setLongPressSeconds (settings.longPressSec);
+    midi.setHotCuesInColour (settings.hotCuePadColours);
+    midi.setJogDisplay (settings.jogDisplay);
     waves.setVisibleSeconds (settings.visibleSeconds);
     waves.setMaxFps (settings.maxFps);
     for (int d = 0; d < 2; ++d)

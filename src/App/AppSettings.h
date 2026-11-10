@@ -82,7 +82,9 @@ struct AppSettings
     bool quantize = true;              // quantize on for both decks at start-up
     double jogTicksPerRev = 720.0;
     bool ledFeedback = true;
-    double longPressSec = 0.5;         // a button held this long is a long press (0.25 - 1 s)
+    double longPressSec = 0.5;
+    bool hotCuePadColours = true;      // hot cue pads light in their cue's colour
+    bool jogDisplay = true;            // drive the XDJ-XZ's jog screens (position bar, cue marker) and LOAD lights         // a button held this long is a long press (0.25 - 1 s)
     // Vinyl speed adjust, per deck: brake (stop), start, release after a scratch (seconds), and brake / start on or off
     std::array<double, 2> brakeSec { 0.8, 0.8 }, startSec { 0.4, 0.4 }, releaseSec { 0.0, 0.0 };
     std::array<bool, 2> brakeOn { false, false }, startOn { false, false };

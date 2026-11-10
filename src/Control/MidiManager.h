@@ -119,6 +119,22 @@ public:
 
     // LEDs --------------------------------------------------------------------
     void setLedFeedbackEnabled (bool on) { ledFeedback = on; }
+    /** Pad colours by name (the XDJ-XZ's pads light in a colour from the number sent). 0 = not set. Saved with the mapping. */
+    static constexpr int numPadColours = 9;
+    static const char* padColourName (int i);
+    static juce::Colour padColourRef (int i);
+    int getPadColour (int i) const { return padColours[(size_t) i].load(); }
+    void setPadColour (int i, int number) { padColours[(size_t) i] = juce::jlimit (0, 127, number); clearLedCache(); }
+    /** The pad colour number nearest to a colour (among the ones set), or -1 if none are set. */
+    int padNumberFor (juce::Colour c) const;
+    /** A colour's number on the XDJ-XZ's pad colour wheel (bright 1 - 63, dim 64 - 127), -1 for white / grey. */
+    static int padWheelNumber (juce::Colour c, bool dim);
+    bool hotCuesInColour() const { return hotCueColours.load(); }
+    void setHotCuesInColour (bool b) { hotCueColours = b; clearLedCache(); }
+    /** Jog screens on the XDJ-XZ: the position bar turns with the track, and the cue marker shows the cue point. */
+    void setJogDisplay (bool on) { jogDisplay = on; jogCache.fill (-1); }
+    void clearLedCache() { const juce::ScopedLock sl (bindingLock); ledCache.clear(); jogCache.fill (-1); }
+
     /** How long a press has to be held to count as a long press (seconds, 0.25 - 1). */
     void setLongPressSeconds (double s) { longPressMs = juce::jlimit (250.0, 1000.0, s * 1000.0); }
 
@@ -153,6 +169,11 @@ private:
     struct PendingPress { double ms = 0.0; std::vector<std::pair<const ActionDef*, ActionValue>> shortHits, longHits; bool longFired = false; };
     std::map<juce::String, PendingPress> pendingPresses;   // short / long: waiting to see how long the button is held
     std::atomic<double> longPressMs { 500.0 };
+    std::array<std::atomic<int>, numPadColours> padColours {};
+    std::atomic<bool> hotCueColours { true }, jogDisplay { true };
+    std::array<int, 12> jogCache { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+    void sendToXdj (const juce::MidiMessage& m);
+    void sendJogDisplays();
     void firePending (const std::vector<std::pair<const ActionDef*, ActionValue>>& hits, bool down);
     std::vector<Candidate> learnCands;
     std::vector<LearnChoice> pendingChoice;
@@ -173,7 +194,7 @@ private:
     std::map<juce::String, SeenControl> seen;
 
     // LED cache
-    std::map<juce::String, bool> ledCache;
+    std::map<juce::String, int> ledCache;
     std::atomic<bool> ledFeedback { true };
     int scanCountdown = 0;
 };

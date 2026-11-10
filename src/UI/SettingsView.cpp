@@ -247,6 +247,14 @@ public:
         add (&jogTicks, 28, "Jog ticks / revolution");
         add (&leds, 28, {});
         leds.setButtonText ("Send LED feedback to the XDJ-XZ");
+        add (&padColoursOn, 28, {});
+        padColoursOn.setButtonText ("Hot cue pads light in their cue's colour (XDJ-XZ)");
+        padColoursOn.setToggleState (settings.hotCuePadColours, juce::dontSendNotification);
+        padColoursOn.onClick = [this] { settings.hotCuePadColours = padColoursOn.getToggleState(); onChanged(); };
+        add (&jogScreens, 28, {});
+        jogScreens.setButtonText ("XDJ-XZ jog screens show the track turning and the cue point; LOAD lights on decks that aren't playing");
+        jogScreens.setToggleState (settings.jogDisplay, juce::dontSendNotification);
+        jogScreens.onClick = [this] { settings.jogDisplay = jogScreens.getToggleState(); onChanged(); };
         add (&longPress, 28, "Long press time (s)");
         setupSlider (longPress, 0.25, 1.0, 0.05, settings.longPressSec);
         longPress.onValueChange = [this] { settings.longPressSec = longPress.getValue(); onChanged(); };
@@ -722,6 +730,7 @@ private:
     juce::ToggleButton throwOn, autoGain;
     juce::Slider throwSpeed, markerSize, longPress;
     juce::ComboBox stemFormat;
+    juce::ToggleButton padColoursOn, jogScreens;
     std::unique_ptr<juce::FileChooser> chooser;
 };
 

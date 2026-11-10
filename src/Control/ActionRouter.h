@@ -26,6 +26,8 @@ public:
     double getLoopBeats (int deck) const { return loopBeats[(size_t) deck].load(); }
     int getPitchRangePercent (int deck) const;
     bool isVinylMode (int deck) const { return vinyl[(size_t) deck].load(); }
+    /** A deck's published state (for controller displays and lights). */
+    const Deck::Published& deckState (int deck) const { return engine.deck (deck).state(); }
 
     void setJogSensitivity (double ticksPerRevolution);
 

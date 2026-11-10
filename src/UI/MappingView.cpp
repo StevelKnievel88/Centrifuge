@@ -666,9 +666,27 @@ void MappingView::showLedEditor()
             }
             on.setValue (b.ledOn, juce::dontSendNotification);
             off.setValue (b.ledOff, juce::dontSendNotification);
+            // quick colours (the XDJ-XZ's colour wheel): bright for lit, dim for unlit, or off
+            for (int row = 0; row < 2; ++row)
+                for (int i = 0; i < 9; ++i)
+                {
+                    auto* sw = new juce::TextButton();
+                    swatches.add (sw);
+                    addAndMakeVisible (sw);
+                    const bool isOff = i == 8;
+                    const auto col = isOff ? juce::Colour (0xff202020) : rekordboxTrackColour (i + 1);
+                    sw->setColour (juce::TextButton::buttonColourId, row == 0 ? col : col.darker (0.6f));
+                    sw->setButtonText (isOff ? (row == 0 ? "MAX" : "OFF") : juce::String());
+                    sw->setTooltip (isOff ? (row == 0 ? "Full (127)" : "Off (0)") : juce::String (MidiManager::padColourName (i)) + (row == 0 ? " (bright)" : " (dim)"));
+                    sw->onClick = [this, row, i, isOff, col]
+                    {
+                        const int n = isOff ? (row == 0 ? 127 : 0) : MidiManager::padWheelNumber (col, row == 1);
+                        (row == 0 ? on : off).setValue (n, juce::sendNotificationSync);
+                    };
+                }
             on.onValueChange = [this] { apply(); view.midi.sendTestLed (binding, (int) on.getValue()); };
             off.onValueChange = [this] { apply(); view.midi.sendTestLed (binding, (int) off.getValue()); };
-            setSize (340, 92);
+            setSize (380, 152);
         }
         void apply()
         {
@@ -689,14 +707,21 @@ void MappingView::showLedEditor()
             g.setColour (Theme::textDim);
             g.setFont (Theme::font (12.0f));
             g.drawText ("Lit", 8, 12, 60, 20, juce::Justification::centredLeft);
-            g.drawText ("Unlit", 8, 46, 60, 20, juce::Justification::centredLeft);
-            g.drawText ("(pads light in the colour for the value)", 8, 72, 320, 16, juce::Justification::centredLeft);
+            g.drawText ("Unlit", 8, 70, 60, 20, juce::Justification::centredLeft);
+            g.drawText ("(XDJ-XZ pads: 1-63 bright colours, 64-127 dim; other buttons just light)", 8, 132, 370, 16, juce::Justification::centredLeft);
         }
-        void resized() override { on.setBounds (60, 10, 270, 24); off.setBounds (60, 44, 270, 24); }
+        void resized() override
+        {
+            on.setBounds (60, 10, 310, 24);
+            off.setBounds (60, 68, 310, 24);
+            for (int k = 0; k < swatches.size(); ++k)
+                swatches[k]->setBounds (60 + (k % 9) * 34, (k / 9 == 0 ? 38 : 96), 30, 22);
+        }
         MappingView& view;
         juce::String actionId;
         MidiBinding binding;
         juce::Slider on, off;
+        juce::OwnedArray<juce::TextButton> swatches;
     };
     juce::CallOutBox::launchAsynchronously (std::make_unique<Editor> (*this, a->id, bs.front()), ledButton.getScreenBounds(), nullptr);
 }
