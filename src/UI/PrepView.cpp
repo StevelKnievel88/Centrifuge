@@ -242,11 +242,13 @@ void PrepView::paint (juce::Graphics& g)
                 g.setColour (juce::Colours::black.withAlpha (0.45f));
                 g.fillRect (r.withRight (xOfD (t)));
                 if (overviewGrid) paintOverviewGrid (g, r, track->grid, st.lengthSec.load(), &fold);
+                {
+                    // the part the zoomed waveform shows (under the marks, above the phrases)
+                    const double vis = waves.getVisibleSeconds();
+                    const double ph = waves.getPlayheadPosition();
+                    paintOverviewViewBox (g, r, xOfD (t - vis * ph), xOfD (t + vis * (1.0 - ph)), Theme::deckColour (deckIndex), ! track->phrases.empty());
+                }
                 paintOverviewMarks (g, r, TrackMarks::fromDeck (st, track->phrases, track.get()), false, &fold);
-                // the part the zoomed waveform shows
-                const double vis = waves.getVisibleSeconds();
-                g.setColour (Theme::deckColour (deckIndex).withAlpha (0.16f));
-                g.fillRect (juce::Rectangle<float>::leftTopRightBottom (xOfD (t - vis * 0.3), r.getY(), xOfD (t + vis * 0.7), r.getBottom()));
                 if (st.stemsReady.load() && st.stemsProgress.load() < 0.999f)
                 {
                     auto lab = juce::Rectangle<float> (r.getRight() - 112.0f, r.getBottom() - 13.0f, 112.0f, 13.0f);
@@ -471,14 +473,39 @@ int PrepView::phraseIndexOf (int kind, int index) const
     return index >= 0 && index < (int) order.size() ? order[(size_t) index] : -1;
 }
 
-void PrepView::setPlayOrder (const std::vector<int>& order)
+std::vector<int> PrepView::copyRepeats() const
+{
+    // per play-order slot: a copy's own repeat count (0 for a section's first entry)
+    const auto& ph = editor.phrases (deckIndex);
+    const auto& arr = editor.arrangement (deckIndex);
+    const auto order = phrasePlayOrder();
+    std::vector<int> reps (order.size(), 0);
+    std::vector<bool> seen (ph.size(), false);
+    for (size_t k = 0; k < order.size(); ++k)
+    {
+        const int i = order[k];
+        if (seen[(size_t) i] && k < arr.size()) reps[k] = juce::jmax (1, copyRepeatsOf (arr[k], ph[(size_t) i].startSec));
+        seen[(size_t) i] = true;
+    }
+    return reps;
+}
+
+void PrepView::setPlayOrder (const std::vector<int>& order, std::vector<int> reps)
 {
     // Saved as the phrases' start times in play order (back to "as the track goes" if that's what it is)
+    reps.resize (order.size(), 0);
     bool natural = (int) order.size() == (int) editor.phrases (deckIndex).size();
     for (int i = 0; natural && i < (int) order.size(); ++i) natural = order[(size_t) i] == i;
     std::vector<double> times;
+    std::vector<bool> seen (editor.phrases (deckIndex).size(), false);
     if (! natural)
-        for (int i : order) times.push_back (editor.phrases (deckIndex)[(size_t) i].startSec);
+        for (size_t k = 0; k < order.size(); ++k)
+        {
+            const int i = order[k];
+            const double t = editor.phrases (deckIndex)[(size_t) i].startSec;
+            times.push_back (seen[(size_t) i] && reps[k] > 1 ? copyTimeWithRepeats (t, reps[k]) : t);
+            seen[(size_t) i] = true;
+        }
     editor.setArrangement (deckIndex, times);
 }
 
@@ -642,8 +669,8 @@ void PrepView::paintList (juce::Graphics& g, juce::Rectangle<float> r)
             // phrase repeat: click to step x1 > x2 > x3 > x4 > x8
             auto rep = row.removeFromRight (30.0f).reduced (2.0f, 4.0f);
             row.removeFromRight (2.0f);
-            const bool lit = p.repeats > 1;
-            chip (g, rep, "x" + juce::String (p.repeats), lit, Theme::sync, {});
+            const int shownReps = e.kind == 4 ? juce::jmax (1, copyRepeats()[(size_t) juce::jlimit (0, (int) copyRepeats().size() - 1, e.index)]) : p.repeats;
+            chip (g, rep, "x" + juce::String (shownReps), shownReps > 1, Theme::sync, {});
             regions.push_back ({ rep, key, 11 });
             // duplicate: another pass of this section straight after it (drag it anywhere)
             auto dup = row.removeFromRight (22.0f).reduced (3.0f, 5.0f);
@@ -900,18 +927,34 @@ void PrepView::mouseDown (const juce::MouseEvent& e)
         auto order = phrasePlayOrder();
         if (slot >= 0 && slot < (int) order.size())
         {
+            auto reps = copyRepeats();
             order.insert (order.begin() + slot + 1, order[(size_t) slot]);
-            setPlayOrder (order);
+            reps.insert (reps.begin() + slot + 1, 1);
+            setPlayOrder (order, reps);
         }
         return;
     }
     if (r->kind == 11 && ! e.mods.isPopupMenu())
     {
-        const int idx = phraseIndexOf (r->action.upToFirstOccurrenceOf (":", false, false).getIntValue(),
-                                       r->action.fromFirstOccurrenceOf (":", false, false).getIntValue());
+        const int kindR = r->action.upToFirstOccurrenceOf (":", false, false).getIntValue();
+        const int slotR = r->action.fromFirstOccurrenceOf (":", false, false).getIntValue();
+        const int idx = phraseIndexOf (kindR, slotR);
+        const int steps[] = { 1, 2, 3, 4, 8 };
+        if (kindR == 4)
+        {
+            // a copy: its own repeats (the section and its other copies keep theirs)
+            auto reps = copyRepeats();
+            if (slotR >= 0 && slotR < (int) reps.size())
+            {
+                int next = 1;
+                for (int k = 0; k < 5; ++k) if (steps[k] == juce::jmax (1, reps[(size_t) slotR])) next = steps[(k + 1) % 5];
+                reps[(size_t) slotR] = next;
+                setPlayOrder (phrasePlayOrder(), reps);
+            }
+            return;
+        }
         if (idx >= 0 && idx < (int) editor.phrases (deckIndex).size())
         {
-            const int steps[] = { 1, 2, 3, 4, 8 };
             const int cur = editor.phrases (deckIndex)[(size_t) idx].repeats;
             int next = 1;
             for (int k = 0; k < 5; ++k) if (steps[k] == cur) next = steps[(k + 1) % 5];
@@ -1044,10 +1087,14 @@ void PrepView::mouseUp (const juce::MouseEvent& e)
         if (from < 0 || from >= (int) order.size()) return;
         const int to = target > from ? target - 1 : target;
         if (to == from) return;
-        const int moving = order[(size_t) from];
+        auto reps = copyRepeats();
+        const int moving = order[(size_t) from], movingReps = reps[(size_t) from];
         order.erase (order.begin() + from);
-        order.insert (order.begin() + juce::jlimit (0, (int) order.size(), to), moving);
-        setPlayOrder (order);
+        reps.erase (reps.begin() + from);
+        const int at = juce::jlimit (0, (int) order.size(), to);
+        order.insert (order.begin() + at, moving);
+        reps.insert (reps.begin() + at, movingReps);
+        setPlayOrder (order, reps);
         return;
     }
     if (resizingList)
@@ -1150,6 +1197,179 @@ void PrepView::askText (const juce::String& title, const juce::String& current, 
     }), true);
 }
 
+namespace
+{
+    /** A small window for the phrase presets: colour, name, order (up / down), remove; add and reset at the bottom. */
+    class PhrasePresetEditor : public juce::Component
+    {
+    public:
+        explicit PhrasePresetEditor (std::function<void()> recolourTrack) : recolour (std::move (recolourTrack))
+        {
+            addAndMakeVisible (viewport);
+            viewport.setViewedComponent (&list, false);
+            viewport.setScrollBarsShown (true, false);
+            for (auto* b : { &add, &reset, &apply }) addAndMakeVisible (*b);
+            add.onClick = [this]
+            {
+                auto l = PhrasePresets::get();
+                juce::String nm = "New phrase";
+                for (int k = 2; std::any_of (l.begin(), l.end(), [&] (auto& e) { return e.name.equalsIgnoreCase (nm); }); ++k) nm = "New phrase " + juce::String (k);
+                l.push_back ({ nm, defaultPhraseColour (nm) });
+                PhrasePresets::set (l);
+                rebuild();
+                if (! rows.empty()) { rows.back()->name.grabKeyboardFocus(); rows.back()->name.selectAll(); }
+                viewport.setViewPosition (0, list.getHeight());
+            };
+            reset.onClick = [this] { PhrasePresets::set (PhrasePresets::factory()); rebuild(); };
+            apply.setTooltip ("Every phrase on this track whose name matches a preset takes the preset's colour");
+            apply.onClick = [this] { if (recolour) recolour(); };
+            rebuild();
+            setSize (360, 420);
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            g.fillAll (juce::Colour (0xff141221));
+            psyched::paintLabel (g, "Phrase presets - colour, name, order", getLocalBounds().removeFromTop (24).reduced (8, 0).toFloat(),
+                                 juce::Justification::centredLeft, Theme::textDim, 9.5f);
+        }
+
+        void resized() override
+        {
+            auto r = getLocalBounds().reduced (8);
+            r.removeFromTop (18);
+            auto bottom = r.removeFromBottom (26);
+            add.setBounds (bottom.removeFromLeft (70));
+            bottom.removeFromLeft (6);
+            apply.setBounds (bottom.removeFromLeft (150));
+            reset.setBounds (bottom.removeFromRight (70));
+            r.removeFromBottom (6);
+            viewport.setBounds (r);
+            layoutRows();
+        }
+
+    private:
+        struct Row : juce::Component
+        {
+            juce::TextButton swatch, up { "^" }, down { "v" }, del { "x" };
+            juce::TextEditor name;
+            Row()
+            {
+                swatch.getProperties().set ("psyched.swatch", true);
+                for (auto* c : { (juce::Component*) &swatch, (juce::Component*) &name, (juce::Component*) &up, (juce::Component*) &down, (juce::Component*) &del })
+                    addAndMakeVisible (*c);
+                name.setFont (Theme::font (13.0f));
+                name.setColour (juce::TextEditor::backgroundColourId, Theme::panelHi);
+                name.setColour (juce::TextEditor::textColourId, Theme::text);
+                name.setColour (juce::TextEditor::outlineColourId, Theme::line);
+            }
+            void resized() override
+            {
+                auto r = getLocalBounds().reduced (0, 2);
+                swatch.setBounds (r.removeFromLeft (28));
+                r.removeFromLeft (6);
+                del.setBounds (r.removeFromRight (24));
+                r.removeFromRight (4);
+                down.setBounds (r.removeFromRight (24));
+                r.removeFromRight (2);
+                up.setBounds (r.removeFromRight (24));
+                r.removeFromRight (6);
+                name.setBounds (r);
+            }
+        };
+
+        void rebuild()
+        {
+            rows.clear();
+            const auto l = PhrasePresets::get();
+            for (int i = 0; i < (int) l.size(); ++i)
+            {
+                auto row = std::make_unique<Row>();
+                row->swatch.setColour (juce::TextButton::buttonColourId, l[(size_t) i].colour);
+                row->name.setText (l[(size_t) i].name, false);
+                row->up.setEnabled (i > 0);
+                row->down.setEnabled (i + 1 < (int) l.size());
+                auto* rp = row.get();
+                row->swatch.onClick = [this, i, rp]
+                {
+                    juce::Component::SafePointer<PhrasePresetEditor> safe (this);
+                    ColourPickerBubble::show (rp->swatch.getScreenBounds(), PhrasePresets::get()[(size_t) i].colour, [safe, i] (juce::Colour c)
+                    {
+                        if (safe == nullptr) return;
+                        auto ll = PhrasePresets::get();
+                        if (i >= (int) ll.size()) return;
+                        ll[(size_t) i].colour = c;
+                        PhrasePresets::set (ll);
+                        safe->rows[(size_t) i]->swatch.setColour (juce::TextButton::buttonColourId, c);
+                    });
+                };
+                auto commitName = [this, i, rp]
+                {
+                    auto ll = PhrasePresets::get();
+                    const auto nm = rp->name.getText().trim();
+                    if (i >= (int) ll.size() || nm.isEmpty() || nm == ll[(size_t) i].name) return;
+                    ll[(size_t) i].name = nm;
+                    PhrasePresets::set (ll);
+                };
+                row->name.onReturnKey = commitName;
+                row->name.onFocusLost = commitName;
+                auto move = [this, i] (int by)
+                {
+                    auto ll = PhrasePresets::get();
+                    const int j = i + by;
+                    if (j < 0 || j >= (int) ll.size()) return;
+                    std::swap (ll[(size_t) i], ll[(size_t) j]);
+                    PhrasePresets::set (ll);
+                    juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<PhrasePresetEditor> (this)] { if (safe != nullptr) safe->rebuild(); });
+                };
+                row->up.onClick = [move] { move (-1); };
+                row->down.onClick = [move] { move (1); };
+                row->del.onClick = [this, i]
+                {
+                    auto ll = PhrasePresets::get();
+                    if (i < (int) ll.size()) ll.erase (ll.begin() + i);
+                    PhrasePresets::set (ll);
+                    juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<PhrasePresetEditor> (this)] { if (safe != nullptr) safe->rebuild(); });
+                };
+                list.addAndMakeVisible (*row);
+                rows.push_back (std::move (row));
+            }
+            layoutRows();
+        }
+
+        void layoutRows()
+        {
+            const int w = juce::jmax (100, viewport.getWidth() - viewport.getScrollBarThickness() - 2);
+            list.setSize (w, (int) rows.size() * 30);
+            for (size_t i = 0; i < rows.size(); ++i) rows[i]->setBounds (0, (int) i * 30, w, 30);
+        }
+
+        std::function<void()> recolour;
+        juce::Viewport viewport;
+        juce::Component list;
+        std::vector<std::unique_ptr<Row>> rows;
+        juce::TextButton add { "+ ADD" }, reset { "RESET" }, apply { "RECOLOUR THIS TRACK" };
+    };
+}
+
+void PrepView::recolourPhrasesFromPresets()
+{
+    // every phrase whose name matches a preset takes the preset's colour
+    std::vector<std::pair<int, Phrase>> changes;
+    const auto& ph = editor.phrases (deckIndex);
+    for (int i = 0; i < (int) ph.size(); ++i)
+    {
+        juce::Colour c;
+        if (PhrasePresets::colourFor (ph[(size_t) i].name, c) && c != ph[(size_t) i].colour)
+        {
+            auto p = ph[(size_t) i];
+            p.colour = c;
+            changes.push_back ({ i, p });
+        }
+    }
+    if (! changes.empty()) editor.setPhrases (deckIndex, changes);
+}
+
 void PrepView::showPhraseAddMenu()
 {
     const auto presets = PhrasePresets::get();
@@ -1166,26 +1386,7 @@ void PrepView::showPhraseAddMenu()
     m.addSeparator();
     m.addItem (1000, "Other name...");
 
-    juce::PopupMenu edit, ren, rem, up, col;
-    for (int i = 0; i < n; ++i)
-    {
-        ren.addItem (2000 + i, presets[(size_t) i].name);
-        rem.addItem (3000 + i, presets[(size_t) i].name);
-        if (i > 0) up.addItem (4000 + i, presets[(size_t) i].name);
-        juce::PopupMenu::Item ci (presets[(size_t) i].name);
-        ci.itemID = 5000 + i;
-        ci.colour = presets[(size_t) i].colour;
-        col.addItem (ci);
-    }
-    edit.addItem (1001, "Add a preset...");
-    edit.addSubMenu ("Change a preset's colour", col, n > 0);
-    edit.addSubMenu ("Rename a preset", ren, n > 0);
-    edit.addSubMenu ("Remove a preset", rem, n > 0);
-    edit.addSubMenu ("Move a preset up", up, n > 1);
-    edit.addSeparator();
-    edit.addItem (1003, "Recolour this track's phrases with the preset colours", track != nullptr && ! editor.phrases (deckIndex).empty());
-    edit.addItem (1002, "Back to the standard presets (names and colours)");
-    m.addSubMenu ("Edit presets", edit);
+    m.addItem (1004, "Edit presets...");
 
     juce::Component::SafePointer<PrepView> safe (this);
     const auto screen = localAreaToGlobal (juce::Rectangle<int> (getMouseXYRelative().x, getMouseXYRelative().y, 1, 1));
@@ -1211,23 +1412,15 @@ void PrepView::showPhraseAddMenu()
                 l.push_back ({ nm, defaultPhraseColour (nm) });
                 PhrasePresets::set (l);
             });
+        else if (r == 1004)
+        {
+            auto ed = std::make_unique<PhrasePresetEditor> ([safe] { if (safe != nullptr) safe->recolourPhrasesFromPresets(); });
+            juce::CallOutBox::launchAsynchronously (std::move (ed), screen, nullptr);
+        }
         else if (r == 1002) PhrasePresets::set (PhrasePresets::factory());
         else if (r == 1003)
         {
-            // every phrase whose name matches a preset takes the preset's colour
-            std::vector<std::pair<int, Phrase>> changes;
-            const auto& ph = safe->editor.phrases (deckIndex);
-            for (int i = 0; i < (int) ph.size(); ++i)
-            {
-                juce::Colour c;
-                if (PhrasePresets::colourFor (ph[(size_t) i].name, c) && c != ph[(size_t) i].colour)
-                {
-                    auto p = ph[(size_t) i];
-                    p.colour = c;
-                    changes.push_back ({ i, p });
-                }
-            }
-            if (! changes.empty()) safe->editor.setPhrases (deckIndex, changes);
+            safe->recolourPhrasesFromPresets();
         }
         else if (r >= 2000 && r < 2000 + count)
         {
@@ -1396,7 +1589,13 @@ void PrepView::deleteEntries (std::vector<ListEntry> targets)
         {
             // a copy: just that pass comes out of the play order
             auto order = phrasePlayOrder();
-            if (t.index >= 0 && t.index < (int) order.size()) { order.erase (order.begin() + t.index); setPlayOrder (order); }
+            auto reps = copyRepeats();
+            if (t.index >= 0 && t.index < (int) order.size())
+            {
+                order.erase (order.begin() + t.index);
+                reps.erase (reps.begin() + t.index);
+                setPlayOrder (order, reps);
+            }
         }
         else if (t.kind == 5) editor.deleteStemLocator (deckIndex, t.index);
         else if (t.kind == 6) editor.deleteNote (deckIndex, t.index);

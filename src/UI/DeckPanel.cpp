@@ -369,6 +369,13 @@ void DeckPanel::paint (juce::Graphics& g)
                         g.fillRect (juce::Rectangle<float>::leftTopRightBottom (x0, r.getY(), x1, r.getBottom()));
                     }
                 if (overviewGrid) paintOverviewGrid (g, r, track->grid, len, &fold);
+                if (viewWindow)
+                {
+                    // the part the scrolling waveform shows
+                    const auto [vis, ph] = viewWindow();
+                    auto xOfD = [&] (double d) { return r.getX() + (float) (d / dlen) * r.getWidth(); };
+                    paintOverviewViewBox (g, r, xOfD (fold.reference - vis * ph), xOfD (fold.reference + vis * (1.0 - ph)), col, ! track->phrases.empty());
+                }
                 paintOverviewMarks (g, r, TrackMarks::fromDeck (st, track->phrases, track.get()), false, &fold);
                 if (st.stemsReady.load() && st.stemsProgress.load() < 0.999f)
                 {

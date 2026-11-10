@@ -198,9 +198,31 @@ juce::Rectangle<int> ScrollingWaveforms::deckBounds (int deck) const
     return deck == 0 ? r.withHeight (h) : r.withTrimmedTop (h + 2);
 }
 
+int ScrollingWaveforms::phraseStripHeight (int slot) const
+{
+    const auto& tr = decks[(size_t) slot].track;
+    return tr != nullptr && ! tr->phrases.empty() && deckBounds (slot).getHeight() > 60 ? 13 : 0;
+}
+
+juce::Rectangle<int> ScrollingWaveforms::laneArea (int slot) const
+{
+    auto r = deckBounds (slot);
+    const int h = phraseStripHeight (slot);
+    if (numSlots() == 2 && slot == 1) r.removeFromTop (h);
+    else r.removeFromBottom (h);
+    return r;
+}
+
+juce::Rectangle<int> ScrollingWaveforms::phraseStripArea (int slot) const
+{
+    auto r = deckBounds (slot);
+    const int h = phraseStripHeight (slot);
+    return numSlots() == 2 && slot == 1 ? r.removeFromTop (h) : r.removeFromBottom (h);
+}
+
 juce::Rectangle<int> ScrollingWaveforms::dividerBounds (int deck) const
 {
-    auto r = deckBounds (deck);
+    auto r = laneArea (deck);
     if (! hasBottomLane (deck)) return { r.getX(), r.getBottom(), r.getWidth(), 0 };
     const int topH = (int) std::round ((r.getHeight() - dividerH) * laneSplit[(size_t) deck]);
     return { r.getX(), r.getY() + topH, r.getWidth(), dividerH };
@@ -266,8 +288,9 @@ void ScrollingWaveforms::drawLabel (juce::Graphics& g, juce::Rectangle<int> lane
     g.drawText (text.toUpperCase(), r, juce::Justification::centred);
 }
 
-void ScrollingWaveforms::paintDeck (juce::Graphics& g, int d, juce::Rectangle<int> r)
+void ScrollingWaveforms::paintDeck (juce::Graphics& g, int d, juce::Rectangle<int> full)
 {
+    auto r = laneArea (d);
     const bool two = hasBottomLane (d);
     auto div = dividerBounds (d);
     auto topLane = two ? r.withBottom (div.getY()) : r;
@@ -276,13 +299,15 @@ void ScrollingWaveforms::paintDeck (juce::Graphics& g, int d, juce::Rectangle<in
     paintLane (g, d, 0, topLane);
     if (two) paintLane (g, d, 1, bottomLane);
 
-    // Phrase bars along the bottom of the deck's waveforms
-    if (auto& tr = decks[(size_t) d].track; tr != nullptr && ! tr->phrases.empty() && bottomLane.getHeight() > 30)
+    // Phrase bars next to the deck's waveforms
+    if (auto& tr = decks[(size_t) d].track; tr != nullptr && ! tr->phrases.empty() && phraseStripHeight (d) > 0)
     {
         const auto& dv = decks[(size_t) d];
         const double pps = (double) r.getWidth() / visibleSeconds;
         const float px0 = playheadX (r);
-        auto strip = bottomLane.toFloat().removeFromBottom (two ? 12.0f : 15.0f);
+        g.setColour (Theme::waveBg.darker (0.3f));
+        g.fillRect (phraseStripArea (d));
+        auto strip = phraseStripArea (d).toFloat().reduced (0.0f, 1.0f);
         paintPhraseStripFolded (g, strip, tr->phrases, tr->audio != nullptr ? tr->audio->lengthSeconds() : tr->info.durationSec,
                                 dv.fold, [&] (double disp) { return px0 + (float) ((disp - dv.shownPos) * pps); },
                                 selectedPhrase ? selectedPhrase() : -1);
@@ -301,7 +326,7 @@ void ScrollingWaveforms::paintDeck (juce::Graphics& g, int d, juce::Rectangle<in
     const auto& st = engine.deck (engineDeck (d)).state();
     const float playX = playheadX (r);
     g.setColour (st.playing.load() ? juce::Colour (0xffff2d2d) : juce::Colours::white);
-    g.fillRect (playX - 1.0f, (float) r.getY(), 2.0f, (float) r.getHeight());
+    g.fillRect (playX - 1.0f, (float) full.getY(), 2.0f, (float) full.getHeight());
     juce::Path tri;
     tri.addTriangle (playX - 6.0f, (float) r.getY(), playX + 6.0f, (float) r.getY(), playX, (float) r.getY() + 7.0f);
     g.fillPath (tri);
@@ -897,7 +922,7 @@ void ScrollingWaveforms::mouseDrag (const juce::MouseEvent& e)
 {
     if (dragDivider >= 0)
     {
-        auto r = deckBounds (dragDivider);
+        auto r = laneArea (dragDivider);
         const float share = (float) (e.y - r.getY() - dividerH / 2) / (float) juce::jmax (1, r.getHeight() - dividerH);
         // The decks mirror each other: deck 2's split is flipped so the lanes meet in the middle the same way
         const float s0 = dragDivider == 0 ? share : 1.0f - share;

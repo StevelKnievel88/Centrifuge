@@ -80,6 +80,21 @@ struct TrackMarks
     double arrows, stem locators as small squares, notes as dots, and hot cues as triangles pointing up from the
     bottom in their colour. With a fold (the edited view) everything is drawn where it plays - repeats more than once,
     skipped parts not at all. */
+/** The part of the track the scrolling waveform shows, as a box on the overview (x0..x1): it stops above the phrase
+    strip and is drawn before the marks so they stay bright; a 1-pixel outline in the deck's colour. */
+inline void paintOverviewViewBox (juce::Graphics& g, juce::Rectangle<float> r, float x0, float x1, juce::Colour col, bool hasPhrases)
+{
+    if (hasPhrases) r.removeFromBottom (juce::jmax (2.0f, juce::jmin (6.0f, r.getHeight() * 0.14f)) + 1.0f);
+    x0 = juce::jlimit (r.getX(), r.getRight(), x0);
+    x1 = juce::jlimit (r.getX(), r.getRight(), x1);
+    if (x1 - x0 < 2.0f) return;
+    auto box = juce::Rectangle<float>::leftTopRightBottom (std::round (x0), r.getY(), std::round (x1), r.getBottom());
+    g.setColour (col.withAlpha (0.14f));
+    g.fillRect (box);
+    g.setColour (col.withAlpha (0.9f));
+    g.drawRect (box, 1.0f);
+}
+
 inline void paintOverviewMarks (juce::Graphics& g, juce::Rectangle<float> r, const TrackMarks& m, bool compact = false,
                                 const TimeFold* fold = nullptr)
 {

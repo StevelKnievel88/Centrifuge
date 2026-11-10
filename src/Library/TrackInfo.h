@@ -66,6 +66,16 @@ struct NoteLocator
     double showSec = 8.0;    // ... and stays up this long after (0 = until the next note)
 };
 
+/** A section's copy (a duplicate in the play order) has its own repeat count, kept in its play-order entry as a few
+    milliseconds after the phrase's start (4 ms per pass; within the 50 ms used to match entries to phrases).
+    0 = not set (the copy plays once). */
+inline int copyRepeatsOf (double arrangementTime, double phraseStart)
+{
+    const int r = (int) std::lround ((arrangementTime - phraseStart) / 0.004);
+    return r >= 1 && r <= 8 ? r : 0;
+}
+inline double copyTimeWithRepeats (double phraseStart, int repeats) { return repeats >= 1 ? phraseStart + 0.004 * repeats : phraseStart; }
+
 /** One stretch of the track in the order it plays (section rearrange / phrase repeat). */
 struct PlaySegment
 {

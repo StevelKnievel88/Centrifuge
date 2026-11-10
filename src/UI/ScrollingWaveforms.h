@@ -69,6 +69,7 @@ public:
     void setStemsHidden (bool h) { stemsHidden = h; needsRedraw = true; }
     bool getStemsHidden() const { return stemsHidden; }
     void setPlayheadPosition (float fraction) { playhead = juce::jlimit (0.1f, 0.9f, fraction); needsRedraw = true; }
+    float getPlayheadPosition() const { return playhead; }
     void setLaneSplit (int deck, float share) { laneSplit[(size_t) deck] = juce::jlimit (0.1f, 0.9f, share); needsRedraw = true; }
     float getLaneSplit (int deck) const { return laneSplit[(size_t) deck]; }
     void forceRedraw() { needsRedraw = true; }
@@ -137,6 +138,11 @@ private:
     bool scrubWhilePlaying = false;
     int engineDeck (int slot) const { return ids[(size_t) slot]; }
     bool hasBottomLane (int slot) const { return lanes[(size_t) slot][1].style != laneOff; }
+    /** The phrase bars sit next to the waveform, not over it: under deck 1 (and PREP), above deck 2, so the two decks'
+        phrases meet in the middle. */
+    int phraseStripHeight (int slot) const;
+    juce::Rectangle<int> laneArea (int slot) const;
+    juce::Rectangle<int> phraseStripArea (int slot) const;
     juce::ThreadPool stemWavePool { 2 };
 
     double visibleSeconds = 10.0;

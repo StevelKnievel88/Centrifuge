@@ -50,6 +50,7 @@ jobs:
           ls -la model
 
       - uses: actions/upload-artifact@v4
+        continue-on-error: true   # (the artifact quota can be full; the Windows job then fetches the model from a release)
         with:
           name: htdemucs-model
           path: model/htdemucs.onnx
@@ -193,6 +194,28 @@ jobs:
           name: htdemucs-model
           path: model
 
+      - name: Stem model (from the releases when the artifact isn't there)
+        if: hashFiles('model/htdemucs.onnx') == ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          New-Item -ItemType Directory -Force model | Out-Null
+          gh release download models -p htdemucs.onnx -D model 2>$null
+          if (-not (Test-Path model/htdemucs.onnx)) {
+            gh release download latest -p "Centrifuge-*-Windows.zip" -D prev
+            $z = Get-ChildItem prev/*.zip -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($z) {
+              Expand-Archive $z.FullName prevx
+              $m = Get-ChildItem -Recurse prevx -Filter htdemucs.onnx | Select-Object -First 1
+              if ($m) {
+                Copy-Item $m.FullName model/
+                gh release upload models model/htdemucs.onnx --clobber
+              }
+            }
+          }
+          Get-ChildItem model
+
       - name: ASIO SDK
         shell: pwsh
         run: |
@@ -247,6 +270,7 @@ jobs:
           Get-Item $zip
 
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: Centrifuge-Windows
           path: Centrifuge

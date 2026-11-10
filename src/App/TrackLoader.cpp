@@ -84,20 +84,30 @@ std::vector<PlaySegment> TrackLoader::compilePlayMap (const std::vector<Phrase>&
 
     // Play order: the arrangement (by phrase start - a phrase can be in it more than once: a duplicated section),
     // then any phrase it leaves out, in track order.
-    std::vector<int> order;
+    // A copy (a phrase's second, third ... entry) plays its own number of times (once unless set); the first entry
+    // plays the phrase's repeats.
+    std::vector<int> order, passes;
     std::vector<bool> used ((size_t) n, false);
     for (auto a : arrangement)
         for (int i = 0; i < n; ++i)
-            if (std::abs (phrases[(size_t) i].startSec - a) < 0.05) { order.push_back (i); used[(size_t) i] = true; break; }
-    for (int i = 0; i < n; ++i) if (! used[(size_t) i]) order.push_back (i);
+            if (std::abs (phrases[(size_t) i].startSec - a) < 0.05)
+            {
+                const int own = copyRepeatsOf (a, phrases[(size_t) i].startSec);
+                passes.push_back (used[(size_t) i] ? juce::jmax (1, own) : phrases[(size_t) i].repeats);
+                order.push_back (i);
+                used[(size_t) i] = true;
+                break;
+            }
+    for (int i = 0; i < n; ++i) if (! used[(size_t) i]) { order.push_back (i); passes.push_back (phrases[(size_t) i].repeats); }
 
     auto endOf = [&] (int i) { return i + 1 < n ? phrases[(size_t) i + 1].startSec : length; };
     if (phrases[0].startSec > 0.01) map.push_back ({ 0.0, phrases[0].startSec });   // anything before the first phrase
-    for (int i : order)
+    for (size_t k = 0; k < order.size(); ++k)
     {
+        const int i = order[k];
         const double s = juce::jlimit (0.0, length, phrases[(size_t) i].startSec), e = juce::jlimit (0.0, length, endOf (i));
         if (e <= s + 0.01) continue;
-        for (int r = 0; r < juce::jlimit (1, 64, phrases[(size_t) i].repeats); ++r)
+        for (int r = 0; r < juce::jlimit (1, 64, passes[k]); ++r)
         {
             if (! map.empty() && std::abs (map.back().end - s) < 0.001) map.back().end = e;   // carries straight on
             else map.push_back ({ s, e });

@@ -92,6 +92,7 @@ MainComponent::MainComponent()
         dp->onRenameCue = [this] (int d, bool hot, int i, juce::String cur) { askRename (d, hot, i, cur); };
         dp->onSetBpm = [this] (int d) { askBpm (d); };
         dp->onOpenSettings = [this] { showPage (3); };
+        dp->viewWindow = [this] { return std::pair<double, float> { waves.getVisibleSeconds(), waves.getPlayheadPosition() }; };
         dp->onDeckColour = [this] (int d, juce::Colour c)
         {
             settings.deckColours[(size_t) d] = c.getARGB();

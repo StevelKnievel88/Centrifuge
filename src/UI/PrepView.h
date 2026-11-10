@@ -75,6 +75,7 @@ private:
     void showPadMenu (int pad, juce::Rectangle<float> area);
     void showPhraseMenu (int index, juce::Rectangle<float> area);
     void showPhraseAddMenu();
+    void recolourPhrasesFromPresets();
     bool keyPressed (const juce::KeyPress&) override;
 
     // List selection (like a file browser: click, ctrl + click to add / remove one, shift + click for a range)
@@ -132,7 +133,9 @@ private:
     static juce::String stemLocatorSummary (const StemLocator& l);
     std::vector<int> phrasePlayOrder() const;            // phrase indexes in play order (a duplicated section appears again)
     int phraseIndexOf (int kind, int index) const;      // the phrase of a list entry (kind 3 phrase, kind 4 a copy)
-    void setPlayOrder (const std::vector<int>& order);
+    void setPlayOrder (const std::vector<int>& order, std::vector<int> copyReps = {});
+    /** Per play-order slot: a copy's own repeats (0 for a section's first entry). */
+    std::vector<int> copyRepeats() const;
     std::vector<ListEntry> shownEntries;
     float listRowsTop = 0.0f, listRowH = 24.0f;
     int dragPhrase = -1, dragTarget = -1;
