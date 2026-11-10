@@ -1,3 +1,4 @@
+#include "../Library/KeyOpinions.h"
 #include "BrowserView.h"
 #include "../App/Features.h"
 #include "Theme.h"
@@ -493,7 +494,18 @@ void BrowserView::paintCell (juce::Graphics& g, int row, int col, int w, int h, 
         case 2: s = t.title; break;
         case 3: s = t.artist; g.setColour (Theme::textDim); break;
         case 4: s = t.bpm > 0 ? juce::String (t.bpm, 2) : juce::String(); just = juce::Justification::centredRight; break;
-        case 5: s = MusicalKey::display (t.key); g.setColour (Theme::good); break;
+        case 5:
+        {
+            s = MusicalKey::display (t.key);
+            g.setColour (Theme::good);
+            if (t.libraryId != 0)
+                if (const auto* e = KeyOpinions::get (t.libraryId))
+                {
+                    s << " / " << MusicalKey::display (e->alt) << "?";   // two opinions: right-click > Key to pick
+                    g.setColour (Theme::warn);
+                }
+            break;
+        }
         case 6:
         {
             const int sec = (int) t.durationSec;
@@ -748,6 +760,28 @@ void BrowserView::showTrackMenu (int)
         m.addSeparator();
         m.addSubMenu ("Clear", clear);
     }
+    {
+        // the key detectors disagreed on some of these: pick one
+        int withOpinion = 0;
+        const KeyOpinions::Entry* first = nullptr;
+        for (auto& t : tracks)
+            if (t.libraryId != 0)
+                if (const auto* e = KeyOpinions::get (t.libraryId)) { ++withOpinion; if (first == nullptr) first = e; }
+        if (withOpinion > 0)
+        {
+            m.addSeparator();
+            if (withOpinion == 1 && tracks.size() == 1)
+            {
+                m.addItem (40, "Key: keep " + MusicalKey::display (first->ours) + " (Centrifuge)");
+                m.addItem (41, "Key: use " + MusicalKey::display (first->alt) + " (second opinion)");
+            }
+            else
+            {
+                m.addItem (40, "Key: keep Centrifuge's (" + juce::String (withOpinion) + " tracks with two opinions)");
+                m.addItem (41, "Key: use the second opinions (" + juce::String (withOpinion) + " tracks)");
+            }
+        }
+    }
     m.addSeparator();
     m.addItem (14, "Analyse  (waveform; grid, BPM and key where missing)");
     m.addItem (15, "Analyse again  (replace the grid, BPM and key)");
@@ -766,6 +800,8 @@ void BrowserView::showTrackMenu (int)
         else if (r == 13) safe->onTrackAction (tracks, "stems.separate");
         else if (r == 14) safe->onTrackAction (tracks, "analyse");
         else if (r == 15) safe->onTrackAction (tracks, "analyse.again");
+        else if (r == 40) safe->onTrackAction (tracks, "key.keep");
+        else if (r == 41) safe->onTrackAction (tracks, "key.alt");
         else if (r == 20) safe->onTrackAction (tracks, "reveal");
         else if (r >= 30 && r <= 38) safe->onTrackAction (tracks, clears[r - 30]);
     });

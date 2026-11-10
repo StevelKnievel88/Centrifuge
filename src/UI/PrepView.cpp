@@ -1,3 +1,4 @@
+#include "GridMoreMenu.h"
 #include "PrepView.h"
 #include "../App/EditExporter.h"
 #include "TrackMarks.h"
@@ -354,10 +355,10 @@ void PrepView::paint (juce::Graphics& g)
                               { "10ms>", "shift.fwd10", 1.0f }, { "ANCHOR", "anchor", 1.2f }, { "DOWNBEAT", "downbeat", 1.4f },
                               { "-0.1", "bpm.down", 0.9f }, { "-.01", "bpm.downfine", 0.9f }, { "BPM", "", 1.6f },
                               { "+.01", "bpm.upfine", 0.9f }, { "+0.1", "bpm.up", 0.9f }, { "/2", "halve", 0.7f },
-                              { "x2", "double", 0.7f }, { "TAP", "tap", 0.9f }, { "UNDO", "undo", 1.0f }, { "RESET", "reset", 1.0f } };
+                              { "x2", "double", 0.7f }, { "TAP", "tap", 0.9f }, { "MORE", "more", 1.0f }, { "UNDO", "undo", 1.0f }, { "RESET", "reset", 1.0f } };
         float total = 0.0f;
         for (auto& b : buttons) total += b.w;
-        const float gap = 3.0f, unit = (r.getWidth() - gap * 15.0f) / total;
+        const float gap = 3.0f, unit = (r.getWidth() - gap * 16.0f) / total;
         float x = r.getX();
         for (auto& b : buttons)
         {
@@ -846,6 +847,12 @@ void PrepView::action (const juce::String& id, bool down)
     {
         const double beats = id.fromLastOccurrenceOf (".", false, false).getDoubleValue();
         post (C::beatJump, id.startsWith ("jump.back.") ? -beats : beats);
+    }
+    else if (id == "grid.more")
+    {
+        juce::Component::SafePointer<PrepView> safe (this);
+        showGridMoreMenu (localAreaToGlobal (juce::Rectangle<int> (getMouseXYRelative().x, getMouseXYRelative().y, 1, 1)),
+                          [safe] (const juce::String& a) { if (safe != nullptr) safe->editor.gridAction (deckIndex, a); });
     }
     else if (id.startsWith ("grid.")) editor.gridAction (deckIndex, id.fromFirstOccurrenceOf ("grid.", false, false));
     else if (id == "edit.r") editor.setEditTargets (deckIndex, ! editor.editsRekordbox (deckIndex), editor.editsCentrifuge (deckIndex));

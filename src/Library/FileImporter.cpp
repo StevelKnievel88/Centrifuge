@@ -113,7 +113,7 @@ bool FileImporter::analyseFile (AudioFileLoader& loader, const juce::File& f, co
     // The file's own key tag (e.g. from Mixed In Key or the store) wins over our estimate.
     auto k = MusicalKey::parse (tags.key);
     if (k.isValid()) { k.camelotStyle = false; info.key = k.toString(); }
-    else info.key = r.key;
+    else { info.key = r.key; info.keyAlt = r.keyAlt; }   // (a key tag wins: no second opinion then)
 
     const bool lossless = f.hasFileExtension ("wav;wave;aif;aiff");
     info.bitrate = lossless ? (int) (audio->sampleRate * 16 * 2 / 1000)

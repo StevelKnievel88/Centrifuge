@@ -32,6 +32,7 @@ public:
     /** Beat grid edits: shift.back10, shift.back1, shift.fwd1, shift.fwd10, anchor, downbeat, bpm.up, bpm.down,
         bpm.upfine, bpm.downfine, halve, double, tap, undo, reset, or "bpm=128.00". */
     void gridAction (int deck, const juce::String& action);
+    static std::vector<float> lowOnsets (const TrackAudio& a, double& hop);   // hop in: wanted, out: actual
     double currentBpm (int deck) const;
 
     /** Phrases shown for the deck's track (deck time). Editing them saves your own phrase list (Centrifuge),

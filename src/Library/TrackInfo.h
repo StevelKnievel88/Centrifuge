@@ -126,6 +126,7 @@ struct TrackInfo
 {
     juce::String id;
     juce::String title, artist, album, genre, key, label, comment, dateAdded;
+    juce::String keyAlt;   // after analysis: the second key opinion (not stored with the track)
     double bpm = 0.0;
     double durationSec = 0.0;
     int rating = 0;

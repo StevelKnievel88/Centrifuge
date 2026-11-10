@@ -22,6 +22,7 @@ public:
         double bpm = 0.0;
         std::vector<Beat> beats;
         juce::String key;         // rekordbox style: "Fm", "Ab", ...
+        juce::String keyAlt;      // the second opinion (detectKeyAlt)
         double confidence = 0.0;  // 0..1, how well the grid lines up with the beats
     };
 
@@ -32,6 +33,10 @@ public:
     /** Key v2: tuning corrected; root from the bass (the bass stem when given, weighted to bar downbeats and phrase
         starts / ends when beats are given), major / minor from the harmony (inst + vocal stems, or the mix). */
     static juce::String detectKeyV2 (const TrackAudio& audio, const StemAudio* stems, const std::vector<Beat>* beats);
+
+    /** A second opinion, done the way KeyFinder (as used by Mixxx) does it: a chromagram over six octaves compared
+        with Sha'ath's key profiles by cosine similarity. (A re-implementation of the method, not the library.) */
+    static juce::String detectKeyAlt (const TrackAudio& audio);
 
     /** Parts exposed for tests. */
     static double estimateTempo (const std::vector<float>& envelope, double framesPerSecond, double minBpm, double maxBpm);

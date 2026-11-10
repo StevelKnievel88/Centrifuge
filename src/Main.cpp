@@ -1,5 +1,7 @@
 #include "App/MainComponent.h"
 #include "App/EditExporter.h"
+#include "App/TrackEditor.h"
+#include "Library/GridOps.h"
 #include "Library/TagWriter.h"
 #include "Library/TagReader.h"
 #include "Library/RekordboxMasterDb.h"
@@ -28,6 +30,40 @@ static int runCommandLine (const juce::StringArray& args)
         const int i = args.indexOf (flag);
         return i >= 0 && i + 1 < args.size() ? args[i + 1].unquoted() : juce::String();
     };
+
+    if (args.contains ("--gridtest"))
+    {
+        // A track that speeds up from 120 to 132 BPM over 64 beats: does "follow the kicks" find every kick?
+        TrackAudio a;
+        a.sampleRate = 44100.0;
+        std::vector<double> kicks;
+        double t = 2.0, bpm = 120.0;
+        for (int k = 0; k < 160; ++k) { kicks.push_back (t); if (k >= 48 && k < 112) bpm += 12.0 / 64.0; t += 60.0 / bpm; }
+        a.numFrames = (int64_t) ((t + 2.0) * a.sampleRate);
+        a.left.assign ((size_t) a.numFrames, 0.0f);
+        juce::Random rnd (1);
+        for (size_t i = 0; i < a.left.size(); ++i) a.left[i] = (rnd.nextFloat() - 0.5f) * 0.05f;   // hiss
+        for (double kt : kicks)
+        {
+            const auto s0 = (int64_t) (kt * a.sampleRate);
+            for (int i = 0; i < 6000 && s0 + i < a.numFrames; ++i)
+                a.left[(size_t) (s0 + i)] += 0.8f * std::sin (2.0 * juce::MathConstants<double>::pi * 55.0 * i / a.sampleRate) * std::exp (-i / 2500.0);
+        }
+        a.right = a.left;
+        auto grid = GridOps::constant (120.0, kicks[0], 1, a.lengthSeconds());
+        double hop = 0.0025;
+        const auto flux = TrackEditor::lowOnsets (a, hop);
+        auto followed = GridOps::followKicks (grid, flux, hop, 0.0, kicks[0], a.lengthSeconds(), false);
+        double worstBefore = 0.0, worstAfter = 0.0;
+        for (double kt : kicks)
+        {
+            worstBefore = juce::jmax (worstBefore, std::abs (grid[(size_t) GridOps::nearestBeat (grid, kt)].timeSec - kt));
+            worstAfter = juce::jmax (worstAfter, std::abs (followed[(size_t) GridOps::nearestBeat (followed, kt)].timeSec - kt));
+        }
+        std::printf ("grid test: worst kick offset %.1f ms with a constant grid, %.1f ms after following (beats %d -> %d)\n",
+                     worstBefore * 1000.0, worstAfter * 1000.0, (int) grid.size(), (int) followed.size());
+        return 0;
+    }
 
     if (args.contains ("--tagtest"))
     {
@@ -337,7 +373,7 @@ static int runCommandLine (const juce::StringArray& args)
         juce::String report;
         auto out = [&report] (const juce::String& line) { std::printf ("%s\n", line.toRawUTF8()); std::fflush (stdout); report << line << "\n"; };
         out ("Centrifuge key test: " + juce::String ((int) items.size()) + " tracks");
-        std::array<int, 6> v1 {}, v2 {}, v3 {};
+        std::array<int, 6> v1 {}, v2 {}, v3 {}, v4 {};
         AudioFileLoader loader;
         for (auto& it : items)
         {
@@ -387,9 +423,12 @@ static int runCommandLine (const juce::StringArray& args)
                     stemText = "  v2+stems " + k3.toString() + " (" + names[r3] + ")";
                 }
             }
+            const auto k4 = MusicalKey::parse (TrackAnalyser::detectKeyAlt (*audio));
+            const int r4 = relation (k4, want);
+            ++v4[(size_t) r4];
             out (it.file.getFileName().substring (0, 50).paddedRight (' ', 50) + "  want " + want.toString().paddedRight (' ', 4)
                  + "  first " + k1.toString().paddedRight (' ', 4) + " (" + names[r1] + ")  v2 " + k2.toString().paddedRight (' ', 4)
-                 + " (" + names[r2] + ")" + stemText);
+                 + " (" + names[r2] + ")  second opinion " + k4.toString().paddedRight (' ', 4) + " (" + names[r4] + ")" + stemText);
         }
         auto row = [] (const char* name, const std::array<int, 6>& v)
         {
@@ -400,6 +439,7 @@ static int runCommandLine (const juce::StringArray& args)
         out ("          exact  fifth  relative  maj/min  other");
         out (row ("first", v1));
         out (row ("v2", v2));
+        out (row ("2nd opin.", v4));
         if (v3[0] + v3[1] + v3[2] + v3[3] + v3[4] > 0) out (row ("v2+stems", v3));
         if (! args.contains ("--no-report"))
         {

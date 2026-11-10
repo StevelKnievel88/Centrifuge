@@ -305,6 +305,32 @@ double TrackEditor::currentBpm (int deck) const
     return GridOps::bpmAt (playing (s).beats, pos, s.track->info.bpm);
 }
 
+std::vector<float> TrackEditor::lowOnsets (const TrackAudio& a, double& hop)
+{
+    // Kick strength over time: low-passed (~150 Hz) energy every `hop` seconds, and how much it rises
+    juce::IIRFilter lp1, lp2;
+    lp1.setCoefficients (juce::IIRCoefficients::makeLowPass (a.sampleRate, 150.0));
+    lp2.setCoefficients (juce::IIRCoefficients::makeLowPass (a.sampleRate, 150.0));
+    const int step = juce::jmax (1, (int) (a.sampleRate * hop));
+    hop = step / a.sampleRate;   // the real hop (whole samples)
+    std::vector<float> flux;
+    flux.reserve ((size_t) (a.numFrames / step + 1));
+    float prev = 0.0f;
+    for (int64_t s = 0; s + step <= a.numFrames; s += step)
+    {
+        double e = 0.0;
+        for (int64_t i = s; i < s + step; ++i)
+        {
+            const float v = lp2.processSingleSampleRaw (lp1.processSingleSampleRaw (0.5f * (a.left[(size_t) i] + a.right[(size_t) i])));
+            e += (double) v * v;
+        }
+        const float le = std::log1p ((float) (e / step) * 1000.0f);
+        flux.push_back (juce::jmax (0.0f, le - prev));
+        prev = le;
+    }
+    return flux;
+}
+
 void TrackEditor::gridAction (int deck, const juce::String& action)
 {
     auto& s = sessions[(size_t) deck];
@@ -334,6 +360,19 @@ void TrackEditor::gridAction (int deck, const juce::String& action)
     else if (action == "shift.fwd10")  op = [] (auto& b) { return GridOps::shift (b, 0.010); };
     else if (action == "anchor")       op = [pos] (auto& b) { return GridOps::anchorAt (b, pos); };
     else if (action == "downbeat")     op = [pos] (auto& b) { return GridOps::setDownbeat (b, pos); };
+    else if (action == "barhere")      op = [pos] (auto& b) { return GridOps::barStartsHere (b, pos); };
+    else if (action == "beat.add")     op = [pos] (auto& b) { return GridOps::shiftCount (b, pos, 1); };
+    else if (action == "beat.remove")  op = [pos] (auto& b) { return GridOps::shiftCount (b, pos, -1); };
+    else if (action == "follow" || action == "follow.here")
+    {
+        if (s.track->audio == nullptr) return;
+        double hop = 0.0025;
+        auto flux = std::make_shared<std::vector<float>> (lowOnsets (*s.track->audio, hop));
+        const double offset = s.track->cueShift;
+        const bool here = action == "follow.here";
+        op = [=] (auto& b) { return GridOps::followKicks (b, *flux, hop, offset, pos, len, here); };
+        if (onMessage) onMessage ("Grid follows the kicks" + juce::String (here ? " from here" : "") + " - UNDO puts it back");
+    }
     else if (action == "halve")        op = [=] (auto& b) { return GridOps::halve (b, pos, len, fallbackBpm); };
     else if (action == "double")       op = [=] (auto& b) { return GridOps::doubleTempo (b, pos, len, fallbackBpm); };
     else if (action.startsWith ("bpm.") || action.startsWith ("bpm="))

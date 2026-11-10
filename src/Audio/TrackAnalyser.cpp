@@ -359,10 +359,73 @@ TrackAnalyser::Result TrackAnalyser::analyse (const TrackAudio& audio, const Opt
 
     if (! cancelled (cancel))
         r.key = detectKeyV2 (audio, nullptr, &r.beats);
+        r.keyAlt = detectKeyAlt (audio);
     return r;
 }
 
 //==============================================================================
+juce::String TrackAnalyser::detectKeyAlt (const TrackAudio& a)
+{
+    constexpr int order = 15, size = 1 << order;   // 32768: ~1.35 Hz per bin at 44.1 kHz (fine enough for the low octaves)
+    if (a.numFrames < size * 2) return {};
+
+    juce::dsp::FFT fft (order);
+    std::vector<float> window (size), buf (size * 2);
+    for (int i = 0; i < size; ++i)   // Blackman, as KeyFinder uses
+        window[(size_t) i] = 0.42f - 0.5f * std::cos (juce::MathConstants<float>::twoPi * (float) i / (float) size)
+                           + 0.08f * std::cos (2.0f * juce::MathConstants<float>::twoPi * (float) i / (float) size);
+
+    // six octaves from A1 (55 Hz) to G#7; each bin feeds the semitone it is closest to
+    const double binHz = a.sampleRate / size;
+    struct Map { int bin; int pc; float w; };
+    std::vector<Map> maps;
+    for (int b = juce::jmax (1, (int) (52.0 / binHz)); b <= (int) (3520.0 / binHz); ++b)
+    {
+        const double midi = 69.0 + 12.0 * std::log2 (b * binHz / 440.0);
+        const double nearest = std::round (midi);
+        const float w = (float) juce::jmax (0.0, 1.0 - 2.5 * std::abs (midi - nearest));
+        if (w > 0.0f) maps.push_back ({ b, ((int) nearest % 12 + 12) % 12, w });
+    }
+
+    std::array<double, 12> chroma {};
+    const int hop = size / 4;
+    for (int64_t start = 0; start + size <= a.numFrames; start += hop)
+    {
+        for (int i = 0; i < size; ++i)
+            buf[(size_t) i] = 0.5f * (a.left[(size_t) start + (size_t) i] + a.right[(size_t) start + (size_t) i]) * window[(size_t) i];
+        std::fill (buf.begin() + size, buf.end(), 0.0f);
+        fft.performFrequencyOnlyForwardTransform (buf.data(), true);
+        for (auto& m : maps) chroma[(size_t) m.pc] += m.w * (double) buf[(size_t) m.bin];   // magnitudes summed over the track
+    }
+
+    // Sha'ath's profiles (KeyFinder's defaults), cosine similarity
+    static const double majorP[12] = { 7.23900502, 3.50351364, 3.58445124, 2.84511620, 5.81898096, 4.55865162,
+                                       2.44863388, 6.99007904, 3.39121604, 4.55684050, 4.07514230, 4.45380042 };
+    static const double minorP[12] = { 7.00255489, 3.14360015, 4.35904746, 5.40418084, 3.67234030, 4.08971223,
+                                       3.90813679, 6.19913031, 3.63241958, 2.87597969, 5.35828089, 3.83065606 };
+    auto cosine = [&] (const double* prof, int tonic)
+    {
+        double sxy = 0, sxx = 0, syy = 0;
+        for (int i = 0; i < 12; ++i)
+        {
+            const double x = chroma[(size_t) ((i + tonic) % 12)], y = prof[i];
+            sxy += x * y; sxx += x * x; syy += y * y;
+        }
+        return sxx > 0 && syy > 0 ? sxy / std::sqrt (sxx * syy) : -1.0;
+    };
+    double best = -2.0;
+    int bestTonic = 0;
+    bool bestMinor = false;
+    for (int t = 0; t < 12; ++t)
+        for (int minor = 0; minor < 2; ++minor)
+            if (const double c = cosine (minor ? minorP : majorP, t); c > best) { best = c; bestTonic = t; bestMinor = minor == 1; }
+    if (best <= 0.0) return {};
+    MusicalKey k;
+    k.pitch = bestTonic;   // chroma index 0 = C, as in detectKey
+    k.minor = bestMinor;
+    return k.toString();
+}
+
 juce::String TrackAnalyser::detectKey (const TrackAudio& a)
 {
     constexpr int order = 14, size = 1 << order;   // 16384: ~2.7 Hz per bin at 44.1 kHz

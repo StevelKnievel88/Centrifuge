@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "../Library/KeyOpinions.h"
 #include "Features.h"
 #include "../Audio/MusicalKey.h"
 #include "../Library/RekordboxMasterDb.h"
@@ -930,6 +931,23 @@ void MainComponent::trackAction (const std::vector<TrackInfo>& tracks, const juc
         showInExplorer (files);
         return;
     }
+    if (action == "key.keep" || action == "key.alt")
+    {
+        int n = 0;
+        for (auto& t : tracks)
+        {
+            const auto id = libraryIdFor (t, false);
+            const auto* e = id != 0 ? KeyOpinions::get (id) : nullptr;
+            if (e == nullptr) continue;
+            if (action == "key.alt")
+                if (auto lt = centrifugeLibrary.get (id)) { auto info = lt->info; info.key = e->alt; centrifugeLibrary.setInfo (id, info); }
+            KeyOpinions::clear (id);
+            ++n;
+        }
+        browser.refreshSources();
+        flash (juce::String (action == "key.alt" ? "Second opinion key used on " : "Kept Centrifuge's key on ") + juce::String (n) + (n == 1 ? " track" : " tracks"));
+        return;
+    }
     if (action == "analyse" || action == "analyse.again")
     {
         analyseTracks (tracks, action == "analyse.again");
@@ -1063,6 +1081,12 @@ void MainComponent::analyseTracks (const std::vector<TrackInfo>& tracks, bool re
                         if (replace || ni.key.isEmpty()) ni.key = info.key;
                         if (ni.durationSec <= 0.0) ni.durationSec = info.durationSec;
                         self.centrifugeLibrary.setInfo (id, ni);
+                        // the two key detectors disagree: keep both until you pick one (right-click > Key)
+                        const auto a = MusicalKey::parse (info.keyAlt), o = MusicalKey::parse (ni.key);
+                        if (a.isValid() && o.isValid() && (a.pitch != o.pitch || a.minor != o.minor) && ni.key == info.key)
+                            KeyOpinions::set (id, ni.key, info.keyAlt);
+                        else if (ni.key == info.key)
+                            KeyOpinions::clear (id);
                     }
                 }
                 self.browser.forgetPreview (t.file.getFullPathName());
