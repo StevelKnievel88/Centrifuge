@@ -47,6 +47,8 @@ juce::var MidiBinding::toVar() const
     o->setProperty ("sensitivity", sensitivity);
     if (ledOn != 127) o->setProperty ("ledOn", ledOn);
     if (ledOff != 0) o->setProperty ("ledOff", ledOff);
+    if (shiftOn >= 0) o->setProperty ("shiftOn", shiftOn);
+    if (shiftOff >= 0) o->setProperty ("shiftOff", shiftOff);
     if (press != 0) o->setProperty ("press", press);
     if (hasModifier())
     {
@@ -74,6 +76,8 @@ MidiBinding MidiBinding::fromVar (const juce::var& v)
     if (b.sensitivity == 0.0) b.sensitivity = 1.0;
     b.ledOn = v.hasProperty ("ledOn") ? juce::jlimit (0, 127, (int) v["ledOn"]) : 127;
     b.ledOff = v.hasProperty ("ledOff") ? juce::jlimit (0, 127, (int) v["ledOff"]) : 0;
+    b.shiftOn = v.hasProperty ("shiftOn") ? juce::jlimit (0, 127, (int) v["shiftOn"]) : -1;
+    b.shiftOff = v.hasProperty ("shiftOff") ? juce::jlimit (0, 127, (int) v["shiftOff"]) : -1;
     b.press = juce::jlimit (0, 2, (int) v.getProperty ("press", 0));
     if (v.hasProperty ("modNumber"))
     {
@@ -882,7 +886,9 @@ void MidiManager::sendJogDisplays()
             if (k == 2) { sendToXdj (juce::MidiMessage::noteOn (12, d, (juce::uint8) vals[k])); continue; }
             const int base = k == 0 ? d : 4 + d;
             const int msb = vals[k] == 0x3fff ? 0x7f : vals[k] >> 7, lsb = vals[k] == 0x3fff ? 0x7f : vals[k] & 0x7f;
-            sendToXdj (juce::MidiMessage::controllerEvent (12, base, msb));
+            // the coarse half only when it changes (re-sending it resets the fine half until the next message: a flick)
+            auto& m = jogMsbCache[(size_t) (d * 3 + k)];
+            if (m != msb) { sendToXdj (juce::MidiMessage::controllerEvent (12, base, msb)); m = msb; }
             sendToXdj (juce::MidiMessage::controllerEvent (12, base + 32, lsb));
         }
     }
@@ -922,6 +928,32 @@ void MidiManager::sendLeds()
             bool pressed = false;
             for (auto& k : heldNow) pressed = pressed || (k.endsWith (key.fromFirstOccurrenceOf ("|", true, false)) && (b.device.isEmpty() || k.startsWith (b.device)));
             value = pressed ? b.ledOn : b.ledOff;
+        }
+
+        // the pad's SHIFT layer (XDJ-XZ pads: note + 8), unless something is mapped there itself
+        if (b.type == MidiBinding::Type::note && (b.shiftOn >= 0 || b.shiftOff >= 0) && (b.number % 16) < 8 && b.number + 8 < 128)
+        {
+            bool mappedThere = false;
+            for (auto& o : all) mappedThere = mappedThere || (o.type == MidiBinding::Type::note && o.channel == b.channel && o.number == b.number + 8 && ! o.hasModifier());
+            if (! mappedThere)
+            {
+                const auto sk = b.device + "|" + juce::String ((int) b.type) + "|" + juce::String (b.channel) + "|" + juce::String (b.number + 8);
+                bool pressed = false;
+                for (auto& k : heldNow) pressed = pressed || k.endsWith (sk.fromFirstOccurrenceOf ("|", true, false));
+                const int sv = pressed ? (b.shiftOn >= 0 ? b.shiftOn : b.shiftOff) : (b.shiftOff >= 0 ? b.shiftOff : 0);
+                const auto ck = "shift|" + sk;
+                bool send = true;
+                {
+                    const juce::ScopedLock sl (bindingLock);
+                    auto it = ledCache.find (ck);
+                    send = it == ledCache.end() || it->second != sv;
+                    ledCache[ck] = sv;
+                }
+                if (send)
+                    for (auto& [nm, out] : outputs)
+                        if (b.device.isEmpty() || nm == b.device)
+                            out->sendMessageNow (juce::MidiMessage::noteOn (b.channel, b.number + 8, (juce::uint8) sv));
+            }
         }
 
         const auto cacheKey = b.device + "|" + b.describe() + "|" + b.actionId;

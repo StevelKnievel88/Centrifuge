@@ -22,6 +22,7 @@ struct MidiBinding
     bool invert = false;
     double sensitivity = 1.0;   // encoders: multiplier on steps
     int ledOn = 127, ledOff = 0;  // values sent to light the button (pads that take a colour from the value)
+    int shiftOn = -1, shiftOff = -1;   // the pad's SHIFT layer (XDJ-XZ: its note + 8) while SHIFT is held; -1 = not set
 
     // Combo: only while this other button is held (e.g. SHIFT + LOAD = eject). modNumber < 0 = no combo.
     Type modType = Type::note;
@@ -132,8 +133,8 @@ public:
     bool hotCuesInColour() const { return hotCueColours.load(); }
     void setHotCuesInColour (bool b) { hotCueColours = b; clearLedCache(); }
     /** Jog screens on the XDJ-XZ: the position bar turns with the track, and the cue marker shows the cue point. */
-    void setJogDisplay (bool on) { jogDisplay = on; jogCache.fill (-1); }
-    void clearLedCache() { const juce::ScopedLock sl (bindingLock); ledCache.clear(); jogCache.fill (-1); }
+    void setJogDisplay (bool on) { jogDisplay = on; jogCache.fill (-1); jogMsbCache.fill (-1); }
+    void clearLedCache() { const juce::ScopedLock sl (bindingLock); ledCache.clear(); jogCache.fill (-1); jogMsbCache.fill (-1); }
 
     /** How long a press has to be held to count as a long press (seconds, 0.25 - 1). */
     void setLongPressSeconds (double s) { longPressMs = juce::jlimit (250.0, 1000.0, s * 1000.0); }
@@ -172,6 +173,7 @@ private:
     std::array<std::atomic<int>, numPadColours> padColours {};
     std::atomic<bool> hotCueColours { true }, jogDisplay { true };
     std::array<int, 12> jogCache { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+    std::array<int, 12> jogMsbCache { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
     void sendToXdj (const juce::MidiMessage& m);
     void sendJogDisplays();
     void firePending (const std::vector<std::pair<const ActionDef*, ActionValue>>& hits, bool down);

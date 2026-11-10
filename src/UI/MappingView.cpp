@@ -657,71 +657,104 @@ void MappingView::showLedEditor()
     {
         Editor (MappingView& v, juce::String id, MidiBinding b) : view (v), actionId (std::move (id)), binding (b)
         {
-            for (auto* s : { &on, &off })
+            const char* names[4] = { "Lit", "Unlit", "SHIFT lit", "SHIFT unlit" };
+            const int init[4] = { b.ledOn, b.ledOff, b.shiftOn < 0 ? 0 : b.shiftOn, b.shiftOff < 0 ? 0 : b.shiftOff };
+            for (int r = 0; r < 4; ++r)
             {
-                addAndMakeVisible (*s);
-                s->setRange (0, 127, 1);
-                s->setSliderStyle (juce::Slider::LinearHorizontal);
-                s->setTextBoxStyle (juce::Slider::TextBoxRight, false, 44, 20);
-            }
-            on.setValue (b.ledOn, juce::dontSendNotification);
-            off.setValue (b.ledOff, juce::dontSendNotification);
-            // quick colours (the XDJ-XZ's colour wheel): bright for lit, dim for unlit, or off
-            for (int row = 0; row < 2; ++row)
+                auto& row = rows[(size_t) r];
+                row.label = names[r];
+                addAndMakeVisible (row.slider);
+                row.slider.setRange (0, 127, 1);
+                row.slider.setSliderStyle (juce::Slider::LinearHorizontal);
+                row.slider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 44, 20);
+                row.slider.setValue (init[r], juce::dontSendNotification);
+                row.slider.onValueChange = [this, r]
+                {
+                    if (r >= 2 && ! useShift.getToggleState()) useShift.setToggleState (true, juce::dontSendNotification);
+                    apply();
+                    auto test = binding;
+                    if (r >= 2) test.number = binding.number + 8;   // the SHIFT layer: the pad's note + 8
+                    view.midi.sendTestLed (test, (int) rows[(size_t) r].slider.getValue());
+                };
+                // quick colours (the XDJ-XZ's colour wheel): bright for lit, dim for unlit, or MAX / OFF
                 for (int i = 0; i < 9; ++i)
                 {
                     auto* sw = new juce::TextButton();
-                    swatches.add (sw);
+                    row.swatches.add (sw);
                     addAndMakeVisible (sw);
                     const bool isOff = i == 8;
+                    const bool dim = r % 2 == 1;
                     const auto col = isOff ? juce::Colour (0xff202020) : rekordboxTrackColour (i + 1);
-                    sw->setColour (juce::TextButton::buttonColourId, row == 0 ? col : col.darker (0.6f));
-                    sw->setButtonText (isOff ? (row == 0 ? "MAX" : "OFF") : juce::String());
-                    sw->setTooltip (isOff ? (row == 0 ? "Full (127)" : "Off (0)") : juce::String (MidiManager::padColourName (i)) + (row == 0 ? " (bright)" : " (dim)"));
-                    sw->onClick = [this, row, i, isOff, col]
+                    sw->getProperties().set ("psyched.swatch", true);
+                    sw->setColour (juce::TextButton::buttonColourId, dim && ! isOff ? col.darker (0.6f) : col);
+                    sw->setButtonText (isOff ? (dim ? "OFF" : "MAX") : juce::String());
+                    sw->setTooltip (isOff ? (dim ? "Off (0)" : "Full (127)") : juce::String (MidiManager::padColourName (i)) + (dim ? " (dim)" : " (bright)"));
+                    sw->onClick = [this, r, i, isOff, dim, col]
                     {
-                        const int n = isOff ? (row == 0 ? 127 : 0) : MidiManager::padWheelNumber (col, row == 1);
-                        (row == 0 ? on : off).setValue (n, juce::sendNotificationSync);
+                        const int n = isOff ? (dim ? 0 : 127) : MidiManager::padWheelNumber (col, dim);
+                        rows[(size_t) r].slider.setValue (n, juce::sendNotificationSync);
                     };
                 }
-            on.onValueChange = [this] { apply(); view.midi.sendTestLed (binding, (int) on.getValue()); };
-            off.onValueChange = [this] { apply(); view.midi.sendTestLed (binding, (int) off.getValue()); };
-            setSize (380, 152);
+            }
+            const bool pad = b.type == MidiBinding::Type::note && (b.number % 16) < 8;
+            for (int r = 2; r < 4; ++r)
+            {
+                rows[(size_t) r].slider.setEnabled (pad);
+                for (auto* sw : rows[(size_t) r].swatches) sw->setEnabled (pad);
+            }
+            useShift.setButtonText ("Light the SHIFT layer");
+            useShift.setToggleState (b.shiftOn >= 0 || b.shiftOff >= 0, juce::dontSendNotification);
+            useShift.setEnabled (pad);
+            useShift.onClick = [this] { apply(); };
+            addAndMakeVisible (useShift);
+            setSize (400, 4 * 56 + 52);
         }
         void apply()
         {
+            const bool sh = useShift.getToggleState();
             auto all = view.midi.getBindings();
             for (int i = 0; i < (int) all.size(); ++i)
                 if (all[(size_t) i].actionId == actionId)
                 {
-                    all[(size_t) i].ledOn = (int) on.getValue();
-                    all[(size_t) i].ledOff = (int) off.getValue();
+                    all[(size_t) i].ledOn = (int) rows[0].slider.getValue();
+                    all[(size_t) i].ledOff = (int) rows[1].slider.getValue();
+                    all[(size_t) i].shiftOn = sh ? (int) rows[2].slider.getValue() : -1;
+                    all[(size_t) i].shiftOff = sh ? (int) rows[3].slider.getValue() : -1;
                     view.midi.updateBinding (i, all[(size_t) i]);
                 }
-            binding.ledOn = (int) on.getValue();
-            binding.ledOff = (int) off.getValue();
+            binding.ledOn = (int) rows[0].slider.getValue();
+            binding.ledOff = (int) rows[1].slider.getValue();
+            view.midi.clearLedCache();
             view.save();
         }
         void paint (juce::Graphics& g) override
         {
             g.setColour (Theme::textDim);
             g.setFont (Theme::font (12.0f));
-            g.drawText ("Lit", 8, 12, 60, 20, juce::Justification::centredLeft);
-            g.drawText ("Unlit", 8, 70, 60, 20, juce::Justification::centredLeft);
-            g.drawText ("(XDJ-XZ pads: 1-63 bright colours, 64-127 dim; other buttons just light)", 8, 132, 370, 16, juce::Justification::centredLeft);
+            for (int r = 0; r < 4; ++r)
+                g.drawText (rows[(size_t) r].label, 8, 8 + r * 56, 70, 22, juce::Justification::centredLeft);
+            g.setFont (Theme::font (10.5f));
+            g.drawText ("XDJ-XZ pads: 1-63 bright, 64-127 dim. SHIFT: what the pad shows while SHIFT is held.",
+                        8, getHeight() - 20, getWidth() - 16, 16, juce::Justification::centredLeft);
         }
         void resized() override
         {
-            on.setBounds (60, 10, 310, 24);
-            off.setBounds (60, 68, 310, 24);
-            for (int k = 0; k < swatches.size(); ++k)
-                swatches[k]->setBounds (60 + (k % 9) * 34, (k / 9 == 0 ? 38 : 96), 30, 22);
+            for (int r = 0; r < 4; ++r)
+            {
+                auto& row = rows[(size_t) r];
+                const int y = 8 + r * 56;
+                row.slider.setBounds (80, y, getWidth() - 88, 22);
+                for (int k = 0; k < row.swatches.size(); ++k)
+                    row.swatches[k]->setBounds (80 + k * 34, y + 26, 30, 20);
+            }
+            useShift.setBounds (8, 4 * 56 + 6, 260, 22);
         }
+        struct Row { juce::String label; juce::Slider slider; juce::OwnedArray<juce::TextButton> swatches; };
         MappingView& view;
         juce::String actionId;
         MidiBinding binding;
-        juce::Slider on, off;
-        juce::OwnedArray<juce::TextButton> swatches;
+        std::array<Row, 4> rows;
+        juce::ToggleButton useShift;
     };
     juce::CallOutBox::launchAsynchronously (std::make_unique<Editor> (*this, a->id, bs.front()), ledButton.getScreenBounds(), nullptr);
 }
