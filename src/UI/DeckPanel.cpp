@@ -218,10 +218,10 @@ void DeckPanel::paint (juce::Graphics& g)
                 r.removeFromLeft (4.0f);
                 auto name = editor->activeEdit (deck);
                 const bool any = editor->hasEdits (deck);
-                juce::String text = name.isNotEmpty() ? name : (any ? juce::String ("UNSAVED EDITS") : juce::String ("NO EDITS"));
+                juce::String text = name.isNotEmpty() ? name : (any ? juce::String ("UNSAVED EDITS") : juce::String ("ORIGINAL"));
                 if (name.isNotEmpty() && editor->activeEditModified (deck)) text << " *";
                 // The longest wording that fits the space left: "EDIT: name", "name", then "EDIT"
-                const float room = juce::jmax (36.0f, r.getWidth() - 310.0f);
+                const float room = juce::jmax (36.0f, r.getWidth() - 450.0f);
                 juce::String shown;
                 for (auto cand : { "EDIT: " + text, text, juce::String ("EDIT") })
                     if (psyched::Fonts::label().getStringWidthFloat (cand.toUpperCase()) + 22.0f <= juce::jmin (room, 190.0f)) { shown = cand; break; }
@@ -256,7 +256,7 @@ void DeckPanel::paint (juce::Graphics& g)
         }
 
         // Tempo + range
-        auto right = r.removeFromRight (300.0f);
+        auto right = r.removeFromRight (440.0f);
         const double pct = (st.tempoRatio.load() - 1.0) * 100.0;
         auto tempo = right.removeFromRight (100.0f);
         g.setColour (Theme::text);
@@ -284,6 +284,16 @@ void DeckPanel::paint (juce::Graphics& g)
         addChip ("SYNC", st.sync.load(), col, p + "sync", 40.0f);
         addChip ("MT", st.keyLock.load(), Theme::warn, p + "keylock", 28.0f);
         addChip ("QUANTIZE", st.quantize.load(), Theme::bad.withSaturation (0.6f), p + "quantize", 62.0f);
+        addChip (st.vinylMode.load() ? "VINYL" : "CDJ", st.vinylMode.load(), Theme::warn, p + "jog.vinyl", 50.0f);
+        addChip (st.slipping.load() ? "SLIPPING" : "SLIP", st.slip.load(), Theme::sync.brighter (0.2f), p + "slip", st.slipping.load() ? 64.0f : 40.0f);
+        {
+            // vinyl speed: brake (stop) / start, click for the choices
+            const bool b = st.brakeOn.load(), s2 = st.startOn.load();
+            const juce::String t = b && s2 ? "BRAKE+START" : b ? "BRAKE" : s2 ? "START" : "INSTANT";
+            auto cr = right.removeFromLeft (t.length() > 8 ? 82.0f : 58.0f).reduced (2.0f, 3.0f);
+            chip (g, cr, t, b || s2, Theme::warn.withRotatedHue (0.08f));
+            regions.push_back ({ cr, "vinylspeed", 10 });
+        }
     }
 
     // --- Overview --------------------------------------------------------------
@@ -442,7 +452,21 @@ void DeckPanel::paint (juce::Graphics& g)
         const std::pair<int, const char*> sizes[] = { { 1, "1 BEAT" }, { 4, "1 BAR" }, { 8, "2 BARS" }, { 16, "4 BARS" } };
         // each size sits tight between its buttons; the rest of the row shows notes
         const float gw = juce::jlimit (78.0f, 104.0f, (r.getWidth() * 0.55f - 3 * 8.0f) / 4.0f);
-        paintNotesBox (g, r.withTrimmedLeft (4 * gw + 3 * 8.0f + 10.0f));
+        {
+            // previous / next marker (hot cues and locators), when stopped
+            auto rest = r.withTrimmedLeft (4 * gw + 3 * 8.0f + 10.0f);
+            auto prev = rest.removeFromLeft (22.0f);
+            rest.removeFromLeft (2.0f);
+            auto next = rest.removeFromLeft (22.0f);
+            rest.removeFromLeft (8.0f);
+            const bool canCall = loaded && ! st.playing.load();
+            chip (g, prev, "|<", false, canCall ? Theme::bad : Theme::textFaint);
+            chip (g, next, ">|", false, canCall ? Theme::bad : Theme::textFaint);
+            const auto pp = juce::String ("d") + juce::String (deck + 1) + ".";
+            regions.push_back ({ prev, pp + "callprev", 0 });
+            regions.push_back ({ next, pp + "callnext", 0 });
+            paintNotesBox (g, rest);
+        }
         for (int k = 0; k < 4; ++k)
         {
             auto grp = r.removeFromLeft (gw);
@@ -507,6 +531,18 @@ void DeckPanel::paint (juce::Graphics& g)
             regions.push_back ({ lessBtn, p + "loopsize.halve", 0 });
             regions.push_back ({ sizeBtn, p + "loop.toggle", 0 });
             regions.push_back ({ moreBtn, p + "loopsize.double", 0 });
+            // manual loop: IN, OUT, RELOOP / EXIT
+            r.removeFromLeft (4.0f);
+            auto inBtn = vfit (r.removeFromLeft (26.0f));
+            auto outBtn = vfit (r.removeFromLeft (32.0f)).reduced (1.0f, 0.0f);
+            auto reBtn = vfit (r.removeFromLeft (26.0f));
+            const bool hasLoop = st.loopInSec.load() >= 0.0 && st.loopOutSec.load() > st.loopInSec.load();
+            chip (g, inBtn, "IN", st.loopInSec.load() >= 0.0 && ! hasLoop, Theme::accent);
+            chip (g, outBtn, "OUT", st.loopActive.load(), Theme::accent);
+            chip (g, reBtn, "RE", hasLoop && st.loopActive.load(), Theme::accent);
+            regions.push_back ({ inBtn, p + "loop.in", 0 });
+            regions.push_back ({ outBtn, p + "loop.out", 0 });
+            regions.push_back ({ reBtn, p + "loop.reloop", 0 });
         }
 
         // Locator (memory) and skip: SKIP once to start, again to end
@@ -706,7 +742,7 @@ void DeckPanel::showEditVersionMenu (juce::Rectangle<float> area)
         m.addItem (10 + i, names[(size_t) i], true, names[(size_t) i] == active);
     if (names.empty()) m.addItem (-1, "(none saved yet - make them on PREP)", false);
     m.addSeparator();
-    m.addItem (1, "No edits (the track as recorded)", true, active.isEmpty() && ! editor->hasEdits (deck));
+    m.addItem (1, "Original (the track as recorded)", true, active.isEmpty() && ! editor->hasEdits (deck));
     juce::Component::SafePointer<DeckPanel> safe (this);
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (localAreaToGlobal (area.toNearestInt())),
                      [safe] (int r)
@@ -721,14 +757,10 @@ void DeckPanel::mouseDown (const juce::MouseEvent& e)
 {
     auto* r = regionAt (e.position);
     if (r == nullptr) return;
-    if (r->kind == 2 && e.mods.isPopupMenu())
-    {
-        showStemModeMenu (r->action.fromFirstOccurrenceOf ("stem.", false, false).getIntValue() - 1, r->r);
-        return;
-    }
+    if (r->kind == 2 && e.mods.isPopupMenu()) return;   // (no right-click menu: the VOL / FILTER buttons do it)
     if (r->kind == 8)
     {
-        if (e.mods.isPopupMenu()) { showStemModeMenu (-1, r->r); return; }
+        if (e.mods.isPopupMenu()) return;
         // all four: VOL <> FILTER (from MIX: VOL)
         const auto& st = engine.deck (deck).state();
         bool same = true;
@@ -739,7 +771,7 @@ void DeckPanel::mouseDown (const juce::MouseEvent& e)
     if (r->kind == 9)
     {
         const int s = r->action.getTrailingIntValue();
-        if (e.mods.isPopupMenu()) { showStemModeMenu (s, r->r); return; }
+        if (e.mods.isPopupMenu()) return;
         setStemMode (s, 1 - engine.deck (deck).state().stemMode[(size_t) s].load());
         return;
     }
@@ -756,6 +788,29 @@ void DeckPanel::mouseDown (const juce::MouseEvent& e)
     if (r->kind == 7)
     {
         if (onOverviewGridToggled) onOverviewGridToggled();
+        return;
+    }
+    if (r->kind == 10)
+    {
+        const auto& st = engine.deck (deck).state();
+        const bool b = st.brakeOn.load(), s2 = st.startOn.load();
+        juce::PopupMenu m;
+        m.addSectionHeader ("Vinyl speed - deck " + juce::String (deck + 1));
+        m.addItem (1, "Instant start, braked stop", true, ! s2 && b);
+        m.addItem (2, "Braked start, instant stop", true, s2 && ! b);
+        m.addItem (3, "Both braked", true, s2 && b);
+        m.addItem (4, "Both instant", true, ! s2 && ! b);
+        m.addSeparator();
+        m.addItem (5, "Times... (Settings > VINYL)");
+        const auto area = r->r;
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (localAreaToGlobal (area.toNearestInt())), [this] (int res)
+        {
+            if (res == 5) { if (onOpenSettings) onOpenSettings(); return; }
+            if (res < 1 || res > 4) return;
+            auto& dk = engine.deck (deck);
+            dk.post (Deck::Cmd::vinylBrakeSet, (res == 1 || res == 3) ? 1.0 : 0.0, 0);
+            dk.post (Deck::Cmd::vinylBrakeSet, (res == 2 || res == 3) ? 1.0 : 0.0, 1);
+        });
         return;
     }
     if (e.mods.isPopupMenu() && r->kind != 3) return;

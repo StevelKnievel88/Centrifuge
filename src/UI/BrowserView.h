@@ -75,6 +75,10 @@ public:
     void enter();
     void back();
     void toggleFocus();
+    /** The browse knob works on the track list straight away (a track is selected if none is). */
+    void focusTracks();
+    /** Puts the cursor in the search box (Ctrl+F). */
+    void focusSearch() { search.grabKeyboardFocus(); search.selectAll(); }
     void loadSelected (int deck);
 
     std::vector<TrackInfo> getVisibleTracks() const;

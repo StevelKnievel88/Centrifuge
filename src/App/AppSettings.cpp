@@ -163,6 +163,24 @@ void AppSettings::load()
 
     num ("jogTicksPerRev", jogTicksPerRev);
     boolean ("ledFeedback", ledFeedback);
+    for (int d = 0; d < 2; ++d)
+    {
+        const auto n = juce::String (d + 1);
+        num (("brakeSec" + n).toRawUTF8(), brakeSec[(size_t) d]);
+        num (("startSec" + n).toRawUTF8(), startSec[(size_t) d]);
+        num (("releaseSec" + n).toRawUTF8(), releaseSec[(size_t) d]);
+        boolean (("brakeOn" + n).toRawUTF8(), brakeOn[(size_t) d]);
+        boolean (("startOn" + n).toRawUTF8(), startOn[(size_t) d]);
+        str (("deckController" + n).toRawUTF8(), deckController[(size_t) d]);
+    }
+    boolean ("throwOn", throwOn);
+    if (v.hasProperty ("previewColour")) previewColour = (juce::uint32) (juce::int64) v["previewColour"];
+    else previewColour = singleColour;
+    num ("throwSpeed", throwSpeed);
+    boolean ("autoGain", autoGain);
+    num ("masterVolume", masterVolume);
+    masterVolume = juce::jlimit (0.0f, 1.0f, masterVolume);
+    throwSpeed = juce::jlimit (0.1, 4.0, throwSpeed);
 
     str ("modelPath", modelPath);
     str ("stemCachePath", stemCachePath);
@@ -259,6 +277,21 @@ void AppSettings::save() const
     o->setProperty ("maxFps", maxFps);
 
     o->setProperty ("jogTicksPerRev", jogTicksPerRev);
+    for (int d = 0; d < 2; ++d)
+    {
+        const auto n = juce::String (d + 1);
+        o->setProperty ("brakeSec" + n, brakeSec[(size_t) d]);
+        o->setProperty ("startSec" + n, startSec[(size_t) d]);
+        o->setProperty ("releaseSec" + n, releaseSec[(size_t) d]);
+        o->setProperty ("brakeOn" + n, brakeOn[(size_t) d]);
+        o->setProperty ("startOn" + n, startOn[(size_t) d]);
+        o->setProperty ("deckController" + n, deckController[(size_t) d]);
+    }
+    o->setProperty ("throwOn", throwOn);
+    o->setProperty ("previewColour", (juce::int64) previewColour);
+    o->setProperty ("throwSpeed", throwSpeed);
+    o->setProperty ("autoGain", autoGain);
+    o->setProperty ("masterVolume", (double) masterVolume);
     o->setProperty ("ledFeedback", ledFeedback);
 
     o->setProperty ("modelPath", modelPath);

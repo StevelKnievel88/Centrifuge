@@ -46,6 +46,14 @@ struct StemLocator
     int mode = 0;                                    // how the change happens: 0 level fade, 1 low-pass sweep, 2 high-pass sweep
     double fadeSec = 0.0;                            // worked out from the beat grid when loaded
     juce::String name;
+    // Each stem can have its own time and way (e.g. vocals out with a high-pass over 16 beats, drums in by level over 8).
+    // -1 = use the locator's fadeBeats / mode above.
+    std::array<float, 4> stemFade { -1.0f, -1.0f, -1.0f, -1.0f };
+    std::array<int, 4> stemMode { -1, -1, -1, -1 };
+    std::array<double, 4> stemFadeSec { 0.0, 0.0, 0.0, 0.0 };   // worked out when loaded
+    float fadeFor (int s) const { return stemFade[(size_t) s] >= 0.0f ? stemFade[(size_t) s] : fadeBeats; }
+    int modeFor (int s) const { return stemMode[(size_t) s] >= 0 ? stemMode[(size_t) s] : mode; }
+    double fadeSecFor (int s) const { return stemFade[(size_t) s] >= 0.0f ? stemFadeSec[(size_t) s] : fadeSec; }
 };
 
 /** Note locator: a reminder that pops up on the deck when playback reaches it. */

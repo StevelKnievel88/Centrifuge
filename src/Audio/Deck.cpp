@@ -212,6 +212,10 @@ void Deck::loadTrack (LoadedTrack* t)
     playSeg = -1;
     stems = nullptr;
     playing = cuePreview = scratching = false;
+    coasting = braking = slipping = startRamp = false;
+    prevLoopActive = false;
+    motor = 1.0;
+    releaseT = 1.0;
     hotPreview = -1;
     loopActive = false;
     loopIn = loopOut = -1.0;
@@ -319,6 +323,52 @@ void Deck::startStretch()
     stretchActive = true;
 }
 
+void Deck::beginPlay() noexcept
+{
+    if (braking) { braking = false; startRamp = startOn && startSec > 0.0; return; }   // back up to speed from where it is
+    if (! playing) { motor = startOn && startSec > 0.0 ? 0.0 : 1.0; startRamp = motor < 1.0; }
+    playing = true;
+    releaseT = 1.0;
+}
+
+void Deck::beginStop() noexcept
+{
+    if (playing && brakeOn && brakeSec > 0.0 && ! cuePreview && hotPreview < 0 && ! scratching) { braking = true; startRamp = false; return; }
+    playing = false;
+    braking = false;
+}
+
+void Deck::slipBegin (int source) noexcept
+{
+    if (! slip || slipping || track == nullptr) return;
+    slipping = true;
+    slipSource = source;
+    slipSec = heardPositionSec();
+    slipWasPlaying = playing;
+}
+
+void Deck::slipEnd() noexcept
+{
+    if (! slipping) return;
+    slipping = false;
+    if (slipWasPlaying && track != nullptr && track->audio != nullptr)
+    {
+        jumpTo (juce::jmin (slipSec, track->audio->lengthSeconds()), false);
+        playing = true;
+        braking = false;
+        motor = 1.0;
+    }
+}
+
+void Deck::endScratch() noexcept
+{
+    const double v = scratchVelocity;
+    scratching = false;
+    coasting = false;
+    if (slipping && slipSource == 1) { slipEnd(); return; }
+    if (playing && releaseSec > 0.0) { releaseFrom = v; releaseT = 0.0; }
+}
+
 //==============================================================================
 void Deck::apply (const Command& c)
 {
@@ -363,20 +413,41 @@ void Deck::apply (const Command& c)
             shiftHeld = c.down;
             break;
 
-        case Cmd::play:      if (c.down && track != nullptr) { playing = true; cuePreview = false; hotPreview = -1; syncSnapRequested = syncOn; } break;
-        case Cmd::pause:     if (c.down) playing = false; break;
+        case Cmd::play:      if (c.down && track != nullptr) { if (! playing) syncSnapRequested = syncOn; beginPlay(); cuePreview = false; hotPreview = -1; } break;
+        case Cmd::pause:     if (c.down) beginStop(); break;
 
         case Cmd::playToggle:
             if (! c.down || track == nullptr) break;
-            if (playing && ! cuePreview && hotPreview < 0)
-                playing = false;
+            if (playing && ! braking && ! cuePreview && hotPreview < 0)
+                beginStop();
             else
             {
                 if (! playing) syncSnapRequested = syncOn;
-                playing = true;
+                beginPlay();
                 cuePreview = false;
                 hotPreview = -1;
             }
+            break;
+
+        case Cmd::vinylTime:
+            if (c.index == 0) brakeSec = juce::jlimit (0.0, 10.0, c.value);
+            else if (c.index == 1) startSec = juce::jlimit (0.0, 10.0, c.value);
+            else releaseSec = juce::jlimit (0.0, 10.0, c.value);
+            break;
+        case Cmd::vinylBrakeSet:
+            if (c.index == 0) brakeOn = c.value > 0.5; else startOn = c.value > 0.5;
+            break;
+        case Cmd::throwSet:
+            throwThreshold = juce::jmax (0.0, c.value);
+            break;
+        case Cmd::slipToggle:
+        case Cmd::slipSet:
+            if (! c.down) break;
+            slip = c.cmd == Cmd::slipToggle ? ! slip : c.value > 0.5;
+            if (! slip) slipping = false;
+            break;
+        case Cmd::gainSet:
+            gainTarget = (float) juce::jlimit (0.0, 8.0, c.value);
             break;
 
         case Cmd::cue:
@@ -437,6 +508,7 @@ void Deck::apply (const Command& c)
                 if (hc.isLoop())
                 {
                     endAutoLoop();
+                    if (playing) slipBegin (2);
                     loopIn = hc.startSec;
                     loopOut = hc.endSec;
                     loopActive = true;
@@ -453,15 +525,19 @@ void Deck::apply (const Command& c)
                         const double frac = wrapHalf (track->grid.beatPosition (now));
                         target = track->grid.timeAtBeat (track->grid.beatPosition (hc.startSec) + frac);
                     }
+                    slipBegin (3);
                     jumpTo (target, false);
                 }
                 else
                 {
-                    hotPreview = i;
-                    hotPreviewReturn = hc.startSec;
-                    cuePoint = hc.startSec;
+                    // stopped: play on from the hot cue (like pressing play there, not a held cue)
+                    hotPreview = -1;
+                    cuePreview = false;
                     jumpTo (hc.startSec, false);
-                    playing = true;
+                    if (! playing) syncSnapRequested = syncOn;
+                    beginPlay();
+                    motor = 1.0;
+                    startRamp = false;
                 }
             }
             else if (hotPreview == i)
@@ -470,6 +546,8 @@ void Deck::apply (const Command& c)
                 playing = false;
                 jumpTo (hotPreviewReturn, false);
             }
+            else if (slipping && slipSource == 3)
+                slipEnd();
             break;
         }
 
@@ -488,20 +566,23 @@ void Deck::apply (const Command& c)
         case Cmd::memoryCuePrev:
         case Cmd::memoryCueNext:
         {
-            if (! c.down || track == nullptr || numLocs == 0) break;
+            // Moves between markers (locators and hot cues) while the track is stopped, like CALL on the CDJs
+            if (! c.down || track == nullptr || playing) break;
             const bool next = c.cmd == Cmd::memoryCueNext;
-            const Loc* best = nullptr;
-            for (int k = 0; k < numLocs; ++k)
+            double bestT = -1.0, bestEnd = -1.0;
+            auto consider = [&] (double t, double e)
             {
-                const auto& m = locs[(size_t) k];
-                if (next && m.start > now + 0.05 && (best == nullptr || m.start < best->start)) best = &m;
-                if (! next && m.start < now - 0.05 && (best == nullptr || m.start > best->start)) best = &m;
-            }
-            if (best != nullptr)
+                if (t < 0.0) return;
+                if (next ? (t > now + 0.05 && (bestT < 0.0 || t < bestT)) : (t < now - 0.05 && (bestT < 0.0 || t > bestT)))
+                { bestT = t; bestEnd = e; }
+            };
+            for (int k = 0; k < numLocs; ++k) consider (locs[(size_t) k].start, locs[(size_t) k].end);
+            for (int k = 0; k < 8; ++k) if (hotSet[(size_t) k]) consider (hot[(size_t) k].startSec, hot[(size_t) k].endSec);
+            if (bestT >= 0.0)
             {
-                cuePoint = best->start;
+                cuePoint = bestT;
                 jumpTo (cuePoint, false);
-                if (best->end > best->start) { loopIn = best->start; loopOut = best->end; loopActive = false; }
+                if (bestEnd > bestT) { loopIn = bestT; loopOut = bestEnd; loopActive = false; }
             }
             break;
         }
@@ -658,13 +739,23 @@ void Deck::apply (const Command& c)
             jogTouched = c.down;
             if (c.down && vinylMode && track != nullptr)
             {
+                if (coasting) { coasting = false; break; }   // caught the platter again: carry on scratching
+                if (playing && ! braking) slipBegin (1);
                 scratching = true;
                 scratchVelocity = 0.0;
                 jogTicksPending = 0.0;
+                sinceTickSec = 0.0;
             }
-            else if (! c.down)
+            else if (! c.down && scratching)
             {
-                scratching = false;
+                // A fast spin when letting go (a backspin, or a throw forwards) plays out until the platter slows down
+                const double t = playing ? tempoRatio : 0.0;
+                if (throwThreshold > 0.0 && (scratchVelocity < -throwThreshold || scratchVelocity > t + throwThreshold))
+                {
+                    coasting = true;
+                    coastSec = 0.0;
+                }
+                else endScratch();
             }
             break;
 
@@ -757,7 +848,9 @@ void Deck::apply (const Command& c)
 
         case Cmd::beatJump:
         {
-            if (! c.down || track == nullptr) break;
+            if (track == nullptr) break;
+            if (! c.down) { if (slipping && slipSource == 4) slipEnd(); break; }
+            if (playing) slipBegin (4);
             double target;
             if (haveGrid)
                 target = track->grid.timeAtBeat (track->grid.beatPosition (now) + c.value);
@@ -917,10 +1010,11 @@ void Deck::stemAutomationAt (double sec, std::array<float, 4>& g, std::array<int
         for (size_t s = 0; s < 4; ++s)
         {
             if (l.target[s] < 0) continue;
-            if (modes != nullptr) (*modes)[s] = l.mode;
+            if (modes != nullptr) (*modes)[s] = l.modeFor ((int) s);
             const float to = l.target[s] > 0 ? 1.0f : 0.0f;
-            if (l.fadeSec > 0.001 && sec < l.timeSec + l.fadeSec)
-                g[s] = g[s] + (to - g[s]) * (float) ((sec - l.timeSec) / l.fadeSec);
+            const double fs = l.fadeSecFor ((int) s);
+            if (fs > 0.001 && sec < l.timeSec + fs)
+                g[s] = g[s] + (to - g[s]) * (float) ((sec - l.timeSec) / fs);
             else
                 g[s] = to;
         }
@@ -1246,9 +1340,18 @@ void Deck::process (float* outL, float* outR, int n)
     // Jog wheel
     if (scratching)
     {
+        sinceTickSec = jogTicksPending != 0.0 ? 0.0 : sinceTickSec + blockSec;
         const double inst = (jogTicksPending * secPerTick) / blockSec;
         jogTicksPending = 0.0;
         scratchVelocity += (inst - scratchVelocity) * 0.4;
+        if (coasting)
+        {
+            // Let go of a fast spin: keep following the platter until it has nearly stopped (or settled to play speed)
+            coastSec += blockSec;
+            const double t = playing ? tempoRatio : 0.0;
+            if (coastSec > 0.04 && ((scratchVelocity > -0.2 && scratchVelocity < t + 0.15) || sinceTickSec > 0.12))
+                endScratch();
+        }
     }
     else if (jogTicksPending != 0.0)
     {
@@ -1272,12 +1375,42 @@ void Deck::process (float* outL, float* outR, int n)
     else
         tempoRatio = 1.0 + pitchFader * pitchRange;
 
+    // Vinyl speed adjust: the brake slows to a stop, the start (and letting go of a scratch) comes up to speed
+    if (! playing) braking = false;
+    if (braking)
+    {
+        motor -= blockSec / juce::jmax (0.01, brakeSec);
+        if (motor <= 0.0) { motor = 0.0; braking = false; playing = false; }
+    }
+    else if (playing && startRamp)
+    {
+        motor += blockSec / juce::jmax (0.01, startSec);
+        if (motor >= 1.0) { motor = 1.0; startRamp = false; }
+    }
+    else motor = 1.0;
+
+    // Slip: where the track would be without the scratch / loop / jump
+    if (loopActive && ! prevLoopActive && playing) slipBegin (2);
+    if (! loopActive && prevLoopActive && slipping && slipSource == 2) slipEnd();
+    prevLoopActive = loopActive;
+    if (slipping && slipWasPlaying) slipSec += blockSec * tempoRatio;
+
     double speed = 0.0;
     if (scratching)    speed = scratchVelocity;
-    else if (playing)  speed = tempoRatio + bendRate;
+    else if (playing)
+    {
+        speed = (tempoRatio + bendRate) * motor;
+        if (releaseT < 1.0)
+        {
+            speed = releaseFrom + (speed - releaseFrom) * releaseT;
+            releaseT = juce::jmin (1.0, releaseT + blockSec / juce::jmax (0.01, releaseSec));
+        }
+    }
+    else releaseT = 1.0;
 
     // Key lock and/or key shift go through the pitch-shifter; otherwise plain resampling (cheapest).
-    const bool useStretch = (keyLock || keyShift != 0) && playing && ! scratching && speed > 0.05;
+    // Brakes, starts and scratch releases sound like vinyl, so they skip it.
+    const bool useStretch = (keyLock || keyShift != 0) && playing && ! scratching && speed > 0.05 && motor >= 0.999 && releaseT >= 1.0;
     if (useStretch)
     {
         // Key lock off + key shift on: the tempo still bends the pitch like vinyl, plus the shift.
@@ -1363,6 +1496,19 @@ void Deck::process (float* outL, float* outR, int n)
         pos = (double) track->audio->numFrames - 1.0;
     }
 
+    // Auto gain (smoothed)
+    if (gainNow != gainTarget || gainNow != 1.0f)
+    {
+        const float g0 = gainNow, g1 = gainTarget;
+        for (int i = 0; i < n; ++i)
+        {
+            const float g = g0 + (g1 - g0) * (float) (i + 1) / (float) n;
+            outL[i] *= g;
+            outR[i] *= g;
+        }
+        gainNow = g1;
+    }
+
     auto rangeL = juce::FloatVectorOperations::findMinAndMax (outL, n);
     auto rangeR = juce::FloatVectorOperations::findMinAndMax (outR, n);
     pub.peakL = std::max (std::abs (rangeL.getStart()), std::abs (rangeL.getEnd()));
@@ -1397,7 +1543,14 @@ void Deck::publish()
     pub.loopInSec = loopIn;
     pub.loopOutSec = loopOut;
     pub.loopActive = loopActive;
-    pub.playing = playing;
+    pub.playing = playing && ! braking;
+    pub.braking = braking;
+    pub.slip = slip;
+    pub.slipping = slipping;
+    pub.slipSec = slipping ? slipSec : -1.0;
+    pub.brakeOn = brakeOn;
+    pub.startOn = startOn;
+    pub.gain = gainTarget;
     pub.keyLock = keyLock;
     pub.keyShift = keyShift;
     pub.sync = syncOn;

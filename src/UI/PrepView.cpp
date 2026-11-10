@@ -106,7 +106,7 @@ void PrepView::paint (juce::Graphics& g)
     const auto& st = deck().state();
     const bool loaded = track != nullptr;
 
-    psyched::paintPanel (g, getLocalBounds().toFloat().reduced (2.0f), Theme::accent);
+    psyched::paintPanel (g, getLocalBounds().toFloat().reduced (2.0f), Theme::deckColour (deckIndex));   // follows PREP's colour
 
     // --- Header ------------------------------------------------------------------
     {
@@ -142,7 +142,7 @@ void PrepView::paint (juce::Graphics& g)
                 right.removeFromLeft (62.0f);
                 auto name = editor.activeEdit (deckIndex);
                 const bool any = editor.hasEdits (deckIndex);
-                juce::String text = name.isNotEmpty() ? name : (any ? juce::String ("UNSAVED EDITS") : juce::String ("NO EDITS"));
+                juce::String text = name.isNotEmpty() ? name : (any ? juce::String ("UNSAVED EDITS") : juce::String ("ORIGINAL"));
                 if (name.isNotEmpty() && editor.activeEditModified (deckIndex)) text << " *";
                 auto vc = right.removeFromLeft (70.0f).reduced (1.0f, 9.0f);
                 vc = vc.withLeft (vc.getRight() - juce::jlimit (90.0f, 210.0f, psyched::Fonts::label().getStringWidthFloat ("EDIT: " + text.toUpperCase()) + 30.0f));
@@ -296,6 +296,14 @@ void PrepView::paint (juce::Graphics& g)
         chip (g, zoom.removeFromLeft (26.0f), "+", false, Theme::sync, "zoom.in");
         r.removeFromRight (10.0f);
 
+        {
+            // previous / next marker (hot cues and locators), when stopped
+            const bool canCall = track != nullptr && ! deck().state().playing.load();
+            chip (g, r.removeFromLeft (22.0f), "|<", false, canCall ? Theme::bad : Theme::textFaint, "mark.prev");
+            r.removeFromLeft (2.0f);
+            chip (g, r.removeFromLeft (22.0f), ">|", false, canCall ? Theme::bad : Theme::textFaint, "mark.next");
+            r.removeFromLeft (10.0f);
+        }
         psyched::paintLabel (g, "Jump", r.removeFromLeft (36.0f), juce::Justification::centredLeft);
         const std::pair<int, const char*> sizes[] = { { 1, "1 BEAT" }, { 4, "1 BAR" }, { 8, "2 BARS" }, { 16, "4 BARS" } };
         const float gw = juce::jlimit (60.0f, 100.0f, (r.getWidth() - 3 * 6.0f) / 4.0f);   // each size tight between its buttons
@@ -654,11 +662,21 @@ void PrepView::paintList (juce::Graphics& g, juce::Rectangle<float> r)
             {
                 auto b = juce::Rectangle<float> (icon.getX() + (float) (s % 2) * icon.getWidth() * 0.5f, icon.getY() + (float) (s / 2) * icon.getHeight() * 0.5f,
                                                  icon.getWidth() * 0.5f - 1.0f, icon.getHeight() * 0.5f - 1.0f);
-                paintStemChangeIcon (g, b, s, l.target[(size_t) s], l.fadeBeats > 0.0f);
+                paintStemChangeIcon (g, b, s, l.target[(size_t) s], l.fadeFor (s) > 0.0f);
             }
             name = l.name.isNotEmpty() ? l.name : stemLocatorSummary (l);
-            detail = (l.mode == 1 ? juce::String ("LP ") : l.mode == 2 ? juce::String ("HP ") : juce::String())
-                   + (l.fadeBeats > 0.0f ? juce::String (l.fadeBeats, l.fadeBeats < 1.0f ? 2 : 0) + " beats" : juce::String ("cut"));
+            // one way and time for all the stems that change, or MIXED when they differ
+            int m0 = -1; float f0 = -1.0f; bool same = true;
+            for (int s = 0; s < 4; ++s)
+                if (l.target[(size_t) s] >= 0)
+                {
+                    if (m0 < 0) { m0 = l.modeFor (s); f0 = l.fadeFor (s); }
+                    else same = same && m0 == l.modeFor (s) && std::abs (f0 - l.fadeFor (s)) < 0.01f;
+                }
+            if (! same) detail = "MIXED";
+            else
+                detail = (m0 == 1 ? juce::String ("LP ") : m0 == 2 ? juce::String ("HP ") : juce::String())
+                       + (f0 > 0.0f ? juce::String (f0, f0 < 1.0f ? 2 : 0) + " beats" : juce::String ("cut"));
         }
         else if (e.kind == 6)
         {
@@ -794,6 +812,8 @@ void PrepView::action (const juce::String& id, bool down)
     }
     else if (id == "locator.add") post (C::locatorAdd, -1.0);
     else if (id == "skip.set") post (C::skipSet);
+    else if (id == "mark.prev") post (C::memoryCuePrev);
+    else if (id == "mark.next") post (C::memoryCueNext);
     else if (id.startsWith ("jump."))
     {
         const double beats = id.fromLastOccurrenceOf (".", false, false).getDoubleValue();
@@ -839,7 +859,7 @@ void PrepView::mouseDown (const juce::MouseEvent& e)
     if (r->kind == 12)   // a stem: click mutes, drag sets its level (or filter), right-click: level / filter
     {
         const int stem = r->action.getTrailingIntValue();
-        if (e.mods.isPopupMenu()) { showStemModeMenu (stem, r->r); return; }
+        if (e.mods.isPopupMenu()) return;
         if (e.getNumberOfClicks() >= 2)
         {
             // double-click: back to the centre (and undo the first click's mute)
@@ -853,7 +873,7 @@ void PrepView::mouseDown (const juce::MouseEvent& e)
     if (r->kind == 13 || r->kind == 14)
     {
         const int stem = r->kind == 14 ? r->action.getTrailingIntValue() : -1;
-        if (e.mods.isPopupMenu()) { showStemModeMenu (stem, r->r); return; }
+        if (e.mods.isPopupMenu()) return;
         int m;
         if (stem >= 0) m = 1 - st.stemMode[(size_t) stem].load();
         else
@@ -1585,31 +1605,29 @@ namespace
                 {
                     auto& t = loc.target[(size_t) s];
                     t = t < 0 ? 0 : t == 0 ? 1 : -1;   // no change > out > in > no change
+                    tidy();
                     refresh();
                     if (onChange) onChange (loc);
                 };
             }
-            addAndMakeVisible (fade);
-            const float steps[] = { 0.0f, 1.0f, 2.0f, 4.0f, 8.0f, 16.0f, 32.0f };
-            for (int i = 0; i < 7; ++i)
-                fade.addItem (steps[i] == 0.0f ? juce::String ("Straight away (no fade)") : "Over " + juce::String ((int) steps[i]) + (steps[i] == 1.0f ? " beat" : " beats"), i + 1);
-            int sel = 1;
-            for (int i = 0; i < 7; ++i) if (std::abs (steps[i] - loc.fadeBeats) < 0.01f) sel = i + 1;
-            fade.setSelectedId (sel, juce::dontSendNotification);
-            fade.onChange = [this, steps]
+            // each stem has its own way (level / low-pass / high-pass) and time
+            static const float steps[] = { 0.0f, 1.0f, 2.0f, 4.0f, 8.0f, 16.0f, 32.0f, 64.0f };
+            for (int s = 0; s < 4; ++s)
             {
-                loc.fadeBeats = steps[juce::jlimit (0, 6, fade.getSelectedId() - 1)];
-                refresh();
-                if (onChange) onChange (loc);
-            };
-            addAndMakeVisible (mode);
-            mode.addItemList ({ "Level fade (volume)", "Low-pass filter sweep", "High-pass filter sweep" }, 1);
-            mode.setSelectedId (juce::jlimit (0, 2, loc.mode) + 1, juce::dontSendNotification);
-            mode.onChange = [this]
-            {
-                loc.mode = mode.getSelectedId() - 1;
-                if (onChange) onChange (loc);
-            };
+                auto& m = modes[(size_t) s];
+                auto& f = fades[(size_t) s];
+                addAndMakeVisible (m);
+                addAndMakeVisible (f);
+                m.addItemList ({ "VOL", "LOW-PASS", "HIGH-PASS" }, 1);
+                m.setSelectedId (juce::jlimit (0, 2, loc.modeFor (s)) + 1, juce::dontSendNotification);
+                m.onChange = [this, s] { loc.stemMode[(size_t) s] = modes[(size_t) s].getSelectedId() - 1; tidy(); if (onChange) onChange (loc); };
+                for (int i = 0; i < 8; ++i)
+                    f.addItem (steps[i] == 0.0f ? juce::String ("CUT") : juce::String ((int) steps[i]) + (steps[i] == 1.0f ? " BEAT" : " BEATS"), i + 1);
+                int sel = 1;
+                for (int i = 0; i < 8; ++i) if (std::abs (steps[i] - loc.fadeFor (s)) < 0.01f) sel = i + 1;
+                f.setSelectedId (sel, juce::dontSendNotification);
+                f.onChange = [this, s] { loc.stemFade[(size_t) s] = steps[juce::jlimit (0, 7, fades[(size_t) s].getSelectedId() - 1)]; tidy(); refresh(); if (onChange) onChange (loc); };
+            }
             addAndMakeVisible (del);
             del.onClick = [this]
             {
@@ -1617,45 +1635,71 @@ namespace
                 if (auto* box = findParentComponentOfClass<juce::CallOutBox>()) box->dismiss();
             };
             refresh();
-            setSize (380, 178);
+            setSize (460, 206);
         }
 
         void paint (juce::Graphics& g) override
         {
             g.fillAll (juce::Colour (0xff141221));
-            psyched::paintLabel (g, "Stem locator - click a stem: no change / fade out / fade in", getLocalBounds().removeFromTop (22).reduced (8, 0).toFloat(),
-                                 juce::Justification::centredLeft, Theme::textDim, 9.0f);
+            psyched::paintLabel (g, "Stem locator - click a stem: no change / fade out / fade in; each has its own way and time",
+                                 getLocalBounds().removeFromTop (22).reduced (8, 0).toFloat(), juce::Justification::centredLeft, Theme::textDim, 9.0f);
             auto r = getLocalBounds().reduced (8);
-            r.removeFromTop (18 + 44 + 8);
-            psyched::paintLabel (g, "HOW", r.removeFromTop (26).removeFromLeft (40).toFloat(), juce::Justification::centredLeft, Theme::textFaint, 9.0f);
-            r.removeFromTop (6);
-            psyched::paintLabel (g, "TIME", r.removeFromTop (26).removeFromLeft (40).toFloat(), juce::Justification::centredLeft, Theme::textFaint, 9.0f);
+            r.removeFromTop (18 + 44 + 6);
+            psyched::paintLabel (g, "HOW", r.removeFromTop (24).removeFromLeft (40).toFloat(), juce::Justification::centredLeft, Theme::textFaint, 9.0f);
+            r.removeFromTop (4);
+            psyched::paintLabel (g, "TIME", r.removeFromTop (24).removeFromLeft (40).toFloat(), juce::Justification::centredLeft, Theme::textFaint, 9.0f);
         }
 
         void resized() override
         {
             auto r = getLocalBounds().reduced (8);
             r.removeFromTop (18);
-            auto row = r.removeFromTop (44);
+            auto cols = r.withTrimmedLeft (44);
+            auto row = cols.removeFromTop (44);
             const int w = (row.getWidth() - 3 * 4) / 4;
-            for (auto& b : buttons) { b.setBounds (row.removeFromLeft (w)); row.removeFromLeft (4); }
-            r.removeFromTop (8);
-            mode.setBounds (r.removeFromTop (26).withTrimmedLeft (44));
-            r.removeFromTop (6);
-            auto bottom = r.removeFromTop (26).withTrimmedLeft (44);
-            del.setBounds (bottom.removeFromRight (74));
-            bottom.removeFromRight (6);
-            fade.setBounds (bottom);
+            for (int s = 0; s < 4; ++s)
+            {
+                const int x = row.getX() + s * (w + 4);
+                buttons[(size_t) s].setBounds (x, row.getY(), w, 44);
+                modes[(size_t) s].setBounds (x, row.getBottom() + 6, w, 24);
+                fades[(size_t) s].setBounds (x, row.getBottom() + 6 + 24 + 4, w, 24);
+            }
+            del.setBounds (getLocalBounds().reduced (8).removeFromBottom (26).removeFromRight (74));
         }
 
     private:
+        /** The locator's overall time / way (for older versions and the list): the longest, and the first stem's way. */
+        void tidy()
+        {
+            float longest = 0.0f;
+            int firstMode = -1;
+            for (int s = 0; s < 4; ++s)
+                if (loc.target[(size_t) s] >= 0)
+                {
+                    longest = juce::jmax (longest, loc.fadeFor (s));
+                    if (firstMode < 0) firstMode = loc.modeFor (s);
+                }
+            for (int s = 0; s < 4; ++s)
+            {
+                if (loc.stemFade[(size_t) s] < 0.0f) loc.stemFade[(size_t) s] = loc.fadeBeats;
+                if (loc.stemMode[(size_t) s] < 0) loc.stemMode[(size_t) s] = loc.mode;
+            }
+            loc.fadeBeats = longest;
+            if (firstMode >= 0) loc.mode = firstMode;
+        }
+
         void refresh()
         {
             for (int s = 0; s < 4; ++s)
             {
+                const bool used = loc.target[(size_t) s] >= 0;
                 buttons[(size_t) s].state = loc.target[(size_t) s];
-                buttons[(size_t) s].fades = loc.fadeBeats > 0.0f;
+                buttons[(size_t) s].fades = loc.fadeFor (s) > 0.0f;
                 buttons[(size_t) s].repaint();
+                modes[(size_t) s].setEnabled (used);
+                fades[(size_t) s].setEnabled (used);
+                modes[(size_t) s].setAlpha (used ? 1.0f : 0.35f);
+                fades[(size_t) s].setAlpha (used ? 1.0f : 0.35f);
             }
         }
 
@@ -1663,7 +1707,7 @@ namespace
         std::function<void (const StemLocator&)> onChange;
         std::function<void()> onDelete;
         std::array<StemToggle, 4> buttons;
-        juce::ComboBox fade, mode;
+        std::array<juce::ComboBox, 4> modes, fades;
         juce::TextButton del { "DELETE" };
     };
 }
@@ -1870,7 +1914,7 @@ void PrepView::showEditVersionMenu (juce::Rectangle<float> area)
     m.addSectionHeader ("Edit versions - skips, loop modes, stem locators, phrase order and repeats");
     for (int i = 0; i < (int) names.size(); ++i)
         m.addItem (10 + i, names[(size_t) i], true, names[(size_t) i] == active);
-    m.addItem (1, "No edits (the track as recorded)", true, active.isEmpty() && ! editor.hasEdits (deckIndex));
+    m.addItem (1, "Original (the track as recorded)", true, active.isEmpty() && ! editor.hasEdits (deckIndex));
     m.addSeparator();
     m.addItem (2, "Save the current edits as a new version...");
     if (active.isNotEmpty())

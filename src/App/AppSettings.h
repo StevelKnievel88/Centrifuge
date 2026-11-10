@@ -61,6 +61,7 @@ struct AppSettings
     int previewStyle = 1;              // browser preview column: 1 3-band, 2 RGB, 3 single colour, 4 stems
     int previewShape = 1;              // 0 full, 1 half (bars from the bottom)       // browser column order and widths
     juce::uint32 singleColour = 0xff3d9bff;
+    juce::uint32 previewColour = 0xff3d9bff;   // the browser preview column's single colour
     bool singleFollowsDeck = false;
     std::array<bool, 3> editView { true, true, true };   // decks 1, 2 and PREP: show the edited version (as it will play)    // single-colour waveforms use each deck's colour instead
     std::array<int, 4> stemLayerOrder { 2, 1, 3, 0 };          // stems from back to front (0 drums, 1 bass, 2 inst, 3 vocals)
@@ -80,6 +81,14 @@ struct AppSettings
     bool quantize = true;              // quantize on for both decks at start-up
     double jogTicksPerRev = 720.0;
     bool ledFeedback = true;
+    // Vinyl speed adjust, per deck: brake (stop), start, release after a scratch (seconds), and brake / start on or off
+    std::array<double, 2> brakeSec { 0.8, 0.8 }, startSec { 0.4, 0.4 }, releaseSec { 0.0, 0.0 };
+    std::array<bool, 2> brakeOn { false, false }, startOn { false, false };
+    bool throwOn = true;               // backspin / throw plays out after letting go of a fast spin
+    double throwSpeed = 0.6;           // how fast a spin has to be (x normal speed) to count as a throw
+    bool autoGain = false;             // match each loaded track's loudness to the master deck
+    float masterVolume = 1.0f;         // Centrifuge's own output level
+    std::array<juce::String, 2> deckController;   // which MIDI device drives each deck ("" = any)
 
     // Stems
     juce::String modelPath;            // empty = models/htdemucs.onnx next to the app

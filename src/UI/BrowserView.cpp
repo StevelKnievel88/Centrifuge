@@ -935,6 +935,14 @@ void BrowserView::scroll (int delta)
     table.repaint();
 }
 
+void BrowserView::focusTracks()
+{
+    treeFocused = false;
+    if (table.getSelectedRow() < 0 && ! rows.empty()) { table.selectRow (0); table.scrollToEnsureRowIsOnscreen (0); }
+    tree.repaint();
+    table.repaint();
+}
+
 void BrowserView::enter()
 {
     if (treeFocused)

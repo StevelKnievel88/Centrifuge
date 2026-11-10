@@ -28,6 +28,13 @@ namespace
         if (l.fadeBeats > 0.0f) o->setProperty ("f", l.fadeBeats);
         if (l.mode != 0) o->setProperty ("m", l.mode);
         if (l.name.isNotEmpty()) o->setProperty ("n", l.name);
+        bool own = false;
+        for (int s = 0; s < 4; ++s) own = own || l.stemFade[(size_t) s] >= 0.0f || l.stemMode[(size_t) s] >= 0;
+        if (own)
+        {
+            o->setProperty ("sf", juce::Array<juce::var> { l.stemFade[0], l.stemFade[1], l.stemFade[2], l.stemFade[3] });
+            o->setProperty ("sm", juce::Array<juce::var> { l.stemMode[0], l.stemMode[1], l.stemMode[2], l.stemMode[3] });
+        }
         return juce::var (o);
     }
 
@@ -40,6 +47,10 @@ namespace
         l.fadeBeats = (float) (double) v.getProperty ("f", 0.0);
         l.mode = juce::jlimit (0, 2, (int) v.getProperty ("m", 0));
         l.name = v.getProperty ("n", {}).toString();
+        if (auto* a = v["sf"].getArray())
+            for (int i = 0; i < juce::jmin (4, a->size()); ++i) l.stemFade[(size_t) i] = (float) (double) (*a)[i];
+        if (auto* a = v["sm"].getArray())
+            for (int i = 0; i < juce::jmin (4, a->size()); ++i) l.stemMode[(size_t) i] = juce::jlimit (-1, 2, (int) (*a)[i]);
         return l;
     }
 

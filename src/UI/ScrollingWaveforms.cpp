@@ -410,9 +410,11 @@ void ScrollingWaveforms::paintLane (juce::Graphics& g, int d, int lane, juce::Re
             auto area = wave;
             if (stemsSeparate)
             {
+                // vocals at the top, then inst, bass, drums at the bottom
+                const int row = 3 - s;
                 const int rowH = wave.getHeight() / 4;
-                area = juce::Rectangle<int> (wave.getX(), wave.getY() + s * rowH, wave.getWidth(), s == 3 ? wave.getHeight() - 3 * rowH : rowH);
-                if (s > 0) { g.setColour (Theme::line.withAlpha (0.5f)); g.fillRect (area.getX(), area.getY(), area.getWidth(), 1); }
+                area = juce::Rectangle<int> (wave.getX(), wave.getY() + row * rowH, wave.getWidth(), row == 3 ? wave.getHeight() - 3 * rowH : rowH);
+                if (row > 0) { g.setColour (Theme::line.withAlpha (0.5f)); g.fillRect (area.getX(), area.getY(), area.getWidth(), 1); }
             }
             auto& tc = dv.stemTiles[(size_t) lane][(size_t) s];
             const auto col = Theme::stemColour (s);
@@ -656,7 +658,7 @@ void ScrollingWaveforms::paintOverlays (juce::Graphics& g, int d, juce::Rectangl
     // Stem locators (the four stems' state from here) and notes
     for (auto& l : track->stemLocs)
         if (visible (l.timeSec))
-            paintStemLocatorFlag (g, l, xOf (l.timeSec), withFlags ? flagTop + markerBand : (float) wave.getY(), (float) (l.fadeSec * pps),
+            paintStemLocatorFlag (g, l, xOf (l.timeSec), withFlags ? flagTop + markerBand : (float) wave.getY(), (float) pps,
                                   wave.toFloat(), stemRows, withFlags);
     for (auto& n : track->notes)
         if (visible (n.timeSec))
@@ -897,8 +899,9 @@ void ScrollingWaveforms::mouseDrag (const juce::MouseEvent& e)
     {
         auto r = deckBounds (dragDivider);
         const float share = (float) (e.y - r.getY() - dividerH / 2) / (float) juce::jmax (1, r.getHeight() - dividerH);
-        // Both decks keep the same split
-        for (int k = 0; k < numSlots(); ++k) setLaneSplit (k, share);
+        // The decks mirror each other: deck 2's split is flipped so the lanes meet in the middle the same way
+        const float s0 = dragDivider == 0 ? share : 1.0f - share;
+        for (int k = 0; k < numSlots(); ++k) setLaneSplit (k, juce::jlimit (0.1f, 0.9f, k == 0 ? s0 : 1.0f - s0));
         repaint();
         return;
     }

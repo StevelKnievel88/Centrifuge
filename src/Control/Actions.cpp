@@ -27,7 +27,10 @@ static std::vector<ActionDef> buildActions()
         add (p + "jog.touch",   "Jog: top touch",        D + " - Jog", B, d);
         add (p + "jog.turn",    "Jog: turn (top)",       D + " - Jog", E, d);
         add (p + "jog.side",    "Jog: turn (side / pitch bend)", D + " - Jog", E, d);
-        add (p + "jog.vinyl",   "Vinyl mode on/off",     D + " - Jog", B, d, true);
+        add (p + "jog.vinyl",   "Vinyl / CDJ mode",      D + " - Jog", B, d, true);
+        add (p + "slip",        "Slip on / off",         D + " - Jog", B, d, true);
+        add (p + "vinyl.brake", "Vinyl brake (stop) on / off", D + " - Jog", B, d, true);
+        add (p + "vinyl.start", "Vinyl start on / off",  D + " - Jog", B, d, true);
 
         add (p + "pitch",       "Tempo slider",          D + " - Tempo", C, d);
         add (p + "pitchrange",  "Tempo range (6/10/25/50 %/Wide)", D + " - Tempo", B, d);
@@ -46,8 +49,8 @@ static std::vector<ActionDef> buildActions()
             add (p + "hotcue." + juce::String (h + 1) + ".delete", "Delete hot cue " + letter, D + " - Hot cues", B, d);
         }
 
-        add (p + "callprev",       "Locator: previous (call)",    D + " - Locators & skips", B, d);
-        add (p + "callnext",       "Locator: next (call)",        D + " - Locators & skips", B, d);
+        add (p + "callprev",       "Previous marker (when stopped)", D + " - Locators & skips", B, d);
+        add (p + "callnext",       "Next marker (when stopped)",     D + " - Locators & skips", B, d);
         add (p + "locator.add",    "Locator: add (memory)",       D + " - Locators & skips", B, d);
         add (p + "locator.delete", "Locator: delete current",     D + " - Locators & skips", B, d);
         add (p + "skip.set",       "Skip: set start, then end (press twice)", D + " - Locators & skips", B, d, true);
@@ -122,6 +125,7 @@ static std::vector<ActionDef> buildActions()
     add ("view.zoomin",     "Waveform zoom in",        "View", B, -1);
     add ("view.zoomout",    "Waveform zoom out",       "View", B, -1);
     add ("view.wavemode",   "Stem lanes: show stems / 3-band", "View", B, -1);
+    add ("master.volume",   "Master volume (Centrifuge's output)", "View", ActionKind::continuous, -1);
     add ("view.fold",       "Edited view on / off (skips folded out, phrases in play order)", "View", B, -1);
     return a;
 }

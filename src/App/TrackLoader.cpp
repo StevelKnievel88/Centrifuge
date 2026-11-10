@@ -59,6 +59,7 @@ void TrackLoader::applyVersion (LoadedTrack& t, const TrackVersion& v)
         // fade length in seconds at the tempo where it starts
         const double beatLen = t.grid.isValid() ? t.grid.beatLengthAt (l.timeSec) : (t.info.bpm > 0 ? 60.0 / t.info.bpm : 0.5);
         l.fadeSec = juce::jmax (0.0, (double) l.fadeBeats * beatLen);
+        for (size_t s = 0; s < 4; ++s) l.stemFadeSec[s] = juce::jmax (0.0, (double) l.stemFade[s] * beatLen);
         t.stemLocs.push_back (l);
     }
     std::sort (t.stemLocs.begin(), t.stemLocs.end(), [] (auto& a, auto& b) { return a.timeSec < b.timeSec; });

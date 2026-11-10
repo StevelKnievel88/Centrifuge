@@ -38,6 +38,12 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
     void skipSplash();
     bool keyPressed (const juce::KeyPress&) override;
+    static double loudnessOf (const TrackAudio& a);
+    void applyAutoGain (int deck, LoadedTrack::Ptr t);
+    std::map<int, double> loudness;   // by track serial (dB)
+    juce::Rectangle<int> masterArea;
+    juce::Slider masterVolume;
+    float shownPeak = 0.0f;
 
     // Used by the command-line demo / preview mode
     AudioEngine& getEngine() { return engine; }

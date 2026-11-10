@@ -2,6 +2,7 @@
 #include "ActionRouter.h"
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <map>
+#include <set>
 
 namespace orbit
 {
@@ -20,6 +21,7 @@ struct MidiBinding
     Mode mode = Mode::absolute7;
     bool invert = false;
     double sensitivity = 1.0;   // encoders: multiplier on steps
+    int ledOn = 127, ledOff = 0;  // values sent to light the button (pads that take a colour from the value)
 
     juce::String describe() const;
     juce::var toVar() const;
@@ -44,6 +46,10 @@ public:
     juce::StringArray getOpenInputNames() const;
     bool isXdjConnected() const { return xdjConnected.load(); }
     juce::String getXdjStatus() const;
+    /** The connected controllers' names, or "No device detected". */
+    juce::String getControllerSummary() const;
+    /** Which device drives each deck ("" = any). */
+    void setDeckControllers (const juce::String& deck1, const juce::String& deck2);
 
     // Mapping -----------------------------------------------------------------
     std::vector<MidiBinding> getBindings() const;
@@ -61,6 +67,19 @@ public:
     void cancelLearn();
     juce::String getLearningAction() const;
     std::function<void (const MidiBinding&)> onLearned;   // message thread
+
+    /** More than one control was heard while learning: the UI asks which one to use (message thread).
+        Each entry describes a control; `best` is the most likely one. Answer with chooseLearned / cancelLearn. */
+    struct LearnChoice { MidiBinding binding; juce::String what; int count = 0; };
+    std::function<void (const std::vector<LearnChoice>&, int best)> onLearnChoice;
+    void chooseLearned (int index);
+    bool isChoosing() const;
+
+    /** Functions guided setup always passes over ("don't map" ticks). Saved with the mapping. */
+    std::set<juce::String> getNoMap() const;
+    void setNoMap (const juce::String& actionId, bool noMap);
+    /** Sends a test value to a binding's control (to try LED colours). */
+    void sendTestLed (const MidiBinding& b, int value);
 
     // Monitor -----------------------------------------------------------------
     struct MonitorEntry
@@ -81,6 +100,7 @@ public:
         MidiBinding::Type type;
         int lastValue;
         juce::uint32 count;
+        double lastMs = 0.0;
     };
     std::vector<SeenControl> getSeenControls() const;
 
@@ -111,11 +131,17 @@ private:
     mutable juce::CriticalSection learnLock;
     juce::String learnAction;
     bool learnAdd = false;
-    bool learnHasCandidate = false;
-    MidiBinding learnCandidate;
-    double learnStartedMs = 0.0;
-    std::vector<int> learnValues;
-    bool learnSaw14BitLsb = false;
+    struct Candidate { MidiBinding b; std::vector<int> values; double firstMs = 0.0; bool saw14 = false; };
+    std::vector<Candidate> learnCands;
+    std::vector<LearnChoice> pendingChoice;
+    std::vector<Candidate> pendingCands;
+    bool choosing = false;
+    double learnFirstMs = 0.0;
+    std::map<juce::String, double> learnIgnore;   // controls still moving when learning began (leftovers)
+    std::set<juce::String> noMap;
+    std::array<juce::String, 2> deckDevice;
+    MidiBinding withDetectedMode (const Candidate& c) const;
+    void bind (MidiBinding b, bool add);
 
     // Monitor
     mutable juce::SpinLock monitorLock;

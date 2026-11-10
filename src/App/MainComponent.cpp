@@ -43,10 +43,18 @@ MainComponent::MainComponent()
                        settings.usbRoots);
 
     router.onAppAction = [this] (const juce::String& id, int deck, const ActionValue& v) { handleAppAction (id, deck, v); };
+    mapping.setDeckControllers (settings.deckController[0], settings.deckController[1]);
+    mapping.onDeckController = [this] (int d, const juce::String& dev)
+    {
+        settings.deckController[(size_t) d] = dev;
+        settings.save();
+        midi.setDeckControllers (settings.deckController[0], settings.deckController[1]);
+    };
 
     loader.onLoaded = [this] (int deck, LoadedTrack::Ptr t)
     {
         if (deck < 2) (deck == 0 ? deck1 : deck2).setLoadingText ({});
+        if (deck < 2) applyAutoGain (deck, t);
         editor.trackLoaded (deck, t);
         waves.forceRedraw();
         if (t != nullptr && t->waveform != nullptr)
@@ -83,6 +91,7 @@ MainComponent::MainComponent()
         dp->setEditor (&editor);
         dp->onRenameCue = [this] (int d, bool hot, int i, juce::String cur) { askRename (d, hot, i, cur); };
         dp->onSetBpm = [this] (int d) { askBpm (d); };
+        dp->onOpenSettings = [this] { showPage (3); };
         dp->onDeckColour = [this] (int d, juce::Colour c)
         {
             settings.deckColours[(size_t) d] = c.getARGB();
@@ -215,6 +224,18 @@ MainComponent::MainComponent()
         t->onClick = [this, p = p] { showPage (p); };
     }
 
+    addAndMakeVisible (masterVolume);
+    masterVolume.setSliderStyle (juce::Slider::LinearHorizontal);
+    masterVolume.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+    masterVolume.setRange (0.0, 1.0, 0.0);
+    masterVolume.setSkewFactor (2.0);
+    masterVolume.setDoubleClickReturnValue (true, 1.0);
+    masterVolume.setValue (settings.masterVolume, juce::dontSendNotification);
+    masterVolume.setTooltip ("Centrifuge's output volume (double-click = full)");
+    masterVolume.setColour (juce::Slider::trackColourId, Theme::accent);
+    masterVolume.onValueChange = [this] { settings.masterVolume = (float) masterVolume.getValue(); engine.setMasterVolume (settings.masterVolume); };
+    masterVolume.onDragEnd = [this] { settings.save(); };
+
     addChildComponent (about);
     addChildComponent (exportView);
     addChildComponent (conflictsView);
@@ -266,6 +287,18 @@ void MainComponent::applySettings()
         engine.setSumToMaster (settings.sumToMaster == 1);
 
     router.setJogSensitivity (settings.jogTicksPerRev);
+    for (int d = 0; d < 2; ++d)
+    {
+        auto& dk = engine.deck (d);
+        dk.post (Deck::Cmd::vinylTime, settings.brakeSec[(size_t) d], 0);
+        dk.post (Deck::Cmd::vinylTime, settings.startSec[(size_t) d], 1);
+        dk.post (Deck::Cmd::vinylTime, settings.releaseSec[(size_t) d], 2);
+        dk.post (Deck::Cmd::vinylBrakeSet, settings.brakeOn[(size_t) d] ? 1.0 : 0.0, 0);
+        dk.post (Deck::Cmd::vinylBrakeSet, settings.startOn[(size_t) d] ? 1.0 : 0.0, 1);
+        dk.post (Deck::Cmd::throwSet, settings.throwOn ? settings.throwSpeed : 0.0);
+    }
+    engine.setMasterVolume (settings.masterVolume);
+    midi.setDeckControllers (settings.deckController[0], settings.deckController[1]);
     midi.setLedFeedbackEnabled (settings.ledFeedback);
     waves.setVisibleSeconds (settings.visibleSeconds);
     waves.setMaxFps (settings.maxFps);
@@ -310,7 +343,7 @@ void MainComponent::applySettings()
         dp->setOverviewStyle (settings.overviewStyle, settings.overviewShape == 1,
                               settings.singleFollowsDeck ? Theme::deckColour (dp == &deck1 ? 0 : 1) : juce::Colour (settings.singleColour));
     router.setStemMatrix (settings.stemMatrix);
-    browser.setPreviewStyle (settings.previewStyle, settings.previewShape == 1, juce::Colour (settings.singleColour));
+    browser.setPreviewStyle (settings.previewStyle, settings.previewShape == 1, juce::Colour (settings.previewColour));
     phaseMeter.setOptions (settings.phraseBars, settings.phraseFollow, settings.phraseBrackets);
 
     // Quantize: applied at start-up and when the setting changes (each deck's button can still toggle it).
@@ -378,8 +411,9 @@ void MainComponent::handleAppAction (const juce::String& id, int deck, const Act
     else if (id == "browse.tree")    { if (v.down) browser.toggleFocus(); }
     else if (id == "browse.load1")   { if (v.down) browser.loadSelected (0); }
     else if (id == "browse.load2")   { if (v.down) browser.loadSelected (1); }
-    else if (id == "view.browser")   { if (v.down) { settings.showBrowser = ! settings.showBrowser; resized(); settings.save(); } }
+    else if (id == "view.browser")   { if (v.down) { settings.showBrowser = ! settings.showBrowser; resized(); settings.save(); if (settings.showBrowser) browser.focusTracks(); } }
     else if (id == "view.zoom")      { waves.setVisibleSeconds (waves.getVisibleSeconds() * std::pow (1.1, -v.delta)); }
+    else if (id == "master.volume")  masterVolume.setValue (v.value);
     else if (id == "view.zoomin")    { if (v.down) waves.setVisibleSeconds (waves.getVisibleSeconds() / 1.25); }
     else if (id == "view.zoomout")   { if (v.down) waves.setVisibleSeconds (waves.getVisibleSeconds() * 1.25); }
     else if (id == "view.wavemode")  { if (v.down) waves.setStemsHidden (! waves.getStemsHidden()); }
@@ -462,7 +496,19 @@ void MainComponent::timerCallback()
         browser.refreshSources();
     }
 
-    const auto newMidi = midi.getXdjStatus();
+    const auto newMidi = midi.getControllerSummary();
+    for (int d = 0; d < 2; ++d)
+    {
+        // brake / start switched from the controller or the deck: remember it
+        const auto& st = engine.deck (d).state();
+        if (st.brakeOn.load() != settings.brakeOn[(size_t) d] || st.startOn.load() != settings.startOn[(size_t) d])
+        {
+            settings.brakeOn[(size_t) d] = st.brakeOn.load();
+            settings.startOn[(size_t) d] = st.startOn.load();
+            settings.save();
+        }
+    }
+    if (std::abs (engine.getMasterPeak() - shownPeak) > 0.01f) { shownPeak = engine.getMasterPeak(); repaint (masterArea); }
     const bool newXdj = midi.isXdjConnected();
     const auto newAudio = engine.getDeviceDescription();
     const double newCpu = engine.getCpuUsage();
@@ -504,7 +550,19 @@ void MainComponent::paint (juce::Graphics& g)
     psyched::paintWordmark (g, logo.withTrimmedLeft (40.0f), "Centrifuge", 0, psyched::Signature::spin, 17.0f);
 
     // Status pills (right side)
-    auto pills = topBar.withSizeKeepingCentre (topBar.getWidth(), 34).reduced (10, 0).withLeft (phaseArea.getRight() + 14).toFloat();
+    auto pills = topBar.withSizeKeepingCentre (topBar.getWidth(), 34).reduced (10, 0).withLeft (phaseArea.getRight() + 14)
+                       .withRight (masterArea.getX() - 8).toFloat();
+    {
+        // master volume: label, and a peak meter under the slider
+        auto mr = masterArea.toFloat();
+        psyched::paintLabel (g, "MASTER", mr.removeFromLeft (52.0f), juce::Justification::centredLeft, Theme::textDim, 9.5f);
+        auto meter = masterVolume.getBounds().toFloat().removeFromBottom (3.0f).reduced (6.0f, 0.0f);
+        g.setColour (psyched::Colours::edge2);
+        g.fillRect (meter);
+        const float pk = juce::jlimit (0.0f, 1.0f, shownPeak);
+        g.setColour (pk > 0.98f ? Theme::bad : pk > 0.7f ? Theme::warn : Theme::good);
+        g.fillRect (meter.withWidth (meter.getWidth() * std::sqrt (pk)));
+    }
     auto pill = [&] (const juce::String& text, juce::Colour dot, float w)
     {
         auto pr = pills.removeFromRight (w);
@@ -513,7 +571,10 @@ void MainComponent::paint (juce::Graphics& g)
     };
     pill ("CPU " + juce::String (juce::roundToInt (cpu * 100.0)) + "%", cpu < 0.5 ? Theme::good : (cpu < 0.8 ? Theme::warn : Theme::bad), 84.0f);
     pill (audioStatus, audioStatus.startsWith ("No") ? Theme::bad : Theme::good, juce::jmin (330.0f, psyched::Fonts::label().getStringWidthFloat (audioStatus.toUpperCase()) + 34.0f));
-    pill (xdjConnected ? juce::String ("XDJ-XZ connected") : juce::String ("XDJ-XZ not found"), xdjConnected ? Theme::good : Theme::bad, 164.0f);
+    {
+        const bool none = midiStatus == "No device detected";
+        pill (midiStatus, none ? Theme::bad : Theme::good, juce::jmin (260.0f, psyched::Fonts::label().getStringWidthFloat (midiStatus.toUpperCase()) + 34.0f));
+    }
     juce::String extra = stemStatus;
     juce::Colour extraColour = Theme::accent;
     if (importing.load())
@@ -539,8 +600,10 @@ void MainComponent::resized()
     auto r = getLocalBounds();
     // the top bar grows a little while the phrase meter shows its bar brackets
     const int bracketRoom = settings.phraseBrackets ? (int) std::ceil (PhaseMeter::bracketLevels (settings.phraseFollow ? 64 : settings.phraseBars)
-                                                                       * PhaseMeter::bracketStep + 2.0f) * (page == 4 ? 1 : 2) : 0;
+                                                                       * PhaseMeter::bracketStep + 2.0f) : 0;   // one set of brackets (shared between the meters)
     topBar = r.removeFromTop (52 + bracketRoom);
+    masterArea = topBar.withSizeKeepingCentre (topBar.getWidth(), 34).reduced (10, 0).removeFromRight (190);
+    masterVolume.setBounds (masterArea.withTrimmedLeft (54).reduced (0, 6));
 
     auto tabs = topBar.withTrimmedLeft (262).withWidth (5 * 92).withSizeKeepingCentre (5 * 92, 28);
     for (auto* t : { &tabPlay, &tabPrep, &tabMapping, &tabStems, &tabSettings })
@@ -1067,6 +1130,44 @@ juce::int64 MainComponent::libraryIdFor (const TrackInfo& t, bool addIfMissing)
     return centrifugeLibrary.addTrack (t, CentrifugeLibrary::readRekordboxVersion (t));
 }
 
+double MainComponent::loudnessOf (const TrackAudio& a)
+{
+    // Gated loudness: mean power of the 400 ms blocks that aren't near-silent (roughly like LUFS)
+    const int64_t block = juce::jmax<int64_t> (1, (int64_t) (a.sampleRate * 0.4));
+    double sum = 0.0;
+    int count = 0;
+    for (int64_t s = 0; s + block <= a.numFrames; s += block)
+    {
+        double ms = 0.0;
+        for (int64_t i = s; i < s + block; i += 4)
+            ms += (double) a.left[(size_t) i] * a.left[(size_t) i] + (double) a.right[(size_t) i] * a.right[(size_t) i];
+        ms /= (double) (block / 4) * 2.0;
+        if (ms > 1.0e-5) { sum += ms; ++count; }   // above about -50 dBFS
+    }
+    return count > 0 ? 10.0 * std::log10 (sum / count) : -100.0;
+}
+
+void MainComponent::applyAutoGain (int deck, LoadedTrack::Ptr t)
+{
+    auto& dk = engine.deck (deck);
+    if (! settings.autoGain || t == nullptr || t->audio == nullptr) { dk.post (Deck::Cmd::gainSet, 1.0); return; }
+    const double mine = loudnessOf (*t->audio);
+    loudness[t->serial] = mine;
+    // match the master deck (the other deck, if it's the one playing)
+    const int m = engine.getMasterDeck();
+    const int other = 1 - deck;
+    const int ref = (m == other) ? other : (engine.deck (other).state().playing.load() ? other : -1);
+    auto refTrack = ref >= 0 ? engine.deck (ref).getLoadedTrack() : nullptr;
+    if (refTrack == nullptr || refTrack->audio == nullptr || mine < -90.0) { dk.post (Deck::Cmd::gainSet, 1.0); return; }
+    double theirs;
+    if (auto it = loudness.find (refTrack->serial); it != loudness.end()) theirs = it->second;
+    else theirs = loudness[refTrack->serial] = loudnessOf (*refTrack->audio);
+    const double theirGainDb = 20.0 * std::log10 (juce::jmax (0.001f, engine.deck (ref).state().gain.load()));
+    const double db = juce::jlimit (-12.0, 12.0, theirs + theirGainDb - mine);
+    dk.post (Deck::Cmd::gainSet, std::pow (10.0, db / 20.0));
+    flash ("Auto gain deck " + juce::String (deck + 1) + ": " + (db >= 0 ? "+" : "") + juce::String (db, 1) + " dB");
+}
+
 bool MainComponent::keyPressed (const juce::KeyPress& k)
 {
     // Handy keyboard shortcuts (the XDJ-XZ remains the main controller).
@@ -1075,6 +1176,13 @@ bool MainComponent::keyPressed (const juce::KeyPress& k)
     if (k == juce::KeyPress::F3Key) { showPage (2); return true; }
     if (k == juce::KeyPress::F4Key) { showPage (3); return true; }
     if (k == juce::KeyPress::F5Key) { showPage (4); return true; }
+    if (k == juce::KeyPress ('f', juce::ModifierKeys::commandModifier, 0) || k == juce::KeyPress ('F', juce::ModifierKeys::commandModifier, 0))
+    {
+        if (page != 0) showPage (0);
+        if (! settings.showBrowser) { settings.showBrowser = true; resized(); settings.save(); }
+        browser.focusSearch();
+        return true;
+    }
     return false;
 }
 

@@ -37,6 +37,8 @@ juce::var MidiBinding::toVar() const
     o->setProperty ("mode", modes[(int) mode]);
     o->setProperty ("invert", invert);
     o->setProperty ("sensitivity", sensitivity);
+    if (ledOn != 127) o->setProperty ("ledOn", ledOn);
+    if (ledOff != 0) o->setProperty ("ledOff", ledOff);
     return juce::var (o);
 }
 
@@ -55,6 +57,8 @@ MidiBinding MidiBinding::fromVar (const juce::var& v)
     b.invert = (bool) v["invert"];
     b.sensitivity = v.hasProperty ("sensitivity") ? (double) v["sensitivity"] : 1.0;
     if (b.sensitivity == 0.0) b.sensitivity = 1.0;
+    b.ledOn = v.hasProperty ("ledOn") ? juce::jlimit (0, 127, (int) v["ledOn"]) : 127;
+    b.ledOff = v.hasProperty ("ledOff") ? juce::jlimit (0, 127, (int) v["ledOff"]) : 0;
     return b;
 }
 
@@ -128,6 +132,48 @@ juce::StringArray MidiManager::getOpenInputNames() const
     return s;
 }
 
+juce::String MidiManager::getControllerSummary() const
+{
+    juce::StringArray names;
+    for (auto& in : inputs)
+    {
+        const auto n = in->getName();
+        if (n.containsIgnoreCase ("Microsoft GS") || n.containsIgnoreCase ("Midi Through")) continue;
+        names.addIfNotAlreadyThere (n);
+    }
+    return names.isEmpty() ? juce::String ("No device detected") : names.joinIntoString (", ");
+}
+
+void MidiManager::setDeckControllers (const juce::String& d1, const juce::String& d2)
+{
+    const juce::ScopedLock sl (bindingLock);
+    deckDevice = { d1, d2 };
+}
+
+std::set<juce::String> MidiManager::getNoMap() const
+{
+    const juce::ScopedLock sl (bindingLock);
+    return noMap;
+}
+
+void MidiManager::setNoMap (const juce::String& id, bool on)
+{
+    const juce::ScopedLock sl (bindingLock);
+    if (on) noMap.insert (id); else noMap.erase (id);
+}
+
+void MidiManager::sendTestLed (const MidiBinding& b, int value)
+{
+    if (b.type == MidiBinding::Type::pitchBend) return;
+    const auto msg = b.type == MidiBinding::Type::note ? juce::MidiMessage::noteOn (b.channel, b.number, (juce::uint8) juce::jlimit (0, 127, value))
+                                                       : juce::MidiMessage::controllerEvent (b.channel, b.number, juce::jlimit (0, 127, value));
+    for (auto& [name, out] : outputs)
+        if (b.device.isEmpty() || name == b.device)
+            out->sendMessageNow (msg);
+    const juce::ScopedLock sl (bindingLock);
+    ledCache.clear();
+}
+
 juce::String MidiManager::getXdjStatus() const
 {
     if (xdjConnected) return "XDJ-XZ connected (" + xdjNames + ")";
@@ -177,6 +223,9 @@ bool MidiManager::saveToFile (const juce::File& f) const
     auto* root = new juce::DynamicObject();
     root->setProperty ("format", "Centrifuge mapping v1");
     root->setProperty ("bindings", arr);
+    juce::Array<juce::var> skip;
+    for (auto& id : getNoMap()) skip.add (id);
+    root->setProperty ("dontMap", skip);
     f.getParentDirectory().createDirectory();
     return f.replaceWithText (juce::JSON::toString (juce::var (root)));
 }
@@ -193,6 +242,12 @@ bool MidiManager::loadFromFile (const juce::File& f)
             if (findAction (mb.actionId) != nullptr) b.push_back (mb);
         }
     setBindings (std::move (b));
+    {
+        const juce::ScopedLock sl (bindingLock);
+        noMap.clear();
+        if (auto* arr = v["dontMap"].getArray())
+            for (auto& id : *arr) noMap.insert (id.toString());
+    }
     return true;
 }
 
@@ -212,16 +267,30 @@ void MidiManager::startLearn (const juce::String& id, bool addToControl)
     const juce::ScopedLock sl (learnLock);
     learnAdd = addToControl;
     learnAction = id;
-    learnHasCandidate = false;
-    learnValues.clear();
-    learnSaw14BitLsb = false;
+    learnCands.clear();
+    choosing = false;
+    learnFirstMs = 0.0;
+    // Anything still moving right now (a jog that's still spinning, a fader just let go of) is a leftover from the
+    // last control, not the one being learned: ignore it until it has been still for a moment.
+    learnIgnore.clear();
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    const juce::SpinLock::ScopedLockType ml (monitorLock);
+    for (auto& [k, c] : seen)
+        if (now - c.lastMs < 400.0) learnIgnore[k] = c.lastMs;
 }
 
 void MidiManager::cancelLearn()
 {
     const juce::ScopedLock sl (learnLock);
     learnAction = {};
-    learnHasCandidate = false;
+    learnCands.clear();
+    choosing = false;
+}
+
+bool MidiManager::isChoosing() const
+{
+    const juce::ScopedLock sl (learnLock);
+    return choosing;
 }
 
 juce::String MidiManager::getLearningAction() const
@@ -230,46 +299,35 @@ juce::String MidiManager::getLearningAction() const
     return learnAction;
 }
 
-void MidiManager::finishLearn()
+MidiBinding MidiManager::withDetectedMode (const Candidate& c) const
 {
-    MidiBinding b;
-    bool add = false;
+    auto b = c.b;
+    const auto* def = findAction (b.actionId);
+    if (def != nullptr && def->kind == ActionKind::encoder && b.type == MidiBinding::Type::cc)
     {
-        const juce::ScopedLock sl (learnLock);
-        add = learnAdd;
-        if (learnAction.isEmpty() || ! learnHasCandidate) return;
-        b = learnCandidate;
-        const auto* def = findAction (learnAction);
-
-        if (def != nullptr && def->kind == ActionKind::encoder && b.type == MidiBinding::Type::cc)
+        bool small = false, high = false, mid65 = false, around64 = true;
+        for (int v : c.values)
         {
-            bool small = false, high = false, mid65 = false, around64 = true;
-            for (int v : learnValues)
-            {
-                small = small || (v >= 1 && v <= 20);
-                high = high || (v >= 100);
-                mid65 = mid65 || (v >= 65 && v <= 84);
-                around64 = around64 && (v >= 40 && v <= 88);
-            }
-            if (around64)            b.mode = MidiBinding::Mode::relativeOffset64;
-            else if (small && high)  b.mode = MidiBinding::Mode::relativeTwos;
-            else if (small && mid65) b.mode = MidiBinding::Mode::relativeSignBit;
-            else if (small)          b.mode = MidiBinding::Mode::relativeTwos;
-            else                     b.mode = MidiBinding::Mode::relativeOffset64;
+            small = small || (v >= 1 && v <= 20);
+            high = high || (v >= 100);
+            mid65 = mid65 || (v >= 65 && v <= 84);
+            around64 = around64 && (v >= 40 && v <= 88);
         }
-        else if (def != nullptr && def->kind == ActionKind::continuous && b.type == MidiBinding::Type::cc)
-        {
-            b.mode = learnSaw14BitLsb ? MidiBinding::Mode::absolute14 : MidiBinding::Mode::absolute7;
-        }
-        else if (b.type == MidiBinding::Type::pitchBend)
-        {
-            b.mode = MidiBinding::Mode::absolute14;
-        }
-
-        learnAction = {};
-        learnHasCandidate = false;
+        if (around64)            b.mode = MidiBinding::Mode::relativeOffset64;
+        else if (small && high)  b.mode = MidiBinding::Mode::relativeTwos;
+        else if (small && mid65) b.mode = MidiBinding::Mode::relativeSignBit;
+        else if (small)          b.mode = MidiBinding::Mode::relativeTwos;
+        else                     b.mode = MidiBinding::Mode::relativeOffset64;
     }
+    else if (def != nullptr && def->kind == ActionKind::continuous && b.type == MidiBinding::Type::cc)
+        b.mode = c.saw14 ? MidiBinding::Mode::absolute14 : MidiBinding::Mode::absolute7;
+    else if (b.type == MidiBinding::Type::pitchBend)
+        b.mode = MidiBinding::Mode::absolute14;
+    return b;
+}
 
+void MidiManager::bind (MidiBinding b, bool add)
+{
     {
         const juce::ScopedLock sl (bindingLock);
         // Replace: the control does only this now. Add: other functions stay on the control too.
@@ -279,9 +337,85 @@ void MidiManager::finishLearn()
         bindings.push_back (b);
         ledCache.clear();
     }
-
     if (onLearned)
         onLearned (b);
+}
+
+void MidiManager::finishLearn()
+{
+    std::vector<Candidate> cands;
+    bool add = false;
+    juce::String action;
+    {
+        const juce::ScopedLock sl (learnLock);
+        if (learnAction.isEmpty() || learnCands.empty() || choosing) return;
+        cands = learnCands;
+        add = learnAdd;
+        action = learnAction;
+    }
+
+    if (cands.size() == 1)
+    {
+        {
+            const juce::ScopedLock sl (learnLock);
+            learnAction = {};
+            learnCands.clear();
+        }
+        bind (withDetectedMode (cands.front()), add);
+        return;
+    }
+
+    // Several controls were heard (e.g. touching the platter top sends "touch" just before "turn"): ask which one.
+    const auto* def = findAction (action);
+    const auto kind = def != nullptr ? def->kind : ActionKind::button;
+    int best = 0;
+    double bestScore = -1.0e9;
+    std::vector<LearnChoice> choices;
+    for (size_t i = 0; i < cands.size(); ++i)
+    {
+        const auto& c = cands[i];
+        std::set<int> distinct (c.values.begin(), c.values.end());
+        const bool isNote = c.b.type == MidiBinding::Type::note;
+        const int presses = (int) std::count_if (c.values.begin(), c.values.end(), [] (int v) { return v > 0; });
+        juce::String what;
+        if (isNote) what = presses <= 1 ? "pressed once" : "pressed " + juce::String (presses) + "x";
+        else if (c.b.type == MidiBinding::Type::pitchBend) what = "moved";
+        else if (distinct.size() <= 2) what = "button / touch";
+        else what = "turned / moved (" + juce::String ((int) c.values.size()) + " messages)";
+
+        double score = 0.0;
+        if (kind == ActionKind::button)
+            score = (isNote ? 100.0 : 0.0) + (distinct.size() <= 2 ? 50.0 : 0.0) - (double) c.values.size() - (c.firstMs - cands.front().firstMs) * 0.01;
+        else
+            score = (double) distinct.size() * 10.0 + (double) c.values.size() - (isNote ? 1000.0 : 0.0);
+        if (score > bestScore) { bestScore = score; best = (int) i; }
+        choices.push_back ({ withDetectedMode (c), what, (int) c.values.size() });
+    }
+    {
+        const juce::ScopedLock sl (learnLock);
+        choosing = true;
+        pendingCands = cands;
+        pendingChoice = choices;
+    }
+    if (onLearnChoice) onLearnChoice (choices, best);
+    else chooseLearned (best);
+}
+
+void MidiManager::chooseLearned (int index)
+{
+    MidiBinding b;
+    bool add = false;
+    {
+        const juce::ScopedLock sl (learnLock);
+        if (! choosing || index < 0 || index >= (int) pendingCands.size()) return;
+        b = withDetectedMode (pendingCands[(size_t) index]);
+        add = learnAdd;
+        choosing = false;
+        learnAction = {};
+        learnCands.clear();
+        pendingCands.clear();
+    }
+    bind (b, add);
 }
 
 //==============================================================================
@@ -347,6 +481,7 @@ void MidiManager::handleIncomingMidiMessage (juce::MidiInput* source, const juce
         const auto key = device + "|" + juce::String ((int) type) + "|" + juce::String (ch) + "|" + juce::String (number);
         auto& s = seen[key];
         s.device = device; s.channel = ch; s.number = number; s.type = type; s.lastValue = raw; ++s.count;
+        s.lastMs = e.timeMs;
     }
 
     // --- Learn ---------------------------------------------------------------
@@ -354,34 +489,43 @@ void MidiManager::handleIncomingMidiMessage (juce::MidiInput* source, const juce
         const juce::ScopedLock sl (learnLock);
         if (learnAction.isNotEmpty())
         {
+            if (choosing) return;
+            const double now = juce::Time::getMillisecondCounterHiRes();
+            const auto key = device + "|" + juce::String ((int) type) + "|" + juce::String (ch) + "|" + juce::String (number);
+            if (auto it = learnIgnore.find (key); it != learnIgnore.end())
+            {
+                const double prev = it->second;
+                it->second = now;
+                if (now - prev < 350.0) return;   // still the leftover movement
+                learnIgnore.erase (it);
+            }
+
             const auto* def = findAction (learnAction);
-            if (! learnHasCandidate)
-            {
-                if (isRelease || (def != nullptr && def->kind == ActionKind::button && type == MidiBinding::Type::cc && raw == 0))
-                    return;
-                if (type == MidiBinding::Type::cc && number >= 32 && number < 64 && def != nullptr && def->kind == ActionKind::continuous)
-                    return; // LSB of a 14-bit pair arriving first: wait for the MSB
+            auto same = [&] (const Candidate& c) { return c.b.device == device && c.b.channel == ch && c.b.type == type && c.b.number == number; };
+            auto it = std::find_if (learnCands.begin(), learnCands.end(), same);
 
-                learnCandidate = {};
-                learnCandidate.actionId = learnAction;
-                learnCandidate.device = device;
-                learnCandidate.channel = ch;
-                learnCandidate.type = type;
-                learnCandidate.number = number;
-                learnHasCandidate = true;
-                learnStartedMs = juce::Time::getMillisecondCounterHiRes();
-                learnValues = { raw };
-
-                if (def == nullptr || def->kind == ActionKind::button || type == MidiBinding::Type::pitchBend)
-                    juce::MessageManager::callAsync ([this] { finishLearn(); });
-            }
-            else if (learnCandidate.channel == ch && learnCandidate.device == device)
+            if (type == MidiBinding::Type::cc && number >= 32 && number < 64)
             {
-                if (type == learnCandidate.type && number == learnCandidate.number)
-                    learnValues.push_back (raw);
-                if (type == MidiBinding::Type::cc && number == learnCandidate.number + 32)
-                    learnSaw14BitLsb = true;
+                // the LSB of a 14-bit fader: belongs to the MSB 32 below
+                for (auto& c : learnCands)
+                    if (c.b.device == device && c.b.channel == ch && c.b.type == type && c.b.number == number - 32) { c.saw14 = true; return; }
+                if (it == learnCands.end() && def != nullptr && def->kind == ActionKind::continuous) return;
             }
+
+            if (it != learnCands.end()) { it->values.push_back (raw); return; }
+            if (isRelease || (def != nullptr && def->kind == ActionKind::button && type == MidiBinding::Type::cc && raw == 0))
+                return;   // a release on its own isn't a control being pressed
+
+            Candidate c;
+            c.b.actionId = learnAction;
+            c.b.device = device;
+            c.b.channel = ch;
+            c.b.type = type;
+            c.b.number = number;
+            c.values = { raw };
+            c.firstMs = now;
+            if (learnCands.empty()) learnFirstMs = now;
+            learnCands.push_back (c);
             return;
         }
     }
@@ -403,6 +547,8 @@ void MidiManager::handleIncomingMidiMessage (juce::MidiInput* source, const juce
 
             const auto* def = findAction (b.actionId);
             if (def == nullptr) continue;
+            if (def->deck >= 0 && def->deck < 2 && deckDevice[(size_t) def->deck].isNotEmpty() && deckDevice[(size_t) def->deck] != device)
+                continue;   // this deck is driven by another controller
 
             ActionValue v;
             double value = raw / 127.0;
@@ -479,8 +625,9 @@ void MidiManager::timerCallback()
     bool finish = false;
     {
         const juce::ScopedLock sl (learnLock);
-        finish = learnAction.isNotEmpty() && learnHasCandidate
-                 && juce::Time::getMillisecondCounterHiRes() - learnStartedMs > 450.0;
+        // listen a little after the first control so a "touch" followed by a "turn" are both heard
+        finish = learnAction.isNotEmpty() && ! learnCands.empty() && ! choosing
+                 && juce::Time::getMillisecondCounterHiRes() - learnFirstMs > 650.0;
     }
     if (finish) finishLearn();
 
@@ -508,9 +655,10 @@ void MidiManager::sendLeds()
         if (it != ledCache.end() && it->second == on) continue;
         ledCache[key] = on;
 
+        const int value = on ? b.ledOn : b.ledOff;
         const auto msg = b.type == MidiBinding::Type::note
-                           ? juce::MidiMessage::noteOn (b.channel, b.number, (juce::uint8) (on ? 127 : 0))
-                           : juce::MidiMessage::controllerEvent (b.channel, b.number, on ? 127 : 0);
+                           ? juce::MidiMessage::noteOn (b.channel, b.number, (juce::uint8) value)
+                           : juce::MidiMessage::controllerEvent (b.channel, b.number, value);
 
         for (auto& [name, out] : outputs)
             if (b.device.isEmpty() || name == b.device)

@@ -759,7 +759,46 @@ private:
                 main.getEngine().deck (0).post (Deck::Cmd::pause);
                 main.getEngine().deck (0).post (Deck::Cmd::seekSeconds, 0.6);   // the grid carries on before the track starts
             }
-            if (k == 54) { snap ("15_play_filters.png"); std::printf ("edit test done\n"); std::fflush (stdout); stage = 40; }
+            if (k == 54) snap ("15_play_filters.png");
+            // --- vinyl: brake, backspin, slip ------------------------------------------
+            auto& d0 = main.getEngine().deck (0);
+            const auto& vs = d0.state();
+            if (k == 56)
+            {
+                d0.post (Deck::Cmd::vinylTime, 1.0, 0);
+                d0.post (Deck::Cmd::vinylBrakeSet, 1.0, 0);
+                d0.post (Deck::Cmd::seekSeconds, 30.0);
+                d0.post (Deck::Cmd::play);
+            }
+            if (k == 60) { vt = vs.positionSec.load(); d0.post (Deck::Cmd::playToggle); }
+            if (k == 61) std::printf ("brake: braking %d shown playing %d\n", (int) vs.braking.load(), (int) vs.playing.load());
+            if (k == 66) std::printf ("brake: moved %.2f s after pause (expect ~0.5), braking %d\n", vs.positionSec.load() - vt, (int) vs.braking.load());
+            if (k == 68)
+            {
+                d0.post (Deck::Cmd::vinylBrakeSet, 0.0, 0);
+                d0.post (Deck::Cmd::play);
+                d0.post (Deck::Cmd::jogTouch, 0.0, 0, true);
+            }
+            if (k == 69) { vt = vs.positionSec.load(); d0.post (Deck::Cmd::jogTurn, -400.0); }
+            if (k == 70) { d0.post (Deck::Cmd::jogTurn, -400.0); d0.post (Deck::Cmd::jogTouch, 0.0, 0, false); d0.post (Deck::Cmd::jogTurn, -300.0); }
+            if (k == 71) std::printf ("backspin: moved %.2f s (expect negative)\n", vs.positionSec.load() - vt);
+            if (k == 74) std::printf ("backspin: playing again %d\n", (int) vs.playing.load());
+            if (k == 76)
+            {
+                d0.post (Deck::Cmd::slipSet, 1.0);
+                vt = vs.positionSec.load();
+                d0.post (Deck::Cmd::beatLoop, 1.0);
+            }
+            if (k == 84)
+            {
+                std::printf ("slip: slipping %d, pos %.2f\n", (int) vs.slipping.load(), vs.positionSec.load() - vt);
+                d0.post (Deck::Cmd::loopOff);
+            }
+            if (k == 85)
+            {
+                std::printf ("slip: after loop off %.2f s on (expect ~2.25)\n", vs.positionSec.load() - vt);
+                std::printf ("edit test done\n"); std::fflush (stdout); stage = 40;
+            }
         }
         else if (stage == 20)
         {
@@ -791,6 +830,7 @@ private:
     MainComponent& main;
     juce::File shots;
     int ticks = 0, stage = 0, t0 = 0;
+    double vt = 0.0;
 };
 
 //==============================================================================

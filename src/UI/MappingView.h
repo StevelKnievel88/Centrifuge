@@ -20,6 +20,11 @@ public:
     /** Leaving the page stops listening for a control (otherwise every press would keep being learned instead of
         working); guided setup picks up at the same step when you come back. */
     void visibilityChanged() override;
+    bool keyPressed (const juce::KeyPress&) override;
+
+    /** Which controller drives each deck (the dropdowns at the top). */
+    std::function<void (int deck, const juce::String& device)> onDeckController;
+    void setDeckControllers (const juce::String& d1, const juce::String& d2);
 
 private:
     // actions table
@@ -36,7 +41,13 @@ private:
     void timerCallback() override;
     void learnSelected (bool add = false);
     void startGuided();
+    void runGuided (bool onlyUnmapped);
     void advanceGuided (bool skip);
+    void listenForStep();
+    void showLearnChoice (const std::vector<MidiManager::LearnChoice>&, int best);
+    void showLedEditor();
+    void refreshControllerBoxes();
+    static juce::String stepHint (const juce::String& id);
     void updateDetail();
     void refreshFilter();
     void revealAction (const juce::String& id);
@@ -66,7 +77,10 @@ private:
 
     juce::TextEditor filter;
     juce::TextButton learnButton { "LEARN" }, learnAddButton { "LEARN + ADD" }, clearButton { "CLEAR" }, guidedButton { "GUIDED SETUP" },
-                     skipButton { "SKIP" }, stopButton { "STOP" }, invertButton { "INVERT" };
+                     skipButton { "SKIP  (TAB)" }, stopButton { "STOP" }, invertButton { "INVERT" }, ledButton { "LED..." };
+    std::array<juce::ComboBox, 2> controllerBox;
+    std::array<juce::String, 2> deckController;
+    juce::StringArray lastDevices;
     juce::ComboBox modeBox;
     juce::Slider sensitivity;
     juce::Label sensLabel, banner, status;
@@ -74,6 +88,8 @@ private:
     std::vector<juce::String> guidedSteps;
     int guidedIndex = -1;
     int pausedGuided = -1;
+    double countdownUntil = 0.0;       // guided setup: the next step starts listening at this time (0 = listening)
+    std::vector<juce::String> guidedMapped, guidedSkipped;
 };
 
 } // namespace orbit

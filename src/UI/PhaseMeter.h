@@ -62,21 +62,24 @@ public:
     void paint (juce::Graphics& g) override
     {
         auto r = getLocalBounds().toFloat();
-        const int rows = prepOnly ? 1 : 2;
         const float band = brackets ? (float) bracketLevels (maxBarsShown()) * bracketStep + 2.0f : 0.0f;
-        const float rowH = juce::jmax (4.0f, (r.getHeight() - 4.0f * (float) (rows - 1) - band * (float) rows) / (float) rows);
+        // the same row height on both pages (PREP's single row isn't stretched)
+        const float rowH = juce::jmax (4.0f, (r.getHeight() - 4.0f - band) / 2.0f);
         if (prepOnly)
         {
             auto rr = r.withSizeKeepingCentre (r.getWidth(), juce::jmin (r.getHeight(), band + rowH));
-            paintRow (g, AudioEngine::prepDeck, rr.removeFromBottom (rowH), band);
+            const auto lay = paintRow (g, AudioEngine::prepDeck, rr.removeFromBottom (rowH));
+            if (band > 0.0f) paintBrackets (g, lay, rr.getBottom() - 2.0f, false);
             return;
         }
-        for (int d = 0; d < 2; ++d)
-        {
-            r.removeFromTop (band);
-            paintRow (g, d, r.removeFromTop (rowH), band);
-            r.removeFromTop (4.0f);
-        }
+        // deck 1, one set of brackets between the two meters (pointing both ways), deck 2
+        const auto lay1 = paintRow (g, 0, r.removeFromTop (rowH));
+        r.removeFromTop (2.0f);
+        auto mid = r.removeFromTop (band);
+        r.removeFromTop (2.0f);
+        const auto lay2 = paintRow (g, 1, r.removeFromTop (rowH));
+        if (band > 0.0f)
+            paintBrackets (g, lay1.cur >= 0 || lay2.cur < 0 ? lay1 : lay2, mid.getY() + 1.0f, true);
     }
 
 private:
@@ -144,7 +147,34 @@ private:
         return b + (double) (beats.front().beatInBar - 1);   // count from a downbeat
     }
 
-    void paintRow (juce::Graphics& g, int d, juce::Rectangle<float> r, float band)
+    struct Layout { std::vector<float> xs; float bw = 0.0f; int n = 0, upb = 1, bars = 16, cur = -1; juce::Colour col; };
+
+    /** Brackets for 4 / 16 / 32 / 64 bars (1-pixel lines). Between the meters they're stacked from `top` down with
+        ticks pointing both ways; above PREP's meter they stack upwards from `top` with ticks pointing down. */
+    void paintBrackets (juce::Graphics& g, const Layout& lay, float top, bool between)
+    {
+        if (lay.n <= 0) return;
+        int level = 0;
+        for (int L : { 4, 16, 32, 64 })
+        {
+            if (L > lay.bars) break;
+            const float y = between ? std::floor (top + 1.0f + (float) level * bracketStep) + 0.5f
+                                    : std::floor (top - (float) level * bracketStep) + 0.5f;
+            g.setColour ((lay.cur >= 0 ? lay.col : Theme::textFaint).withAlpha (0.55f + 0.15f * (float) level));
+            for (int b0 = 0; b0 < lay.bars; b0 += L)
+            {
+                const int i0 = b0 * lay.upb, i1 = juce::jmin (lay.n, (b0 + L) * lay.upb) - 1;
+                const float xa = std::round (lay.xs[(size_t) i0]) + 0.5f, xb = std::round (lay.xs[(size_t) i1] + lay.bw) - 0.5f;
+                g.drawHorizontalLine ((int) y, xa, xb);
+                const float t0 = between ? y - 2.0f : y, t1 = y + (between ? 2.0f : 3.0f);
+                g.drawVerticalLine ((int) xa, t0, t1);
+                g.drawVerticalLine ((int) xb, t0, t1);
+            }
+            ++level;
+        }
+    }
+
+    Layout paintRow (juce::Graphics& g, int d, juce::Rectangle<float> r)
     {
         const bool prep = d >= 2;
         const auto col = prep ? Theme::deckColour (2) : Theme::deckColour (d);
@@ -202,26 +232,10 @@ private:
             if (i < n - 1) x += gapAfter (i);
         }
 
-        // Brackets: 4 bars just above the blocks, then 16, 32 and 64 above those (1-pixel lines)
-        if (brackets && band > 0.0f)
-        {
-            int level = 0;
-            for (int L : { 4, 16, 32, 64 })
-            {
-                if (L > bars) break;
-                const float y = std::floor (r.getY() - 3.0f - (float) level * bracketStep) + 0.5f;
-                g.setColour ((cur >= 0 ? col : Theme::textFaint).withAlpha (0.55f + 0.15f * (float) level));
-                for (int b0 = 0; b0 < bars; b0 += L)
-                {
-                    const int i0 = b0 * upb, i1 = juce::jmin (n, (b0 + L) * upb) - 1;
-                    const float xa = std::round (xs[(size_t) i0]) + 0.5f, xb = std::round (xs[(size_t) i1] + bw) - 0.5f;
-                    g.drawHorizontalLine ((int) y, xa, xb);
-                    g.drawVerticalLine ((int) xa, y, y + 3.0f);
-                    g.drawVerticalLine ((int) xb, y, y + 3.0f);
-                }
-                ++level;
-            }
-        }
+        Layout lay;
+        lay.xs = std::move (xs);
+        lay.bw = bw; lay.n = n; lay.upb = upb; lay.bars = bars; lay.cur = cur; lay.col = col;
+        return lay;
     }
 
     AudioEngine& engine;

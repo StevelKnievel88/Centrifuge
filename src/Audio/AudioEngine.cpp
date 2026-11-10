@@ -349,9 +349,26 @@ void AudioEngine::render (float* const* outputs, int numOutputs, int numSamples)
                 }
             }
         }
-
-
     }
+
+    // Centrifuge's own output level (ramped per block so moving it doesn't click)
+    const float target = masterVolume.load();
+    if (target != masterNow || target != 1.0f)
+    {
+        for (int c = 0; c < numOutputs; ++c)
+            if (outputs[c] != nullptr)
+                for (int i = 0; i < numSamples; ++i)
+                    outputs[c][i] *= masterNow + (target - masterNow) * (float) (i + 1) / (float) numSamples;
+        masterNow = target;
+    }
+    float pk = 0.0f;
+    for (int c = 0; c < juce::jmin (2, numOutputs); ++c)
+        if (outputs[c] != nullptr)
+        {
+            auto r = juce::FloatVectorOperations::findMinAndMax (outputs[c], numSamples);
+            pk = juce::jmax (pk, std::abs (r.getStart()), std::abs (r.getEnd()));
+        }
+    masterPeak = juce::jmax (pk, masterPeak.load() * 0.9f);
 }
 
 } // namespace orbit

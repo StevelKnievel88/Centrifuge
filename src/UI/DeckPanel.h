@@ -54,6 +54,7 @@ public:
     std::function<void()> onOverviewGridToggled;
     /** A stem's control (or all four: stem -1) changed between level / low-pass / high-pass. */
     std::function<void (int deck, int stem, int mode)> onStemModeChanged;
+    std::function<void()> onOpenSettings;
 
     /** Overview waveform: style 1 = 3-band, 2 = RGB, 3 = single colour; half = bars from the bottom only. */
     void setOverviewStyle (int style, bool half, juce::Colour single)

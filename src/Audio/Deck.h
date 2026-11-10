@@ -79,7 +79,12 @@ public:
         locatorLoopMode,  // index = locator, value = mode (0 normal, 1 active, 2 cycle), value2 = cycles
         locatorLoopAdd,   // value = start, value2 = end: a loop locator (orange)
         swapTrackData,  // same audio, new grid / cues (ptr = LoadedTrack*); playback carries on
-        stemMode        // index = stem (-1 = all four), value = 0 VOL, 1 FILTER (the bipolar control: left low-pass, right high-pass)
+        stemMode,       // index = stem (-1 = all four), value = 0 VOL, 1 FILTER (the bipolar control: left low-pass, right high-pass)
+        vinylTime,      // index 0 brake, 1 start, 2 release after a scratch: value = seconds (0 = instant)
+        vinylBrakeSet,  // index 0 brake (stop), 1 start: value 1 on / 0 off
+        throwSet,       // backspin / throw: value = speed needed to count as a throw (0 = off)
+        slipToggle, slipSet,
+        gainSet         // value = gain (1 = unity), for auto gain
     };
 
     static constexpr int maxLocators = 32;
@@ -149,6 +154,10 @@ public:
         std::array<std::atomic<float>, 4> stemGain;
         std::atomic<float> peakL { 0.0f }, peakR { 0.0f };
         std::atomic<bool> endWarning { false };
+        std::atomic<bool> slip { false }, slipping { false }, braking { false };
+        std::atomic<bool> brakeOn { false }, startOn { false };
+        std::atomic<double> slipSec { -1.0 };        // where the track would be without the slip action (-1 = none)
+        std::atomic<float> gain { 1.0f };
 
         // Locators (memory cues) and skips
         std::atomic<int> numLocators { 0 }, numSkips { 0 };
@@ -254,6 +263,30 @@ private:
     double scratchVelocity = 0.0;   // source seconds per real second
     double ticksPerRevolution = 720.0;
     static constexpr double secondsPerRevolution = 60.0 / (100.0 / 3.0); // 33 1/3 rpm
+    bool coasting = false;          // let go of a fast spin: still following the platter until it slows down
+    double sinceTickSec = 0.0;      // how long since the last jog tick
+    double coastSec = 0.0;
+    double throwThreshold = 0.6;    // 0 = backspin / throw off
+
+    // Vinyl speed adjust: motor = 0..1 multiplier on the playing speed
+    double motor = 1.0;
+    bool braking = false;
+    bool brakeOn = false, startOn = false;
+    double brakeSec = 0.8, startSec = 0.4, releaseSec = 0.0;
+    double releaseFrom = 0.0, releaseT = 1.0;   // after letting go of a scratch: speed blends from releaseFrom
+    bool startRamp = false;
+    void beginPlay() noexcept;
+    void endScratch() noexcept;
+    void beginStop() noexcept;
+
+    // Slip: the track carries on underneath scratches, loops, held hot cues and beat jumps
+    bool slip = false, slipping = false;
+    double slipSec = 0.0;
+    bool slipWasPlaying = false, prevLoopActive = false;
+    int slipSource = 0;              // 1 scratch, 2 loop, 3 held hot cue, 4 beat jump
+    void slipBegin (int source) noexcept;
+    void slipEnd() noexcept;
+    float gainNow = 1.0f, gainTarget = 1.0f;
 
     // Loops (seconds)
     double loopIn = -1.0, loopOut = -1.0;

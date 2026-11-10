@@ -221,17 +221,18 @@ inline void paintStemChangeIcon (juce::Graphics& g, juce::Rectangle<float> b, in
     a line in the stem's colour - rising across the fade for a fade in, falling for a fade out (straight down for a cut).
     `area` is the waveform; with `stemRows` (stems a row each) each stem's line is drawn in its own row, otherwise the
     lines sit side by side across the whole height. */
-inline void paintStemLocatorFlag (juce::Graphics& g, const StemLocator& l, float x, float flagTop, float fadeWidth,
+inline void paintStemLocatorFlag (juce::Graphics& g, const StemLocator& l, float x, float flagTop, float pixelsPerSecond,
                                   juce::Rectangle<float> area, bool stemRows, bool withFlag = true)
 {
     const auto mint = juce::Colour (0xff7dffd6);
     g.setColour (mint.withAlpha (0.6f));
     g.fillRect (x - 0.5f, area.getY(), 1.0f, area.getHeight());
-    const bool fades = fadeWidth > 2.0f;
-    if (fades)
+    float longest = 0.0f;
+    for (int s = 0; s < 4; ++s) if (l.target[(size_t) s] >= 0) longest = juce::jmax (longest, (float) l.fadeSecFor (s) * pixelsPerSecond);
+    if (longest > 2.0f)
     {
         g.setColour (mint.withAlpha (0.06f));
-        g.fillRect (juce::Rectangle<float> (x, area.getY(), fadeWidth, area.getHeight()));
+        g.fillRect (juce::Rectangle<float> (x, area.getY(), longest, area.getHeight()));
     }
     int k = 0;
     for (int s = 0; s < 4; ++s)
@@ -243,12 +244,13 @@ inline void paintStemLocatorFlag (juce::Graphics& g, const StemLocator& l, float
         if (stemRows)
         {
             const float rh = area.getHeight() / 4.0f;
-            row = juce::Rectangle<float> (area.getX(), area.getY() + rh * (float) s, area.getWidth(), rh).reduced (0.0f, 2.0f);
+            row = juce::Rectangle<float> (area.getX(), area.getY() + rh * (float) (3 - s), area.getWidth(), rh).reduced (0.0f, 2.0f);   // vocals top, drums bottom
         }
         else
             off = (float) k++ * 3.0f;   // side by side
         g.setColour (Theme::stemColour (s));
-        if (fades)
+        const float fadeWidth = (float) l.fadeSecFor (s) * pixelsPerSecond;
+        if (fadeWidth > 2.0f)
         {
             juce::Path ramp;
             const float y0 = t > 0 ? row.getBottom() : row.getY(), y1 = t > 0 ? row.getY() : row.getBottom();
@@ -265,7 +267,7 @@ inline void paintStemLocatorFlag (juce::Graphics& g, const StemLocator& l, float
     g.fillRect (flag);
     for (int s = 0; s < 4; ++s)
         paintStemChangeIcon (g, juce::Rectangle<float> (flag.getX() + 2.0f + (float) s * 10.0f, flag.getY() + 2.0f, 8.0f, 8.0f),
-                             s, l.target[(size_t) s], fades);
+                             s, l.target[(size_t) s], l.fadeFor (s) > 0.0f);
 }
 
 /** Phrase bars under a scrolling waveform: coloured blocks with their names, `xOf` maps track time to x. */

@@ -239,10 +239,13 @@ void ActionRouter::perform (const ActionDef& a, const ActionValue& v)
     else if (name.startsWith ("beatjump.back.") || name.startsWith ("beatjump.fwd."))
     {
         const double beats = name.fromLastOccurrenceOf (".", false, false).getDoubleValue();
-        if (v.down && beats > 0.0) button (C::beatJump, name.startsWith ("beatjump.back.") ? -beats : beats);
+        if (beats > 0.0) button (C::beatJump, name.startsWith ("beatjump.back.") ? -beats : beats);   // release ends a slip jump
     }
-    else if (name == "beatjump.back") { if (v.down) button (C::beatJump, -beatJump[(size_t) d].load()); }
-    else if (name == "beatjump.fwd")  { if (v.down) button (C::beatJump,  beatJump[(size_t) d].load()); }
+    else if (name == "beatjump.back") button (C::beatJump, -beatJump[(size_t) d].load());
+    else if (name == "beatjump.fwd")  button (C::beatJump,  beatJump[(size_t) d].load());
+    else if (name == "slip")          { if (v.down) button (C::slipToggle); }
+    else if (name == "vinyl.brake")   { if (v.down) deck.post (C::vinylBrakeSet, deck.state().brakeOn.load() ? 0.0 : 1.0, 0); }
+    else if (name == "vinyl.start")   { if (v.down) deck.post (C::vinylBrakeSet, deck.state().startOn.load() ? 0.0 : 1.0, 1); }
     else if (name == "beatjump.size")
     {
         double b = beatJump[(size_t) d].load();
@@ -309,6 +312,9 @@ bool ActionRouter::ledState (const ActionDef& a) const
     if (name == "keylock")   return st.keyLock.load();
     if (name == "quantize")  return st.quantize.load();
     if (name == "jog.vinyl") return st.vinylMode.load();
+    if (name == "slip")      return st.slip.load();
+    if (name == "vinyl.brake") return st.brakeOn.load();
+    if (name == "vinyl.start") return st.startOn.load();
     if (name == "skip.toggle") return st.skipsOn.load();
     if (name == "skip.set" || name == "skip.in") return st.skipPendingFrom.load() >= 0.0;
     if (name.startsWith ("loop."))     return st.loopActive.load();

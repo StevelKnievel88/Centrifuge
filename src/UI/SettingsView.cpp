@@ -116,6 +116,21 @@ public:
             onChanged();
         };
         add (&previewRow, 28, "Preview column waveform");
+        add (&previewColour, 28, "Preview single colour");
+        previewColour.getProperties().set ("psyched.swatch", true);
+        previewColour.setColour (juce::TextButton::buttonColourId, juce::Colour (settings.previewColour));
+        previewColour.setButtonText ("CHOOSE COLOUR");
+        previewColour.onClick = [this]
+        {
+            juce::Component::SafePointer<Content> safe (this);
+            ColourPickerBubble::show (previewColour.getScreenBounds(), juce::Colour (settings.previewColour), [safe] (juce::Colour c)
+            {
+                if (safe == nullptr) return;
+                safe->settings.previewColour = c.getARGB();
+                safe->previewColour.setColour (juce::TextButton::buttonColourId, c);
+                safe->onChanged();
+            });
+        };
 
         addSection ("PREP - WAVEFORMS");
         for (int i = 0; i < 2; ++i)
@@ -230,6 +245,41 @@ public:
         add (&leds, 28, {});
         leds.setButtonText ("Send LED feedback to the XDJ-XZ");
 
+        addSection ("VINYL");
+        for (int d = 0; d < 2; ++d)
+        {
+            const auto D = "Deck " + juce::String (d + 1) + " ";
+            auto& v = vinyl[(size_t) d];
+            add (&v.brakeOn, 28, {});
+            v.brakeOn.setButtonText (D + "brake: pause slows to a stop like a turntable");
+            add (&v.brake, 28, D + "brake time (s)");
+            add (&v.startOn, 28, {});
+            v.startOn.setButtonText (D + "start: play comes up to speed like a turntable");
+            add (&v.start, 28, D + "start time (s)");
+            add (&v.release, 28, D + "release after a scratch (s)");
+            v.brakeOn.setToggleState (settings.brakeOn[(size_t) d], juce::dontSendNotification);
+            v.startOn.setToggleState (settings.startOn[(size_t) d], juce::dontSendNotification);
+            setupSlider (v.brake, 0.0, 3.0, 0.05, settings.brakeSec[(size_t) d]);
+            setupSlider (v.start, 0.0, 3.0, 0.05, settings.startSec[(size_t) d]);
+            setupSlider (v.release, 0.0, 3.0, 0.05, settings.releaseSec[(size_t) d]);
+            v.brake.onValueChange = [this, d] { settings.brakeSec[(size_t) d] = vinyl[(size_t) d].brake.getValue(); onChanged(); };
+            v.start.onValueChange = [this, d] { settings.startSec[(size_t) d] = vinyl[(size_t) d].start.getValue(); onChanged(); };
+            v.release.onValueChange = [this, d] { settings.releaseSec[(size_t) d] = vinyl[(size_t) d].release.getValue(); onChanged(); };
+            v.brakeOn.onClick = [this, d] { settings.brakeOn[(size_t) d] = vinyl[(size_t) d].brakeOn.getToggleState(); onChanged(); };
+            v.startOn.onClick = [this, d] { settings.startOn[(size_t) d] = vinyl[(size_t) d].startOn.getToggleState(); onChanged(); };
+        }
+        add (&throwOn, 28, {});
+        throwOn.setButtonText ("Backspin / throw: a fast spin plays out after you let go of the platter");
+        throwOn.setToggleState (settings.throwOn, juce::dontSendNotification);
+        throwOn.onClick = [this] { settings.throwOn = throwOn.getToggleState(); onChanged(); };
+        add (&throwSpeed, 28, "Throw: spin speed needed (x normal)");
+        setupSlider (throwSpeed, 0.2, 3.0, 0.05, settings.throwSpeed);
+        throwSpeed.onValueChange = [this] { settings.throwSpeed = throwSpeed.getValue(); onChanged(); };
+        add (&autoGain, 28, {});
+        autoGain.setButtonText ("Auto gain: match each loaded track's loudness to the master deck");
+        autoGain.setToggleState (settings.autoGain, juce::dontSendNotification);
+        autoGain.onClick = [this] { settings.autoGain = autoGain.getToggleState(); onChanged(); };
+
         addSection ("STEMS");
         add (&stemsOnLoad, 28, {});
         stemsOnLoad.setButtonText ("Separate stems automatically when a track is loaded");
@@ -331,6 +381,11 @@ public:
         playhead.setValue (settings.playheadPosition * 100.0, juce::dontSendNotification);
         zoom.setValue (settings.visibleSeconds, juce::dontSendNotification);
         prepColour.setColour (juce::TextButton::buttonColourId, juce::Colour (settings.deckColours[2]));
+        for (int d = 0; d < 2; ++d)
+        {
+            vinyl[(size_t) d].brakeOn.setToggleState (settings.brakeOn[(size_t) d], juce::dontSendNotification);
+            vinyl[(size_t) d].startOn.setToggleState (settings.startOn[(size_t) d], juce::dontSendNotification);
+        }
         repaint();
     }
 
@@ -520,6 +575,7 @@ private:
     std::array<PairRow, 4> laneRows;
     std::array<PairRow, 2> prepLaneRows;
     PairRow prepOverviewRow, previewRow;
+    juce::TextButton previewColour;
     juce::TextButton prepColour;
     struct StemColourRow : juce::Component
     {
@@ -644,6 +700,10 @@ private:
     } modelsRow { settings, [this] { onChanged(); } };
     juce::TextButton browseDb { "BROWSE..." }, reloadDb { "RELOAD LIBRARY" };
     juce::Slider zoom, jogTicks, stemThreads, mp3Offset, playhead;
+    struct VinylRow { juce::ToggleButton brakeOn, startOn; juce::Slider brake, start, release; };
+    std::array<VinylRow, 2> vinyl;
+    juce::ToggleButton throwOn, autoGain;
+    juce::Slider throwSpeed;
     std::unique_ptr<juce::FileChooser> chooser;
 };
 

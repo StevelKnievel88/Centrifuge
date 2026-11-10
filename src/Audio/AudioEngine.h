@@ -40,6 +40,12 @@ public:
     void setSumToMaster (bool shouldSum) { sumToMaster = shouldSum; }
     bool isSummingToMaster() const { return sumToMaster.load(); }
 
+    /** Centrifuge's own output level, 0..1 (for playing through the computer with nothing else connected). */
+    void setMasterVolume (float v) { masterVolume = juce::jlimit (0.0f, 1.0f, v); }
+    float getMasterVolume() const { return masterVolume.load(); }
+    /** Peak of outputs 1/2 (decays), for the top bar meter. */
+    float getMasterPeak() const { return masterPeak.load(); }
+
     int getMasterDeck() const { return masterDeck.load(); }
     double getCpuUsage() const;
     double getOutputLatencySeconds() const { return outputLatency.load(); }
@@ -70,6 +76,8 @@ private:
     std::atomic<int> previewOutput { -1 }, previewInUse { 0 };
     std::array<std::atomic<int>, maxDecks> deckOutputs;
     std::atomic<bool> sumToMaster { false };
+    std::atomic<float> masterVolume { 1.0f }, masterPeak { 0.0f };
+    float masterNow = 1.0f;
     std::atomic<int> masterDeck { -1 };
 
     std::vector<float> scratchL, scratchR;
