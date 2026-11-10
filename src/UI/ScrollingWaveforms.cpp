@@ -460,7 +460,7 @@ void ScrollingWaveforms::paintLane (juce::Graphics& g, int d, int lane, juce::Re
         const int style = cfg.style == stems || cfg.style == stemsSplit ? threeBand : cfg.style;
         const auto wdStyle = style == rgb ? WaveformData::Style::rgb
                            : style == singleColour ? WaveformData::Style::blue : WaveformData::Style::threeBand;
-        auto wd = dv.track->waveformInStyle (wdStyle);
+        auto wd = wdStyle == WaveformData::Style::blue ? dv.track->waveformForSingleColour() : dv.track->waveformInStyle (wdStyle);
         if (wd != nullptr)
         {
             auto o = opts;

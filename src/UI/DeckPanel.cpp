@@ -328,7 +328,7 @@ void DeckPanel::paint (juce::Graphics& g)
                 renderedFold = fold.version;
                 const auto wdStyle = overviewStyle == 2 ? WaveformData::Style::rgb
                                    : overviewStyle == 3 ? WaveformData::Style::blue : WaveformData::Style::threeBand;
-                auto wd = track->waveformInStyle (wdStyle);
+                auto wd = wdStyle == WaveformData::Style::blue ? track->waveformForSingleColour() : track->waveformInStyle (wdStyle);
                 StripOptions o;
                 o.overview = true;
                 o.shape = overviewHalf ? StripOptions::halfUp : StripOptions::full;

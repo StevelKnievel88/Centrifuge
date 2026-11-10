@@ -142,15 +142,25 @@ juce::Image renderWaveformStrip (const WaveformData& w, double firstEntry, doubl
             const float lo = valueAt (w.low, c, n) * detail, mi = valueAt (w.mid, c, n) * detail, hi = valueAt (w.high, c, n) * detail;
             if (single)
             {
-                const float hh = juce::jmax (lo, mi, hi) * geo.maxH, core = hi * geo.maxH;
-                const auto col = shaded (o.tint, lo, mi, hi);
-                const auto body = px (col), coreCol = px (col.interpolatedWith (juce::Colours::white, 0.3f));
+                // One colour in three shades, like rekordbox: the highs are pale (towards white), the mids the colour
+                // itself, the bass deep and dark. Each band fills out to its own level, so where the bass reaches
+                // furthest (kicks) the peaks are dark around a paler core, and without bass (breakdowns) it's pale.
+                const float hl = lo * geo.maxH, hm = mi * geo.maxH, hhi = hi * geo.maxH;
+                const float hh = juce::jmax (hl, hm, hhi);
+                const auto pale = px (o.tint.interpolatedWith (juce::Colours::white, 0.62f));
+                const auto mid = px (o.tint.interpolatedWith (juce::Colours::white, 0.18f));
+                const auto deep = px (o.tint.withMultipliedSaturation (1.15f).withMultipliedBrightness (0.52f));
                 const auto rr = geo.rows (hh);
                 for (int y = rr.getStart(); y < rr.getEnd(); ++y)
                 {
                     const float d = geo.dist (y);
                     if (d >= hh) continue;
-                    *reinterpret_cast<juce::PixelARGB*> (bd.getPixelPointer (x, y)) = d < core ? coreCol : body;
+                    // the band that reaches out here and is the "lowest" frequency to do so sets the shade
+                    const auto* c = d < hl ? &deep : d < hm ? &mid : &pale;
+                    if (d < hhi && d < hm && d < hl)
+                        c = hl > hm * 1.15f ? &deep : &mid;   // inside all three: the bass / mid balance decides
+                    if (d < hhi * 0.55f) c = hl > juce::jmax (hm, hhi) * 1.6f ? &mid : &pale;   // a pale core where the highs are
+                    *reinterpret_cast<juce::PixelARGB*> (bd.getPixelPointer (x, y)) = *c;
                 }
                 continue;
             }

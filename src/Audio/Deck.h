@@ -51,6 +51,14 @@ struct LoadedTrack : public juce::ReferenceCountedObject
         return slot;
     }
     std::array<WaveformData::Ptr, 3> styled;
+
+    /** For single-colour drawing: the 3-band analysis when there is one (the colour is shaded by each band up the
+        waveform, bass darkest), otherwise the single-colour data. */
+    WaveformData::Ptr waveformForSingleColour()
+    {
+        if (waveform != nullptr && waveform->style == WaveformData::Style::threeBand) return waveform;
+        return waveformInStyle (WaveformData::Style::blue);
+    }
 };
 
 /** One playback deck. All `process` work happens on the audio thread; controls arrive through a

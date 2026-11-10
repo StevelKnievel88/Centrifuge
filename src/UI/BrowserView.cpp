@@ -648,7 +648,14 @@ void BrowserView::paintPreview (juce::Graphics& g, juce::Rectangle<float> area, 
         }
         if (previewStyle == 3)
         {
-            bar (x, w1, juce::jmax (lo, mi, hi) * wh, previewTint);
+            // shades of one colour: bass deep, mids the colour, highs pale (each to its own height, tallest first)
+            const juce::Colour deep = previewTint.withMultipliedSaturation (1.15f).withMultipliedBrightness (0.52f),
+                               midC = previewTint.interpolatedWith (juce::Colours::white, 0.18f),
+                               pale = previewTint.interpolatedWith (juce::Colours::white, 0.62f);
+            std::pair<float, juce::Colour> layers[] = { { lo, deep }, { mi, midC }, { hi, pale } };
+            std::sort (std::begin (layers), std::end (layers), [] (auto& a, auto& b) { return a.first > b.first; });
+            for (auto& [h, c] : layers) bar (x, w1, h * wh, c);
+            bar (x, w1, hi * 0.55f * wh, pale);
             continue;
         }
         // 3-band, like the deck overviews
