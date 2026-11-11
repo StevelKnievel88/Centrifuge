@@ -741,7 +741,16 @@ void MidiManager::handleIncomingMidiMessage (juce::MidiInput* source, const juce
     }
 
     for (auto& h : hits)
+    {
+        // lights-only buttons do nothing in Centrifuge; a pad mode button remembers it's the one selected
+        if (h.def->id.contains (".padmode."))
+        {
+            if (h.v.down && h.def->deck >= 0 && h.def->deck < 2) padMode[(size_t) h.def->deck] = h.def->id.getTrailingIntValue();
+            continue;
+        }
+        if (h.def->id.startsWith ("light.")) continue;
         router.perform (*h.def, h.v);
+    }
 }
 
 //==============================================================================
@@ -919,6 +928,8 @@ void MidiManager::sendLeds()
             const int coloured = set && hotCueColours.load() ? padNumberFor (juce::Colour (st.hotColour[(size_t) idx].load())) : -1;
             value = ! set ? b.ledOff : coloured > 0 ? coloured : b.ledOn;
         }
+        else if (name.startsWith ("padmode.") && def->deck >= 0 && def->deck < 2)
+            value = padMode[(size_t) def->deck].load() == name.getTrailingIntValue() ? b.ledOn : b.ledOff;
         else if (def->hasLed)
             value = router.ledState (*def) ? b.ledOn : b.ledOff;
         else

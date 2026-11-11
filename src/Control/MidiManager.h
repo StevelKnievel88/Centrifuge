@@ -173,6 +173,7 @@ private:
     std::array<std::atomic<int>, numPadColours> padColours {};
     std::atomic<bool> hotCueColours { true }, jogDisplay { true };
     std::array<int, 12> jogCache { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+    std::array<std::atomic<int>, 2> padMode { 1, 1 };   // last pad mode button pressed on each deck (lights only)
     std::array<int, 12> jogMsbCache { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
     void sendToXdj (const juce::MidiMessage& m);
     void sendJogDisplays();

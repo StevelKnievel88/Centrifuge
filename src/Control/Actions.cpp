@@ -111,6 +111,11 @@ static std::vector<ActionDef> buildActions()
         add (p + "key.reset", "Key reset",        D + " - Key", B, d);
         add (p + "key.shift", "Key shift (encoder)", D + " - Key", E, d);
         add (p + "key.sync",  "Key sync",         D + " - Key", B, d, true);
+
+        // Lights only: nothing happens in Centrifuge, the button just gets a colour (LED...). The pad mode buttons
+        // above the XZ's pads switch the pad bank on the unit itself; the last one pressed shows Lit, the others Unlit.
+        for (int m = 1; m <= 4; ++m)
+            add (p + "padmode." + juce::String (m), "Pad mode button " + juce::String (m) + " (light only)", D + " - Pad mode lights", B, d);
     }
 
     const auto B = ActionKind::button, E = ActionKind::encoder;
@@ -125,6 +130,8 @@ static std::vector<ActionDef> buildActions()
     add ("view.zoomin",     "Waveform zoom in",        "View", B, -1);
     add ("view.zoomout",    "Waveform zoom out",       "View", B, -1);
     add ("view.wavemode",   "Stem lanes: show stems / 3-band", "View", B, -1);
+    for (int l = 1; l <= 8; ++l)
+        add ("light." + juce::String (l), "Light only " + juce::String (l) + " (no function, just a colour)", "Lights only", B, -1);
     add ("master.volume",   "Master volume (Centrifuge's output)", "View", ActionKind::continuous, -1);
     add ("view.fold",       "Edited view on / off (skips folded out, phrases in play order)", "View", B, -1);
     return a;
