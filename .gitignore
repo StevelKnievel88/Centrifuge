@@ -4,3 +4,4 @@ build*/
 .vscode/
 model/
 ort/
+__pycache__/
