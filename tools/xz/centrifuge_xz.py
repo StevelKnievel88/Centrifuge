@@ -345,6 +345,98 @@ BOOT_TEST_SH = (
 ).encode('ascii')
 
 
+def resource(name: str) -> Path:
+    """A bundled file, whether frozen (PyInstaller) or run from the source tree."""
+    base = getattr(sys, '_MEIPASS', None)
+    return (Path(base) / 'bin' / name) if base else (Path(__file__).resolve().parent / 'bin' / name)
+
+
+# Reconnaissance boot payload. It runs in the background (so the deck boots normally), captures read-only system /
+# device / memory-map info to the stick, and runs cfxz-peek to sample the mixer object while you turn the knobs.
+# It changes nothing on the player, the device or the firmware.
+RECON_SH = (
+    "#!/bin/sh\n"
+    "# Centrifuge XZ reconnaissance (read-only). The deck boots normally; nothing is modified or kept.\n"
+    "USB=\"$1\"\n"
+    "# autoexec.sh runs from inside the (read-only, soon-unmounted) image, so copy the helper out now\n"
+    "cp ./cfxz-peek /tmp/cfxz-peek 2>/dev/null\n"
+    "chmod +x /tmp/cfxz-peek 2>/dev/null\n"
+    "(\n"
+    "  cd /                               # don't hold the image mount open\n"
+    "  sleep 20                           # let the player come up\n"
+    "  mount -o remount,rw \"$USB\" 2>/dev/null\n"
+    "  D=\"$USB/Centrifuge-XZ-recon\"\n"
+    "  mkdir -p \"$D\" 2>/dev/null\n"
+    "  PID=$(pidof rbp 2>/dev/null)\n"
+    "  {\n"
+    "    echo '=== uname ==='; uname -a\n"
+    "    echo '=== cmdline ==='; cat /proc/cmdline\n"
+    "    echo '=== date ==='; date\n"
+    "    echo '=== rbp pid ==='; echo \"$PID\"\n"
+    "    echo '=== fw_printenv ==='; fw_printenv 2>/dev/null\n"
+    "    echo '=== lsmod ==='; lsmod\n"
+    "    echo '=== mounts ==='; cat /proc/mounts\n"
+    "    echo '=== cpuinfo ==='; cat /proc/cpuinfo\n"
+    "  } > \"$D/system.txt\" 2>&1\n"
+    "  {\n"
+    "    echo '=== /dev ==='; ls -la /dev\n"
+    "    echo '=== /dev/input ==='; ls -la /dev/input 2>/dev/null; cat /proc/bus/input/devices 2>/dev/null\n"
+    "    echo '=== /dev/snd ==='; ls -la /dev/snd 2>/dev/null\n"
+    "    echo '=== /dev/fb* ==='; ls -la /dev/fb* 2>/dev/null\n"
+    "    echo '=== /sys/class ==='; ls /sys/class 2>/dev/null\n"
+    "    echo '=== tty ==='; ls -la /dev/tty* 2>/dev/null\n"
+    "  } > \"$D/devices.txt\" 2>&1\n"
+    "  dmesg > \"$D/dmesg.txt\" 2>&1\n"
+    "  { cat /proc/asound/cards 2>/dev/null; echo; ls -la /proc/asound 2>/dev/null; } > \"$D/asound.txt\" 2>&1\n"
+    "  if [ -n \"$PID\" ]; then\n"
+    "    cat /proc/$PID/maps   > \"$D/rbp-maps.txt\"   2>&1\n"
+    "    ls -la /proc/$PID/fd  > \"$D/rbp-fd.txt\"     2>&1\n"
+    "    cat /proc/$PID/status > \"$D/rbp-status.txt\" 2>&1\n"
+    "    # probe whether the shell can read the player's memory at a known code address (0x25c98c)\n"
+    "    { echo 'dd /proc/PID/mem @0x25c98c:'; dd if=/proc/$PID/mem bs=4 skip=619107 count=4 2>/dev/null | od -An -tx1; echo \"exit=$?\"; } > \"$D/mem-probe.txt\" 2>&1\n"
+    "  fi\n"
+    "  # sample the mixer object (channel knob values live in it); turn the CH3 & CH4 knobs during this\n"
+    "  if [ -x /tmp/cfxz-peek ] && [ -n \"$PID\" ]; then\n"
+    "    /tmp/cfxz-peek \"$D/knobs.txt\" 60 0x1000 2>\"$D/knobs-err.txt\"\n"
+    "  fi\n"
+    "  sync\n"
+    ") &\n"
+    "exit 0\n"
+).encode('ascii')
+
+
+def recon(volume: str, force: bool = False) -> int:
+    say('Centrifuge XZ tools - write a RECON loader to a USB stick\n')
+    vol = Path(volume)
+    if not vol.is_dir():
+        say(f'That drive / folder is not there: {volume}')
+        return 2
+    dest = vol / 'autoexec.bin'
+    if dest.exists() and not force:
+        say(f'{dest} already exists. Run from the menu to replace it.')
+        return 2
+    peek = resource('cfxz-peek')
+    if not peek.is_file():
+        say('The cfxz-peek helper is missing from this build.')
+        return 2
+    key = boot_key()
+    say('Building the recon loader')
+    image = author_autoexec({'autoexec.sh': RECON_SH, 'cfxz-peek': peek.read_bytes()}, key)
+    tmp = vol / '.centrifuge-autoexec.tmp'
+    tmp.write_bytes(image)
+    os.replace(tmp, dest)
+    say(f'\nWritten: {dest}  ({len(image) // 1024} KB)')
+    say('\nTo run the recon on the XDJ-XZ (firmware 1.26):')
+    say('  1. Put this USB stick in the XZ while it is switched OFF.')
+    say('  2. Switch on and wait for it to finish booting (it boots as normal).')
+    say('  3. When the normal screen is up, slowly sweep the CHANNEL 3 and CHANNEL 4 knobs')
+    say('     (TRIM, HI, MID, LOW) across their full range, back and forth, for about a minute.')
+    say('  4. Switch off, put the stick back in this PC, and send Claude the whole')
+    say('     "Centrifuge-XZ-recon" folder from the stick (zip it).')
+    say('\nIt only reads information; it changes nothing on the XZ and keeps nothing.')
+    return 0
+
+
 def testloader(volume: str, force: bool = False) -> int:
     say('Centrifuge XZ tools - write a boot TEST loader to a USB stick\n')
     vol = Path(volume)
@@ -378,11 +470,12 @@ def menu() -> int:
     say('===================\n')
     say('  1. Extract the XDJ-XZ 1.26 player program (for Claude to study)')
     say('  2. Write a boot TEST loader to a USB stick (safe proof-of-life)')
+    say('  3. Write a RECON loader to a USB stick (reads hardware info + knob values)')
     say('')
-    choice = input('Choose 1 or 2 (or press Enter to cancel): ').strip()
+    choice = input('Choose 1, 2 or 3 (or press Enter to cancel): ').strip()
     if choice == '1':
         return extract()
-    if choice == '2':
+    if choice in ('2', '3'):
         vol = input('USB drive to write to, e.g. E:\\  : ').strip().strip('"')
         force = False
         if vol and (Path(vol) / 'autoexec.bin').exists():
@@ -390,7 +483,7 @@ def menu() -> int:
             if not force:
                 say('Left it as it is.')
                 return 0
-        return testloader(vol, force)
+        return testloader(vol, force) if choice == '2' else recon(vol, force)
     say('Cancelled.')
     return 0
 
@@ -404,6 +497,8 @@ def main() -> int:
             return extract()
         if args[0] == 'testloader' and len(args) >= 2:
             return testloader(args[1])
+        if args[0] == 'recon' and len(args) >= 2:
+            return recon(args[1])
         say(__doc__)
         return 1
     except Exception as e:  # noqa: BLE001

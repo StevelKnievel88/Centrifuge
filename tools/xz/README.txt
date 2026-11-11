@@ -14,8 +14,17 @@ Double-click "Centrifuge XZ Tools.exe" for a menu:
      Asks for a USB drive (e.g. E:\) and writes autoexec.bin to it. This is a safe proof-of-life test:
        - Put the stick in the XZ while it's OFF, switch on, let it boot (it boots as normal), switch off.
        - Put the stick back in the PC and look for CENTRIFUGE-BOOT-OK.txt - send that to Claude.
-     It does NOT change the player, the firmware, or anything on the XZ. It runs from RAM only; boot
-     without the stick and the XZ is completely standard. The tool won't overwrite an existing autoexec.bin.
+
+  3. Write a RECON loader to a USB stick
+     Like the test loader, but it also gathers information Claude needs to build the stem features:
+       - Put the stick in the XZ while it's OFF, switch on, let it finish booting.
+       - When the normal screen is up, slowly sweep the CHANNEL 3 and CHANNEL 4 knobs (TRIM, HI, MID,
+         LOW) across their range, back and forth, for about a minute.
+       - Switch off, put the stick in the PC, and send Claude the "Centrifuge-XZ-recon" folder (zip it).
+
+  Both only read information. They do NOT change the player, the firmware, or anything on the XZ, and run
+  from RAM only - boot without the stick and the XZ is completely standard. The tool won't overwrite an
+  existing autoexec.bin unless you tell it to.
 
 Use a spare FAT32 stick for the test and keep your normal music stick aside.
 

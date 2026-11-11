@@ -261,7 +261,7 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --quiet pyinstaller==6.11.1 cryptography pycdlib inflate64
-          python -m PyInstaller --onefile --console --name "Centrifuge XZ Tools" --distpath xztools --workpath xzbuild --specpath xzbuild tools/xz/centrifuge_xz.py
+          python -m PyInstaller --onefile --console --name "Centrifuge XZ Tools" --distpath xztools --workpath xzbuild --specpath xzbuild --add-data "tools/xz/bin/cfxz-peek;bin" tools/xz/centrifuge_xz.py
 
       - name: Package
         shell: pwsh
