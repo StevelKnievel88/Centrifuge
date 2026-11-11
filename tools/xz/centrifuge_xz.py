@@ -388,6 +388,14 @@ RECON_SH = (
     "  } > \"$D/devices.txt\" 2>&1\n"
     "  dmesg > \"$D/dmesg.txt\" 2>&1\n"
     "  { cat /proc/asound/cards 2>/dev/null; echo; ls -la /proc/asound 2>/dev/null; } > \"$D/asound.txt\" 2>&1\n"
+    "  # framebuffer format + a screenshot of the XZ screen (for the Centrifuge boot screen)\n"
+    "  {\n"
+    "    echo 'fb0 virtual_size:'; cat /sys/class/graphics/fb0/virtual_size 2>/dev/null\n"
+    "    echo 'fb0 bits_per_pixel:'; cat /sys/class/graphics/fb0/bits_per_pixel 2>/dev/null\n"
+    "    echo 'fb0 stride:'; cat /sys/class/graphics/fb0/stride 2>/dev/null\n"
+    "    echo 'fb0 modes:'; cat /sys/class/graphics/fb0/modes 2>/dev/null\n"
+    "  } > \"$D/fb0.txt\" 2>&1\n"
+    "  dd if=/dev/fb0 of=\"$D/fb0.raw\" bs=1024 count=1024 2>/dev/null\n"
     "  if [ -n \"$PID\" ]; then\n"
     "    cat /proc/$PID/maps   > \"$D/rbp-maps.txt\"   2>&1\n"
     "    ls -la /proc/$PID/fd  > \"$D/rbp-fd.txt\"     2>&1\n"
@@ -395,9 +403,9 @@ RECON_SH = (
     "    # probe whether the shell can read the player's memory at a known code address (0x25c98c)\n"
     "    { echo 'dd /proc/PID/mem @0x25c98c:'; dd if=/proc/$PID/mem bs=4 skip=619107 count=4 2>/dev/null | od -An -tx1; echo \"exit=$?\"; } > \"$D/mem-probe.txt\" 2>&1\n"
     "  fi\n"
-    "  # sample the mixer object (channel knob values live in it); turn the CH3 & CH4 knobs during this\n"
+    "  # sample the mixer object + the buffers it points to, for ~2 min; turn the CH3 & CH4 knobs throughout\n"
     "  if [ -x /tmp/cfxz-peek ] && [ -n \"$PID\" ]; then\n"
-    "    /tmp/cfxz-peek \"$D/knobs.txt\" 60 0x1000 2>\"$D/knobs-err.txt\"\n"
+    "    /tmp/cfxz-peek \"$D/knobs.txt\" 120 700 2>\"$D/knobs-err.txt\"\n"
     "  fi\n"
     "  sync\n"
     ") &\n"
@@ -429,8 +437,9 @@ def recon(volume: str, force: bool = False) -> int:
     say('\nTo run the recon on the XDJ-XZ (firmware 1.26):')
     say('  1. Put this USB stick in the XZ while it is switched OFF.')
     say('  2. Switch on and wait for it to finish booting (it boots as normal).')
-    say('  3. When the normal screen is up, slowly sweep the CHANNEL 3 and CHANNEL 4 knobs')
-    say('     (TRIM, HI, MID, LOW) across their full range, back and forth, for about a minute.')
+    say('  3. From the moment the normal screen appears, keep turning the CHANNEL 3 and CHANNEL 4')
+    say('     knobs - TRIM, HI, MID, LOW - fully one way then fully the other, over and over, slowly,')
+    say('     for about TWO MINUTES. Keep going the whole time so the sweep is sure to be captured.')
     say('  4. Switch off, put the stick back in this PC, and send Claude the whole')
     say('     "Centrifuge-XZ-recon" folder from the stick (zip it).')
     say('\nIt only reads information; it changes nothing on the XZ and keeps nothing.')
