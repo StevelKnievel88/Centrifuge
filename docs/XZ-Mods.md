@@ -37,15 +37,17 @@ mods/xz-mods/cache-choice/<key>.txt           "centrifuge"
 
 A new display style next to the toolkit's `mods/ui/skin_*.c`: stems in Centrifuge's colours, original-track lane.
 
-## 3. Stems on the EQ knobs (planned)
+## 3. Stems on the knobs (channels 3 / 4)
 
-In stem mode each EQ knob sets a stem level instead of filtering:
+See [XZ-Mods-findings.md](XZ-Mods-findings.md): the mixer reports every channel's TRIM/HI/MID/LOW/COLOR/fader to
+the player, but the player can't set the channel EQ (the mixer does it in hardware). So stem knobs come from a
+spare channel whose knobs don't shape the heard audio:
 
-- 12 o'clock = 100 % (unity, untouched)
-- left of centre: fades down to silence at fully left
-- right of centre: stays at 100 %, no boost
-
-The toolkit's notes mention a "spare-channel EQ mode" reading the mixer ADC reports; that source isn't public yet.
+- Deck 1 stems from channel 3's knobs, deck 2 from channel 4's; the deck's summed audio stays on channel 1 / 2.
+- Up to 5 knobs per deck (TRIM, HI, MID, LOW, COLOR). Default 3 with drums+bass tied: TRIM = drums+bass,
+  HI = vocals, MID = inst; LOW = bass when untied.
+- Each knob VOL (12 o'clock = 100 %, left fades to silence, right stays 100 %) or FILTER (left LP, right HP),
+  chosen per deck in our menu. Done in rbp's own stem mixer.
 
 ## 4. Key shift (planned)
 
