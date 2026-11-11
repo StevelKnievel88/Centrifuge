@@ -227,7 +227,18 @@ def extract() -> int:
             for name in files:
                 path = directory.rstrip('/') + '/' + name
                 buf = io.BytesIO()
-                iso.get_file_from_iso_fp(buf, rr_path=path)
+                try:
+                    iso.get_file_from_iso_fp(buf, rr_path=path)
+                except Exception as e:  # noqa: BLE001 - symlinks (and anything else without data) are listed, not copied
+                    target = ''
+                    try:
+                        rec = iso.get_record(rr_path=path)
+                        if rec.rock_ridge is not None and rec.rock_ridge.is_symlink():
+                            target = rec.rock_ridge.symlink_path().decode('utf-8', 'replace')
+                    except Exception:  # noqa: BLE001
+                        pass
+                    listing.append(f'{"link":>12}  {path} -> {target or e}')
+                    continue
                 content = buf.getvalue()
                 listing.append(f'{len(content):>12}  {path}')
                 # everything in the update image (the player program, its libraries and settings)
