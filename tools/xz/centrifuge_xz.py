@@ -370,6 +370,53 @@ SPLASH_SH = (
 ).encode('ascii')
 
 
+# Screen prototype: launches cfxz-screen, which draws the Centrifuge UI to /dev/fb0 (spinning platter + playhead)
+# over the normal screen. Screen-only; nothing else on the deck is touched, nothing persists.
+SCREEN_SH = (
+    "#!/bin/sh\n"
+    "# Centrifuge screen prototype. Draws the Centrifuge UI to the framebuffer; the deck otherwise runs as normal.\n"
+    "cp ./cfxz-screen /tmp/cfxz-screen 2>/dev/null\n"
+    "cp ./centrifuge-screen.rgb565 /tmp/cf-screen.565 2>/dev/null\n"
+    "chmod +x /tmp/cfxz-screen 2>/dev/null\n"
+    "(\n"
+    "  cd /\n"
+    "  sleep 10\n"                      # let the deck finish booting and own the screen first
+    "  /tmp/cfxz-screen /tmp/cf-screen.565 >/dev/null 2>&1\n"
+    ") &\n"
+    "exit 0\n"
+).encode('ascii')
+
+
+def screen(volume: str, force: bool = False) -> int:
+    say('Centrifuge XZ tools - write the SCREEN prototype to a USB stick\n')
+    vol = Path(volume)
+    if not vol.is_dir():
+        say(f'That drive / folder is not there: {volume}')
+        return 2
+    dest = vol / 'autoexec.bin'
+    if dest.exists() and not force:
+        say(f'{dest} already exists. Run from the menu to replace it.')
+        return 2
+    prog = resource('cfxz-screen')
+    bgimg = resource('centrifuge-screen.rgb565')
+    if not prog.is_file() or not bgimg.is_file():
+        say('The screen prototype files are missing from this build.')
+        return 2
+    key = boot_key()
+    say('Building the screen prototype loader')
+    image = author_autoexec({'autoexec.sh': SCREEN_SH, 'cfxz-screen': prog.read_bytes(),
+                             'centrifuge-screen.rgb565': bgimg.read_bytes()}, key)
+    tmp = vol / '.centrifuge-autoexec.tmp'
+    tmp.write_bytes(image)
+    os.replace(tmp, dest)
+    say(f'\nWritten: {dest}  ({len(image) // 1024} KB)')
+    say('\nPut the stick in the XZ while it is OFF, switch on, and let it finish booting.')
+    say('About 10 seconds after the normal screen appears, the Centrifuge screen takes over -')
+    say('with a spinning platter and a moving playhead. The jog wheels, pads and audio still work as')
+    say('normal underneath; only the screen is Centrifuge. Power off and remove the stick for the stock screen.')
+    return 0
+
+
 def splash(volume: str, force: bool = False) -> int:
     say('Centrifuge XZ tools - write a boot SPLASH loader to a USB stick\n')
     vol = Path(volume)
@@ -527,11 +574,12 @@ def menu() -> int:
     say('  2. Write a boot TEST loader to a USB stick (safe proof-of-life)')
     say('  3. Write a RECON loader to a USB stick (reads hardware info + knob values)')
     say('  4. Write a SPLASH loader to a USB stick (Centrifuge logo on the screen at boot)')
+    say('  5. Write the SCREEN prototype to a USB stick (live Centrifuge screen on the deck)')
     say('')
-    choice = input('Choose 1-4 (or press Enter to cancel): ').strip()
+    choice = input('Choose 1-5 (or press Enter to cancel): ').strip()
     if choice == '1':
         return extract()
-    if choice in ('2', '3', '4'):
+    if choice in ('2', '3', '4', '5'):
         vol = input('USB drive to write to, e.g. E:\\  : ').strip().strip('"')
         force = False
         if vol and (Path(vol) / 'autoexec.bin').exists():
@@ -539,7 +587,7 @@ def menu() -> int:
             if not force:
                 say('Left it as it is.')
                 return 0
-        return {'2': testloader, '3': recon, '4': splash}[choice](vol, force)
+        return {'2': testloader, '3': recon, '4': splash, '5': screen}[choice](vol, force)
     say('Cancelled.')
     return 0
 
@@ -557,6 +605,8 @@ def main() -> int:
             return recon(args[1])
         if args[0] == 'splash' and len(args) >= 2:
             return splash(args[1])
+        if args[0] == 'screen' and len(args) >= 2:
+            return screen(args[1])
         say(__doc__)
         return 1
     except Exception as e:  # noqa: BLE001
