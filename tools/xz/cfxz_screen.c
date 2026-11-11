@@ -2,9 +2,17 @@
  *
  * Draws the Centrifuge UI to /dev/fb0 with a live spinning platter + sweeping playhead. Uses plain writes
  * (lseek + write, the same way `cat > /dev/fb0` works on this display) rather than mmap, which this i.MX driver
- * does not scan out. Writes to every buffer page. Touches nothing but screen pixels; RAM-only.
+ * does not scan out. Writes to every buffer page.
  *
- * usage: cfxz-screen <background.rgb565> [logfile]
+ * The stock player (rbp) redraws the same single BG buffer continuously, which makes our screen flicker
+ * (full-screen alternation between rbp and Centrifuge). To take clean ownership of the display we pause rbp's
+ * drawing with SIGSTOP while our screen is up, and SIGCONT it again on exit. This is RAM-only and reversible:
+ * a power cycle (or exit) restores the stock deck. Pass --no-freeze to leave rbp running (will flicker).
+ *
+ * We also probe the FG overlay plane (/dev/fb1) once and log its memory budget, so we can tell whether a
+ * true coexisting overlay (Centrifuge on top, rbp still running underneath) is feasible later.
+ *
+ * usage: cfxz-screen <background.rgb565> [logfile] [--no-freeze]
  */
 #define _GNU_SOURCE
 #include <stdio.h>
@@ -15,6 +23,9 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <time.h>
+#include <signal.h>
+#include <dirent.h>
+#include <ctype.h>
 #include <sys/ioctl.h>
 #include <linux/fb.h>
 
@@ -39,20 +50,72 @@ static void line2(int x0,int y0,int x1,int y1,uint16_t c){
         int e2=2*e; if(e2>=dy){e+=dy;x0+=sx;} if(e2<=dx){e+=dx;y0+=sy;} }
 }
 
-int main(int argc,char**argv){
-    if(argc<2){ fprintf(stderr,"usage: cfxz-screen <bg.rgb565> [log]\n"); return 2; }
-    FILE *log = argc>2 ? fopen(argv[2],"w") : NULL;
-    #define LOG(...) do{ if(log){fprintf(log,__VA_ARGS__);fflush(log);} }while(0)
-    LOG("cfxz-screen (write mode) starting\n");
+/* --- find the player program (rbp) by scanning /proc/<pid>/comm --- */
+static int find_rbp(void){
+    DIR *d=opendir("/proc"); if(!d) return -1;
+    struct dirent *e; int found=-1;
+    while((e=readdir(d))){
+        if(!isdigit((unsigned char)e->d_name[0])) continue;
+        char path[64]; snprintf(path,sizeof path,"/proc/%s/comm",e->d_name);
+        FILE *f=fopen(path,"r"); if(!f) continue;
+        char name[64]={0}; if(fgets(name,sizeof name,f)){ char *nl=strchr(name,'\n'); if(nl)*nl=0;
+            if(strcmp(name,"rbp")==0){ found=atoi(e->d_name); } }
+        fclose(f);
+        if(found>0) break;
+    }
+    closedir(d);
+    return found;
+}
 
-    int bfd=open(argv[1],O_RDONLY);
+static int g_rbp=-1;      /* paused rbp pid, for the signal handler to resume */
+static void resume_and_exit(int sig){ (void)sig; if(g_rbp>0) kill(g_rbp,SIGCONT); _exit(0); }
+
+int main(int argc,char**argv){
+    const char *bgpath=NULL, *logpath=NULL; int freeze=1;
+    for(int i=1;i<argc;i++){
+        if(strcmp(argv[i],"--no-freeze")==0) freeze=0;
+        else if(!bgpath) bgpath=argv[i];
+        else if(!logpath) logpath=argv[i];
+    }
+    if(!bgpath){ fprintf(stderr,"usage: cfxz-screen <bg.rgb565> [log] [--no-freeze]\n"); return 2; }
+    FILE *log = logpath ? fopen(logpath,"w") : NULL;
+    #define LOG(...) do{ if(log){fprintf(log,__VA_ARGS__);fflush(log);} }while(0)
+    LOG("cfxz-screen (write mode, freeze=%d) starting\n",freeze);
+
+    int bfd=open(bgpath,O_RDONLY);
     static uint16_t bg[W*H];
     if(bfd<0||read(bfd,bg,sizeof bg)!=(ssize_t)sizeof bg){ LOG("background read failed\n"); return 1; }
     close(bfd);
 
+    /* --- probe the FG overlay plane (fb1) once: is a coexisting overlay feasible? --- */
+    {
+        int o=open("/dev/fb1",O_RDWR);
+        if(o<0){ LOG("fb1 probe: open failed\n"); }
+        else{
+            struct fb_var_screeninfo v; struct fb_fix_screeninfo fx;
+            memset(&v,0,sizeof v); memset(&fx,0,sizeof fx);
+            ioctl(o,FBIOGET_VSCREENINFO,&v); ioctl(o,FBIOGET_FSCREENINFO,&fx);
+            unsigned need=800u*480u*2u;
+            LOG("fb1 probe: xres=%u yres=%u xvirt=%u yvirt=%u bpp=%u line_length=%u smem_len=%u  (800x480x2 needs %u -> %s)\n",
+                v.xres,v.yres,v.xres_virtual,v.yres_virtual,v.bits_per_pixel,fx.line_length,fx.smem_len,need,
+                fx.smem_len>=need?"FITS full-screen overlay":"too small for full-screen; max rows at 800w = see below");
+            if(fx.smem_len>0) LOG("fb1 probe: max 800-wide rows that fit = %u (of 480)\n", fx.smem_len/(800u*2u));
+            close(o);
+        }
+    }
+
+    /* --- take ownership of the display: pause rbp so it stops redrawing fb0 --- */
+    if(freeze){
+        int pid=find_rbp();
+        if(pid>0){ if(kill(pid,SIGSTOP)==0){ g_rbp=pid; LOG("paused rbp pid=%d (SIGSTOP) - display is ours\n",pid); }
+                   else LOG("found rbp pid=%d but SIGSTOP failed (errno)\n",pid); }
+        else LOG("rbp not found; drawing anyway (may flicker)\n");
+        signal(SIGTERM,resume_and_exit); signal(SIGINT,resume_and_exit); signal(SIGHUP,resume_and_exit);
+    }
+
     int fb=-1;
     for(int t=0;t<120 && fb<0;t++){ fb=open("/dev/fb0",O_RDWR); if(fb<0){ struct timespec s={0,500000000L}; nanosleep(&s,0);} }
-    if(fb<0){ LOG("could not open /dev/fb0\n"); return 1; }
+    if(fb<0){ LOG("could not open /dev/fb0\n"); if(g_rbp>0)kill(g_rbp,SIGCONT); return 1; }
 
     struct fb_var_screeninfo var; struct fb_fix_screeninfo fix;
     memset(&var,0,sizeof var); memset(&fix,0,sizeof fix);
@@ -86,8 +149,10 @@ int main(int argc,char**argv){
             if(!logged){ LOG("first write: %ld bytes (page=%d, pagebytes=%d)\n",(long)wr,p,pagebytes); }
         }
         logged=1;
+        /* when rbp is frozen nothing overwrites us, so we can idle slower (less CPU, no tearing) */
         theta+=0.14; if(theta>6.2831853) theta-=6.2831853;
         phase+=5;
-        struct timespec ts={0,16000000L}; nanosleep(&ts,0);   /* ~60 fps */
+        struct timespec ts = freeze ? (struct timespec){0,33000000L} : (struct timespec){0,16000000L};
+        nanosleep(&ts,0);
     }
 }

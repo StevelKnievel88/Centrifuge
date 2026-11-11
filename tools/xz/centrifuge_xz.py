@@ -425,9 +425,11 @@ def screen(volume: str, force: bool = False) -> int:
     os.replace(tmp, dest)
     say(f'\nWritten: {dest}  ({len(image) // 1024} KB)')
     say('\nPut the stick in the XZ while it is OFF, switch on, and let it finish booting.')
-    say('About 10 seconds after the normal screen appears, the Centrifuge screen takes over -')
-    say('with a spinning platter and a moving playhead. The jog wheels, pads and audio still work as')
-    say('normal underneath; only the screen is Centrifuge. Power off and remove the stick for the stock screen.')
+    say('About 10 seconds after the normal screen appears, Centrifuge takes over the whole screen -')
+    say('rock steady, with a spinning platter and a moving playhead. To get a clean, flicker-free')
+    say('display it pauses the stock player while the Centrifuge screen is up, so the deck itself is')
+    say('frozen during this prototype (no browsing/playback yet - that comes with the standalone audio).')
+    say('Everything is RAM-only: power off and remove the stick and the deck is 100% back to stock.')
     return 0
 
 
