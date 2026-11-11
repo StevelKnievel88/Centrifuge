@@ -94,6 +94,6 @@ int main(int argc,char**argv){
         }
         theta+=0.14; if(theta>6.2831853) theta-=6.2831853;
         phase+=5;
-        struct timespec ts={0,40000000L}; nanosleep(&ts,0);
+        struct timespec ts={0,10000000L}; nanosleep(&ts,0);
     }
 }
