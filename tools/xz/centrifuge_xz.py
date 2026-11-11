@@ -351,6 +351,52 @@ def resource(name: str) -> Path:
     return (Path(base) / 'bin' / name) if base else (Path(__file__).resolve().parent / 'bin' / name)
 
 
+# Boot-splash payload: shows the Centrifuge logo on the XZ screen (/dev/fb0, 800x480 RGB565) during boot, then lets
+# the deck carry on and take the screen over as normal. It only writes pixels to the framebuffer; nothing is kept.
+SPLASH_SH = (
+    "#!/bin/sh\n"
+    "# Centrifuge XZ boot splash. Draws the logo to the screen during boot; the deck then boots normally.\n"
+    "cp ./centrifuge-splash.rgb565 /tmp/cf-splash.565 2>/dev/null\n"
+    "(\n"
+    "  cd /\n"
+    "  n=0\n"
+    "  while [ $n -lt 60 ]; do\n"
+    "    cat /tmp/cf-splash.565 > /dev/fb0 2>/dev/null\n"
+    "    n=$((n+1))\n"
+    "    usleep 300000 2>/dev/null || sleep 1\n"
+    "  done\n"
+    ") &\n"
+    "exit 0\n"
+).encode('ascii')
+
+
+def splash(volume: str, force: bool = False) -> int:
+    say('Centrifuge XZ tools - write a boot SPLASH loader to a USB stick\n')
+    vol = Path(volume)
+    if not vol.is_dir():
+        say(f'That drive / folder is not there: {volume}')
+        return 2
+    dest = vol / 'autoexec.bin'
+    if dest.exists() and not force:
+        say(f'{dest} already exists. Run from the menu to replace it.')
+        return 2
+    img = resource('centrifuge-splash.rgb565')
+    if not img.is_file():
+        say('The splash image is missing from this build.')
+        return 2
+    key = boot_key()
+    say('Building the splash loader')
+    image = author_autoexec({'autoexec.sh': SPLASH_SH, 'centrifuge-splash.rgb565': img.read_bytes()}, key)
+    tmp = vol / '.centrifuge-autoexec.tmp'
+    tmp.write_bytes(image)
+    os.replace(tmp, dest)
+    say(f'\nWritten: {dest}  ({len(image) // 1024} KB)')
+    say('\nPut the stick in the XZ while it is OFF, switch on, and watch the screen during start-up -')
+    say('the Centrifuge logo should appear for a few seconds, then the normal screen takes over.')
+    say('It only draws to the screen; it changes nothing on the XZ and keeps nothing.')
+    return 0
+
+
 # Reconnaissance boot payload. It runs in the background (so the deck boots normally), captures read-only system /
 # device / memory-map info to the stick, and runs cfxz-peek to sample the mixer object while you turn the knobs.
 # It changes nothing on the player, the device or the firmware.
@@ -480,11 +526,12 @@ def menu() -> int:
     say('  1. Extract the XDJ-XZ 1.26 player program (for Claude to study)')
     say('  2. Write a boot TEST loader to a USB stick (safe proof-of-life)')
     say('  3. Write a RECON loader to a USB stick (reads hardware info + knob values)')
+    say('  4. Write a SPLASH loader to a USB stick (Centrifuge logo on the screen at boot)')
     say('')
-    choice = input('Choose 1, 2 or 3 (or press Enter to cancel): ').strip()
+    choice = input('Choose 1-4 (or press Enter to cancel): ').strip()
     if choice == '1':
         return extract()
-    if choice in ('2', '3'):
+    if choice in ('2', '3', '4'):
         vol = input('USB drive to write to, e.g. E:\\  : ').strip().strip('"')
         force = False
         if vol and (Path(vol) / 'autoexec.bin').exists():
@@ -492,7 +539,7 @@ def menu() -> int:
             if not force:
                 say('Left it as it is.')
                 return 0
-        return testloader(vol, force) if choice == '2' else recon(vol, force)
+        return {'2': testloader, '3': recon, '4': splash}[choice](vol, force)
     say('Cancelled.')
     return 0
 
@@ -508,6 +555,8 @@ def main() -> int:
             return testloader(args[1])
         if args[0] == 'recon' and len(args) >= 2:
             return recon(args[1])
+        if args[0] == 'splash' and len(args) >= 2:
+            return splash(args[1])
         say(__doc__)
         return 1
     except Exception as e:  # noqa: BLE001
