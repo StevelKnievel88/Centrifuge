@@ -53,7 +53,9 @@ static pid_t find_rbp(void)
     closedir(d); return found;
 }
 
-static int looks_heap(uint32_t p) { return p >= 0x09000000u && p < 0x50000000u && (p & 3) == 0; }
+/* A plausible, aligned, readable pointer. The XZ's heap sits low (~0x03f00000), so keep the floor small;
+   bad guesses just fail the subsequent read harmlessly. */
+static int looks_heap(uint32_t p) { return p >= 0x00008000u && p < 0x80000000u && (p & 3) == 0; }
 
 static void hexdump(FILE *log, const char *tag, uint32_t addr, const unsigned char *buf, uint32_t n)
 {
