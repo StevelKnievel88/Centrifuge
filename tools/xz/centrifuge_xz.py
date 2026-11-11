@@ -308,27 +308,44 @@ def author_autoexec(files: dict, key: bytes) -> bytes:
 
 
 # A proof-of-life boot test ONLY. It writes a file back to the stick and returns, so the XDJ-XZ then boots exactly as
-# normal. It does not stage the player, load anything, or keep any state.
+# normal. It does not stage the player, load anything, or keep any state. The stick may be mounted read-only during
+# early boot, so it remounts it read-write and also writes to any other FAT mount; a deliberate ~8 s pause at the end
+# is a visible tell that the script ran even if no file can be written.
 BOOT_TEST_SH = (
     "#!/bin/sh\n"
-    "# Centrifuge XZ boot test (proof of life). The deck boots normally after this; nothing is modified or kept.\n"
+    "# Centrifuge XZ boot test v2 (proof of life). The deck boots normally after this; nothing is modified or kept.\n"
     "USB=\"$1\"\n"
-    "OUT=\"$USB/CENTRIFUGE-BOOT-OK.txt\"\n"
-    "{\n"
-    "  echo 'Centrifuge XZ boot test - it ran'\n"
-    "  echo \"when   : $(date 2>/dev/null)\"\n"
-    "  echo \"uname  : $(uname -a 2>/dev/null)\"\n"
-    "  echo \"serial : $(fw_printenv -n serial_num 2>/dev/null)\"\n"
-    "  echo \"rootfs : $(fw_printenv -n rootfs 2>/dev/null)\"\n"
-    "  echo \"rbp    : $(ls -l /root/pdj/rbp 2>/dev/null)\"\n"
-    "  echo \"cryptol: $(grep -c '^cryptoloop' /proc/modules 2>/dev/null)\"\n"
-    "} > \"$OUT\" 2>/dev/null\n"
+    "mark() {\n"
+    "  {\n"
+    "    echo 'Centrifuge XZ boot test - it ran'\n"
+    "    echo \"when   : $(date 2>/dev/null)\"\n"
+    "    echo \"target : $1\"\n"
+    "    echo \"uname  : $(uname -a 2>/dev/null)\"\n"
+    "    echo \"serial : $(fw_printenv -n serial_num 2>/dev/null)\"\n"
+    "    echo \"rbp    : $(ls -l /root/pdj/rbp 2>/dev/null)\"\n"
+    "    echo 'mounts :'\n"
+    "    cat /proc/mounts 2>/dev/null\n"
+    "  } > \"$1/CENTRIFUGE-BOOT-OK.txt\" 2>/dev/null\n"
+    "}\n"
+    "# the stick may be read-only this early in boot: remount it read-write, then write\n"
+    "mount -o remount,rw \"$USB\" 2>/dev/null\n"
+    "mark \"$USB\"\n"
+    "# also try every FAT / exFAT mount, in case the stick is mounted somewhere else\n"
+    "cat /proc/mounts 2>/dev/null | while read dev mp fs rest; do\n"
+    "  case \"$fs\" in\n"
+    "    vfat|fat|exfat|msdos)\n"
+    "      mount -o remount,rw \"$mp\" 2>/dev/null\n"
+    "      mark \"$mp\" ;;\n"
+    "  esac\n"
+    "done\n"
     "sync\n"
+    "# visible tell: if no file survives, a ~8 s longer boot still proves the script ran\n"
+    "sleep 8\n"
     "exit 0\n"
 ).encode('ascii')
 
 
-def testloader(volume: str) -> int:
+def testloader(volume: str, force: bool = False) -> int:
     say('Centrifuge XZ tools - write a boot TEST loader to a USB stick\n')
     vol = Path(volume)
     if not vol.is_dir():
@@ -336,8 +353,8 @@ def testloader(volume: str) -> int:
         say('Pass the USB drive, e.g.  "Centrifuge XZ Tools.exe" testloader E:\\')
         return 2
     dest = vol / 'autoexec.bin'
-    if dest.exists():
-        say(f'{dest} already exists. Remove or rename it first - this tool will not overwrite a loader.')
+    if dest.exists() and not force:
+        say(f'{dest} already exists. Remove or rename it first, or run from the menu to replace it.')
         return 2
     key = boot_key()
     say('Building the test loader (nothing is downloaded that you do not already have)')
@@ -367,7 +384,13 @@ def menu() -> int:
         return extract()
     if choice == '2':
         vol = input('USB drive to write to, e.g. E:\\  : ').strip().strip('"')
-        return testloader(vol)
+        force = False
+        if vol and (Path(vol) / 'autoexec.bin').exists():
+            force = input('That stick already has autoexec.bin. Replace it? (y/N): ').strip().lower() == 'y'
+            if not force:
+                say('Left it as it is.')
+                return 0
+        return testloader(vol, force)
     say('Cancelled.')
     return 0
 
