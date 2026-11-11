@@ -1,13 +1,18 @@
-"""Centrifuge XZ tools (Windows). First job: get the XDJ-XZ 1.26 player program out of the official firmware so its
-mixer / EQ handling can be studied for the Centrifuge loader.
+"""Centrifuge XZ tools (Windows) - groundwork for the Centrifuge loader on the XDJ-XZ (firmware 1.26).
 
   centrifuge-xz.exe extract            downloads the official 1.26 firmware (AlphaTheta) and Pioneer's published
                                        source archive (for the boot key), checks both, and writes
                                        "Centrifuge XZ\\xz-1.26-player.zip" on the desktop (the player program files)
 
-Nothing is written to the XDJ-XZ or to any USB stick. Downloads are cached in %LOCALAPPDATA%\\Centrifuge\\xz.
+  centrifuge-xz.exe testloader E:\\     writes a boot TEST loader to the USB drive E:\\ (autoexec.bin). It's a
+                                       proof-of-life only: at power-on the XDJ-XZ runs it, it writes
+                                       CENTRIFUGE-BOOT-OK.txt back to the stick, and the deck then boots 100%
+                                       normally. It does NOT change the player, touch the firmware, or keep any
+                                       state - power off and remove the stick and the XZ is completely standard.
 
-The download / boot-support / decryption steps follow the MIT-licensed XZ Mods builder by OpticMystic
+Run with no arguments (or double-click) for a menu. Downloads are cached in %LOCALAPPDATA%\\Centrifuge\\xz.
+
+The download / boot-support / image-authoring steps follow the MIT-licensed XZ Mods builder by OpticMystic
 (https://github.com/OpticMystic/xdj-xz-toolkit), with thanks.
 """
 from __future__ import annotations
@@ -274,18 +279,115 @@ def extract() -> int:
     return 0
 
 
+def encrypt(data: bytes, key: bytes) -> bytes:
+    out = bytearray(len(data))
+    for start in range(0, len(data), 512):
+        c = Cipher(algorithms.AES(key), modes.CBC(struct.pack('<I', start // 512) + bytes(12))).encryptor()
+        out[start:start + 512] = c.update(data[start:start + 512]) + c.finalize()
+    return bytes(out)
+
+
+def author_autoexec(files: dict, key: bytes) -> bytes:
+    """Builds an autoexec.bin: a Rock Ridge ISO9660 of `files` (name -> bytes, at the root), cryptoloop-AES-encrypted
+    exactly as the XDJ-XZ's decrypt_autoexec.sh expects (512-byte sectors, little-endian sector-index IV)."""
+    iso = pycdlib.PyCdlib()
+    iso.new(interchange_level=3, vol_ident='UsbAuto', rock_ridge='1.09')
+    n = 0
+    for name, data in files.items():
+        n += 1
+        iso.add_fp(io.BytesIO(data), len(data), f'/F{n:07d};1', rr_name=name, file_mode=0o100755)
+    out = io.BytesIO()
+    iso.write_fp(out)
+    iso.close()
+    data = bytearray(out.getvalue())
+    data.extend(bytes(150 * 2048))                       # the deck's loop image expects some slack
+    blocks = len(data) // 2048
+    struct.pack_into('<I', data, 32768 + 80, blocks)     # volume space size (both-endian), matching the padded length
+    struct.pack_into('>I', data, 32768 + 84, blocks)
+    return encrypt(bytes(data), key)
+
+
+# A proof-of-life boot test ONLY. It writes a file back to the stick and returns, so the XDJ-XZ then boots exactly as
+# normal. It does not stage the player, load anything, or keep any state.
+BOOT_TEST_SH = (
+    "#!/bin/sh\n"
+    "# Centrifuge XZ boot test (proof of life). The deck boots normally after this; nothing is modified or kept.\n"
+    "USB=\"$1\"\n"
+    "OUT=\"$USB/CENTRIFUGE-BOOT-OK.txt\"\n"
+    "{\n"
+    "  echo 'Centrifuge XZ boot test - it ran'\n"
+    "  echo \"when   : $(date 2>/dev/null)\"\n"
+    "  echo \"uname  : $(uname -a 2>/dev/null)\"\n"
+    "  echo \"serial : $(fw_printenv -n serial_num 2>/dev/null)\"\n"
+    "  echo \"rootfs : $(fw_printenv -n rootfs 2>/dev/null)\"\n"
+    "  echo \"rbp    : $(ls -l /root/pdj/rbp 2>/dev/null)\"\n"
+    "  echo \"cryptol: $(grep -c '^cryptoloop' /proc/modules 2>/dev/null)\"\n"
+    "} > \"$OUT\" 2>/dev/null\n"
+    "sync\n"
+    "exit 0\n"
+).encode('ascii')
+
+
+def testloader(volume: str) -> int:
+    say('Centrifuge XZ tools - write a boot TEST loader to a USB stick\n')
+    vol = Path(volume)
+    if not vol.is_dir():
+        say(f'That drive / folder is not there: {volume}')
+        say('Pass the USB drive, e.g.  "Centrifuge XZ Tools.exe" testloader E:\\')
+        return 2
+    dest = vol / 'autoexec.bin'
+    if dest.exists():
+        say(f'{dest} already exists. Remove or rename it first - this tool will not overwrite a loader.')
+        return 2
+    key = boot_key()
+    say('Building the test loader (nothing is downloaded that you do not already have)')
+    image = author_autoexec({'autoexec.sh': BOOT_TEST_SH}, key)
+    tmp = vol / '.centrifuge-autoexec.tmp'
+    tmp.write_bytes(image)
+    os.replace(tmp, dest)
+    say(f'\nWritten: {dest}  ({len(image) // 1024} KB)')
+    say('\nTo test on the XDJ-XZ (firmware 1.26):')
+    say('  1. Put this USB stick in the XZ while it is switched OFF.')
+    say('  2. Switch the XZ on and wait for it to finish starting up (it boots as normal).')
+    say('  3. Switch it off, take the stick out, and put it back in this PC.')
+    say('  4. Look for CENTRIFUGE-BOOT-OK.txt on the stick and send it to Claude.')
+    say('\nIf that file is there, our loader runs on your unit. If not, the deck still booted fine - tell Claude.')
+    say('Booting WITHOUT this stick leaves the XZ completely standard.')
+    return 0
+
+
+def menu() -> int:
+    say('Centrifuge XZ Tools')
+    say('===================\n')
+    say('  1. Extract the XDJ-XZ 1.26 player program (for Claude to study)')
+    say('  2. Write a boot TEST loader to a USB stick (safe proof-of-life)')
+    say('')
+    choice = input('Choose 1 or 2 (or press Enter to cancel): ').strip()
+    if choice == '1':
+        return extract()
+    if choice == '2':
+        vol = input('USB drive to write to, e.g. E:\\  : ').strip().strip('"')
+        return testloader(vol)
+    say('Cancelled.')
+    return 0
+
+
 def main() -> int:
-    command = sys.argv[1] if len(sys.argv) > 1 else 'extract'
+    args = sys.argv[1:]
     try:
-        if command == 'extract':
+        if not args:
+            return menu()
+        if args[0] == 'extract':
             return extract()
+        if args[0] == 'testloader' and len(args) >= 2:
+            return testloader(args[1])
         say(__doc__)
         return 1
     except Exception as e:  # noqa: BLE001
         say(f'\nSomething went wrong: {e}')
         return 2
     finally:
-        if getattr(sys, 'frozen', False) and len(sys.argv) <= 1:
+        if getattr(sys, 'frozen', False):
             input('\nPress Enter to close')
 
 

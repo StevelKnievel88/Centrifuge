@@ -1,18 +1,28 @@
 Centrifuge XZ Tools
 ===================
 
-Work in progress towards the Centrifuge loader for the XDJ-XZ (firmware 1.26).
+Groundwork for the Centrifuge loader on the XDJ-XZ (firmware 1.26 only).
 
-Right now it does one thing: double-click "Centrifuge XZ Tools.exe" and it
+Double-click "Centrifuge XZ Tools.exe" for a menu:
 
-  1. downloads the official XDJ-XZ 1.26 firmware from AlphaTheta (about 70 MB)
-  2. downloads Pioneer's published XDJ-XZ source archive (about 250 MB, for the boot support file)
-  3. checks both, and writes  Desktop\Centrifuge XZ\xz-1.26-player.zip  (the player program and its files)
+  1. Extract the XDJ-XZ 1.26 player program
+     Downloads the official 1.26 firmware (AlphaTheta) and Pioneer's published source archive (~250 MB,
+     first time only, then cached), checks both, and writes  Desktop\Centrifuge XZ\xz-1.26-player.zip.
+     Attach that zip in the Claude chat.
 
-Nothing is written to the XDJ-XZ or to a USB stick. Downloads are kept in %LOCALAPPDATA%\Centrifuge\xz
-so a second run is quick.
+  2. Write a boot TEST loader to a USB stick
+     Asks for a USB drive (e.g. E:\) and writes autoexec.bin to it. This is a safe proof-of-life test:
+       - Put the stick in the XZ while it's OFF, switch on, let it boot (it boots as normal), switch off.
+       - Put the stick back in the PC and look for CENTRIFUGE-BOOT-OK.txt - send that to Claude.
+     It does NOT change the player, the firmware, or anything on the XZ. It runs from RAM only; boot
+     without the stick and the XZ is completely standard. The tool won't overwrite an existing autoexec.bin.
+
+Use a spare FAT32 stick for the test and keep your normal music stick aside.
+
+Downloads are cached in %LOCALAPPDATA%\Centrifuge\xz. Windows may warn that the exe is unsigned
+(More info -> Run anyway).
 
 Credits
 -------
-The firmware download, boot support and decryption steps follow the XZ Mods builder by OpticMystic
+The firmware download, boot key and image authoring follow the XZ Mods builder by OpticMystic
 (https://github.com/OpticMystic/xdj-xz-toolkit, MIT licence). Thank you.
