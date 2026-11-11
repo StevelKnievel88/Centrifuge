@@ -356,12 +356,12 @@ def resource(name: str) -> Path:
 SPLASH_SH = (
     "#!/bin/sh\n"
     "# Centrifuge XZ boot splash. Draws the logo to the screen during boot; the deck then boots normally.\n"
-    "cp ./centrifuge-splash.rgb565 /tmp/cf-splash.565 2>/dev/null\n"
+    "cp ./centrifuge-splash.rgb565 /dev/shm/cf-splash.565 2>/dev/null   # /tmp is only 512k; use /dev/shm (60M)\n"
     "(\n"
     "  cd /\n"
     "  n=0\n"
     "  while [ $n -lt 60 ]; do\n"
-    "    cat /tmp/cf-splash.565 > /dev/fb0 2>/dev/null\n"
+    "    cat /dev/shm/cf-splash.565 > /dev/fb0 2>/dev/null\n"
     "    n=$((n+1))\n"
     "    usleep 300000 2>/dev/null || sleep 1\n"
     "  done\n"
@@ -376,9 +376,9 @@ SCREEN_SH = (
     "#!/bin/sh\n"
     "# Centrifuge screen prototype. Draws the Centrifuge UI to the framebuffer; the deck otherwise runs as normal.\n"
     "USB=\"$1\"\n"
-    "cp ./cfxz-screen /tmp/cfxz-screen 2>/dev/null\n"
-    "cp ./centrifuge-screen.rgb565 /tmp/cf-screen.565 2>/dev/null\n"
-    "chmod +x /tmp/cfxz-screen 2>/dev/null\n"
+    "cp ./cfxz-screen /dev/shm/cfxz-screen 2>/dev/null\n"
+    "cp ./centrifuge-screen.rgb565 /dev/shm/cf-screen.565 2>/dev/null\n"   # /tmp is only 512k; the 750k image needs /dev/shm (60M)
+    "chmod +x /dev/shm/cfxz-screen 2>/dev/null\n"
     "(\n"
     "  cd /\n"
     "  sleep 12\n"                      # let the deck finish booting and own the screen first
@@ -395,7 +395,7 @@ SCREEN_SH = (
     "    done\n"
     "  } > \"$USB/cf-screen-sys.txt\" 2>&1\n"
     "  sync\n"
-    "  /tmp/cfxz-screen /tmp/cf-screen.565 \"$USB/cf-screen.log\" >/dev/null 2>&1\n"
+    "  /dev/shm/cfxz-screen /dev/shm/cf-screen.565 \"$USB/cf-screen.log\" >/dev/null 2>&1\n"
     ") &\n"
     "exit 0\n"
 ).encode('ascii')
