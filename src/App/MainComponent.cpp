@@ -1,4 +1,6 @@
 #include "MainComponent.h"
+#include "../UI/ListDialogs.h"
+#include "../Library/UserLists.h"
 #include "../Library/KeyOpinions.h"
 #include "Features.h"
 #include "../Audio/MusicalKey.h"
@@ -195,6 +197,11 @@ MainComponent::MainComponent()
     browser.onImport = [this] (juce::Component& c) { showImportMenu (c); };
     browser.onFilesDropped = [this] (const juce::Array<juce::File>& items) { addMusic (items); };
     browser.onExport = [this] (juce::Component& c) { showExportMenu (c); };
+    browser.onTreeAction = [this] (const juce::String& node, const juce::String& action, const std::vector<TrackInfo>& tracks) { treeAction (node, action, tracks); };
+    browser.masterKey = [this] { const int m = engine.getMasterDeck(); return m >= 0 && m < 2 ? router.effectiveKeyText (m) : juce::String(); };
+    browser.onSetListToggled = [this] { toggleSetList(); };
+    browser.setRowHeight (settings.browserRowHeight);
+    browser.onRowHeightChanged = [this] (int h) { settings.browserRowHeight = h; settings.save(); };
     loader.onError = [this] (int deck, const juce::String& err)
     {
         if (deck < 2) (deck == 0 ? deck1 : deck2).setLoadingText (err);
@@ -242,6 +249,9 @@ MainComponent::MainComponent()
     }
 
     addAndMakeVisible (masterVolume);
+    addAndMakeVisible (recButton);
+    recButton.setTooltip ("Record the master output (Settings > RECORD: folder, format, source, cue / split)");
+    recButton.onClick = [this] { if (recorder.isRecording()) stopRecording(); else startRecording (false); };
     masterVolume.setSliderStyle (juce::Slider::LinearHorizontal);
     masterVolume.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     masterVolume.setRange (0.0, 1.0, 0.0);
@@ -437,6 +447,11 @@ void MainComponent::handleAppAction (const juce::String& id, int deck, const Act
     else if (id == "view.browser")   { if (v.down) { settings.showBrowser = ! settings.showBrowser; resized(); settings.save(); if (settings.showBrowser) browser.focusTracks(); } }
     else if (id == "view.zoom")      { waves.setVisibleSeconds (waves.getVisibleSeconds() * std::pow (1.1, -v.delta)); }
     else if (id == "master.volume")  masterVolume.setValue (v.value);
+    else if (id == "browse.tag")     { if (v.down) { auto sel = browser.getSelectedTracks(); if (! sel.empty()) trackAction ({ sel.front() }, "toplay.toggle"); } }
+    else if (id == "browse.scrub")   browser.scrubPreview (v.delta);
+    else if (id == "browse.scrubpos") browser.scrubPreviewTo (v.value);
+    else if (id == "setlist.toggle") { if (v.down) toggleSetList(); }
+    else if (id == "record.toggle")  { if (v.down) { if (recorder.isRecording()) stopRecording(); else startRecording (false); } }
     else if (id == "view.zoomin")    { if (v.down) waves.setVisibleSeconds (waves.getVisibleSeconds() / 1.25); }
     else if (id == "view.zoomout")   { if (v.down) waves.setVisibleSeconds (waves.getVisibleSeconds() * 1.25); }
     else if (id == "view.wavemode")  { if (v.down) waves.setStemsHidden (! waves.getStemsHidden()); }
@@ -531,6 +546,24 @@ void MainComponent::timerCallback()
             settings.save();
         }
     }
+    {
+        // REC button: time while recording, ARMED while it waits for sound
+        juce::String t = "REC";
+        if (recorder.isRecording())
+        {
+            const int sec = (int) recorder.elapsedSeconds();
+            t = recNaming ? juce::String ("SAVING") : recorder.isWaiting() ? juce::String ("ARMED") : juce::String::formatted ("REC %d:%02d:%02d", sec / 3600, (sec / 60) % 60, sec % 60);
+        }
+        if (t != recText)
+        {
+            recText = t;
+            recButton.setButtonText (t);
+            const bool on = recorder.isRecording();
+            const bool blink = recorder.isWaiting() && (juce::Time::getMillisecondCounter() / 500) % 2 == 0;
+            recButton.setColour (juce::TextButton::buttonColourId, on && ! blink ? Theme::bad.withAlpha (0.85f) : psyched::Colours::edge2);
+            recButton.setColour (juce::TextButton::textColourOffId, on ? juce::Colours::white : Theme::textDim);
+        }
+    }
     if (std::abs (engine.getMasterPeak() - shownPeak) > 0.01f) { shownPeak = engine.getMasterPeak(); repaint (masterArea); }
     const bool newXdj = midi.isXdjConnected();
     const auto newAudio = engine.getDeviceDescription();
@@ -574,7 +607,7 @@ void MainComponent::paint (juce::Graphics& g)
 
     // Status pills (right side)
     auto pills = topBar.withSizeKeepingCentre (topBar.getWidth(), 34).reduced (10, 0).withLeft (phaseArea.getRight() + 14)
-                       .withRight (masterArea.getX() - 8).toFloat();
+                       .withRight (recButton.getX() - 8).toFloat();
     {
         // master volume: label, and a peak meter under the slider
         auto mr = masterArea.toFloat();
@@ -588,6 +621,7 @@ void MainComponent::paint (juce::Graphics& g)
     }
     auto pill = [&] (const juce::String& text, juce::Colour dot, float w)
     {
+        if (pills.getWidth() < w) return;   // no room (narrow window): left out rather than squashed
         auto pr = pills.removeFromRight (w);
         drawPill (g, pr, text, dot);
         pills.removeFromRight (8.0f);
@@ -627,6 +661,7 @@ void MainComponent::resized()
     topBar = r.removeFromTop (52 + bracketRoom);
     masterArea = topBar.withSizeKeepingCentre (topBar.getWidth(), 34).reduced (10, 0).removeFromRight (190);
     masterVolume.setBounds (masterArea.withTrimmedLeft (54).reduced (0, 6));
+    recButton.setBounds (masterArea.getX() - 104, masterArea.getY() + 3, 98, masterArea.getHeight() - 6);
 
     auto tabs = topBar.withTrimmedLeft (262).withWidth (5 * 92).withSizeKeepingCentre (5 * 92, 28);
     for (auto* t : { &tabPlay, &tabPrep, &tabMapping, &tabStems, &tabSettings })
@@ -722,13 +757,100 @@ void MainComponent::mouseUp (const juce::MouseEvent&)
 std::shared_ptr<const LibrarySource> MainComponent::centrifugeSource (int view)
 {
     view = juce::jlimit (0, 1, view);
-    const int lc = centrifugeLibrary.getChangeCount();
+    const int lc = centrifugeLibrary.getChangeCount() * 100000 + UserLists::get().version();
     if (sourceCache[(size_t) view] == nullptr || sourceCacheVersion[(size_t) view] != lc)
     {
-        sourceCache[(size_t) view] = centrifugeLibrary.makeSource (view);
+        auto src = centrifugeLibrary.makeSource (view);
+        withUserLists (*src);
+        sourceCache[(size_t) view] = src;
         sourceCacheVersion[(size_t) view] = lc;
     }
     return sourceCache[(size_t) view];
+}
+
+void MainComponent::withUserLists (LibrarySource& src)
+{
+    // The library tree: LOCATIONS (imported folders, as on the drive), PLAYLISTS (your own), TO PLAY, PLAY HISTORY
+    auto& ul = UserLists::get();
+    std::map<juce::int64, int> indexOf;
+    for (int i = 0; i < (int) src.tracks.size(); ++i) indexOf[src.tracks[(size_t) i].libraryId] = i;
+    auto indices = [&] (const std::vector<juce::int64>& ids, bool keepRepeats)
+    {
+        std::vector<int> r;
+        for (auto id : ids)
+            if (auto it = indexOf.find (id); it != indexOf.end())
+                if (keepRepeats || std::find (r.begin(), r.end(), it->second) == r.end()) r.push_back (it->second);
+        return r;
+    };
+
+    PlaylistNode locations;
+    locations.id = "loc"; locations.name = "LOCATIONS"; locations.isFolder = true;
+    locations.children = std::move (src.playlists.children);
+
+    PlaylistNode mine;
+    mine.id = "pl"; mine.name = "PLAYLISTS"; mine.isFolder = true;
+    std::function<void (PlaylistNode&, juce::int64)> build = [&] (PlaylistNode& node, juce::int64 parent)
+    {
+        std::vector<const UserLists::List*> kids;
+        for (auto& l : ul.lists()) if (l.parent == parent) kids.push_back (&l);
+        std::sort (kids.begin(), kids.end(), [] (auto* a, auto* b) { return a->seq < b->seq; });
+        for (auto* k : kids)
+        {
+            PlaylistNode c;
+            c.id = "u" + juce::String (k->id);
+            c.name = k->name;
+            c.isFolder = k->kind == UserLists::folder;
+            c.isSmart = k->kind == UserLists::dynamic;
+            if (c.isFolder) build (c, k->id);
+            else if (c.isSmart)
+            {
+                for (int i = 0; i < (int) src.tracks.size(); ++i)
+                {
+                    const auto& t = src.tracks[(size_t) i];
+                    const int q = k->rules.stems != 0 ? stems.cachedQuality (t) : -1;
+                    if (k->rules.any() && ul.matches (k->rules, t, q)) c.trackIndices.push_back (i);
+                }
+            }
+            else c.trackIndices = indices (k->tracks, false);
+            node.children.push_back (std::move (c));
+        }
+    };
+    build (mine, 0);
+
+    PlaylistNode toPlay;
+    toPlay.id = "toplay"; toPlay.name = "TO PLAY  (" + juce::String ((int) ul.toPlay().size()) + ")";
+    toPlay.trackIndices = indices (ul.toPlay(), false);
+
+    PlaylistNode history;
+    history.id = "hist"; history.name = "PLAY HISTORY"; history.isFolder = true;
+    PlaylistNode sessions, sets;
+    sessions.id = "hist.s"; sessions.name = "SESSION HISTORY"; sessions.isFolder = true;
+    sets.id = "hist.l"; sets.name = "SET LIST HISTORY"; sets.isFolder = true;
+    auto historyNode = [&] (const UserLists::History& h, const juce::String& id, const juce::String& name)
+    {
+        PlaylistNode n;
+        n.id = id;
+        n.name = name;
+        std::vector<juce::int64> ids;
+        for (auto& p : h.tracks) ids.push_back (p.track);
+        n.trackIndices = indices (ids, true);
+        return n;
+    };
+    sessions.children.push_back (historyNode (ul.session(), "hs.now", "This session (" + ul.session().name + ")"));
+    for (int i = (int) ul.sessions().size(); --i >= 0;)
+        sessions.children.push_back (historyNode (ul.sessions()[(size_t) i], "hs." + juce::String (i), ul.sessions()[(size_t) i].name));
+    if (ul.setListRunning())
+        sets.children.push_back (historyNode (ul.runningSetList(), "hl.now", ul.runningSetList().name + "  (recording)"));
+    for (int i = (int) ul.setLists().size(); --i >= 0;)
+        sets.children.push_back (historyNode (ul.setLists()[(size_t) i], "hl." + juce::String (i), ul.setLists()[(size_t) i].name));
+    history.children.push_back (std::move (sessions));
+    history.children.push_back (std::move (sets));
+
+    src.playlists.children.clear();
+    src.playlists.children.push_back (std::move (locations));
+    src.playlists.children.push_back (std::move (mine));
+    src.playlists.children.push_back (std::move (toPlay));
+    src.playlists.children.push_back (std::move (history));
 }
 
 void MainComponent::flash (const juce::String& text)
@@ -816,9 +938,25 @@ void MainComponent::chooseMusic (bool folders)
     });
 }
 
-void MainComponent::addMusic (const juce::Array<juce::File>& items)
+void MainComponent::addMusic (const juce::Array<juce::File>& items, int subfolders)
 {
     if (importing.load()) { flash ("An import is already running"); return; }
+    if (subfolders < 0)
+    {
+        bool hasSub = false;
+        for (auto& f : items)
+            hasSub = hasSub || (f.isDirectory() && ! f.findChildFiles (juce::File::findDirectories, false).isEmpty());
+        if (hasSub)
+        {
+            juce::Component::SafePointer<MainComponent> safe (this);
+            juce::AlertWindow::showAsync (juce::MessageBoxOptions().withTitle ("Add music")
+                                            .withMessage ("This folder has folders inside it.")
+                                            .withButton ("Include subfolders").withButton ("This folder only").withButton ("Cancel"),
+                                          [safe, items] (int r) { if (safe != nullptr && r != 0) safe->addMusic (items, r == 1 ? 1 : 0); });
+            return;
+        }
+        subfolders = 1;
+    }
     importing = true;
     importProgress = 0.0f;
     {
@@ -828,6 +966,7 @@ void MainComponent::addMusic (const juce::Array<juce::File>& items)
     FileImporter::Options o;
     std::tie (o.minBpm, o.maxBpm) = settings.analysisBpmRange();
     o.mp3OffsetMs = settings.mp3OffsetMs;
+    o.subfolders = subfolders != 0;
     juce::Component::SafePointer<MainComponent> safe (this);
     importPool.addJob ([this, safe, items, o]
     {
@@ -931,6 +1070,49 @@ void MainComponent::trackAction (const std::vector<TrackInfo>& tracks, const juc
         juce::Array<juce::File> files;
         for (auto& t : tracks) files.add (t.file);
         showInExplorer (files);
+        return;
+    }
+    // playlists, TO PLAY, tags
+    if (action.startsWith ("pl.add:") || action == "pl.new" || action == "toplay.toggle" || action.startsWith ("list.remove:")
+        || action.startsWith ("tag:") || action == "tags.edit")
+    {
+        auto& ul = UserLists::get();
+        std::vector<juce::int64> ids;
+        for (auto& t : tracks) if (const auto id = libraryIdFor (t, true); id != 0) ids.push_back (id);
+        if (action.startsWith ("pl.add:"))
+        {
+            ul.addTracks (action.fromFirstOccurrenceOf (":", false, false).getLargeIntValue(), ids);
+            flash ("Added " + juce::String ((int) ids.size()) + (ids.size() == 1 ? " track" : " tracks"));
+        }
+        else if (action == "pl.new")
+            askText ("New playlist", "", [this, ids] (juce::String name)
+            {
+                if (name.isEmpty()) return;
+                UserLists::get().addTracks (UserLists::get().add (0, name, UserLists::playlist), ids);
+                browser.refreshSources();
+            });
+        else if (action == "toplay.toggle")
+        {
+            int added = 0;
+            for (auto id : ids) added += ul.toggleToPlay (id) ? 1 : 0;
+            flash (added > 0 ? "Added to TO PLAY" : "Removed from TO PLAY");
+        }
+        else if (action.startsWith ("list.remove:"))
+        {
+            const auto node = action.fromFirstOccurrenceOf (":", false, false);
+            if (node == "toplay") for (auto id : ids) ul.removeFromToPlay (id);
+            else if (node.startsWith ("u")) ul.removeTracks (node.substring (1).getLargeIntValue(), ids);
+        }
+        else if (action.startsWith ("tag:"))
+        {
+            const bool on = action.fromFirstOccurrenceOf ("tag:", false, false).startsWith ("1");
+            const auto tag = action.fromFirstOccurrenceOf ("tag:", false, false).fromFirstOccurrenceOf (":", false, false);
+            for (auto id : ids) ul.setTag (id, tag, on);
+        }
+        else if (action == "tags.edit")
+            juce::CallOutBox::launchAsynchronously (std::make_unique<TagsEditor> ([this] { browser.refreshSources(); }),
+                                                    browser.getScreenBounds().withSizeKeepingCentre (10, 10), nullptr);
+        browser.refreshSources();
         return;
     }
     if (action == "key.keep" || action == "key.alt")
@@ -1157,13 +1339,20 @@ void MainComponent::countPlays()
         if (s != playSerial[(size_t) d]) { playSerial[(size_t) d] = s; playedSeconds[(size_t) d] = 0.0; playCounted[(size_t) d] = false; }
         if (s == 0 || playCounted[(size_t) d] || ! st.playing.load()) continue;
         playedSeconds[(size_t) d] += dt;
-        if (playedSeconds[(size_t) d] < 30.0) continue;
+        if (playedSeconds[(size_t) d] < settings.historySeconds) continue;
         playCounted[(size_t) d] = true;
         auto t = engine.deck (d).getLoadedTrack();
         if (t == nullptr) continue;
         auto info = t->info;
         if (info.durationSec <= 0.0) info.durationSec = st.lengthSec.load();
-        if (const auto id = libraryIdFor (info, true); id != 0) centrifugeLibrary.addPlay (id);
+        if (const auto id = libraryIdFor (info, true); id != 0)
+        {
+            centrifugeLibrary.addPlay (id);
+            UserLists::get().notePlayed (id);   // PLAY HISTORY (and the set list when one is running)
+            if (recorder.isRecording())         // a track marker where it started playing (for the .cue / split files)
+                recorder.addMarker (recorder.elapsedSeconds() - playedSeconds[(size_t) d], info);
+            browser.refreshSources();
+        }
     }
 }
 
@@ -1212,6 +1401,153 @@ void MainComponent::applyAutoGain (int deck, LoadedTrack::Ptr t)
     const double db = juce::jlimit (-12.0, 12.0, theirs + theirGainDb - mine);
     dk.post (Deck::Cmd::gainSet, std::pow (10.0, db / 20.0));
     flash ("Auto gain deck " + juce::String (deck + 1) + ": " + (db >= 0 ? "+" : "") + juce::String (db, 1) + " dB");
+}
+
+void MainComponent::askText (const juce::String& title, const juce::String& current, std::function<void (juce::String)> done)
+{
+    auto* w = new juce::AlertWindow (title, {}, juce::MessageBoxIconType::NoIcon);
+    w->addTextEditor ("name", current);
+    w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([w, done] (int r)
+    {
+        if (r == 1 && done) done (w->getTextEditorContents ("name").trim());
+    }), true);
+}
+
+void MainComponent::treeAction (const juce::String& node, const juce::String& action, const std::vector<TrackInfo>& tracks)
+{
+    auto& ul = UserLists::get();
+    const juce::int64 uid = node.startsWith ("u") ? node.substring (1).getLargeIntValue() : 0;
+    auto refresh = [this] { browser.refreshSources(); };
+    if (action.startsWith ("new."))
+    {
+        const int kind = action == "new.folder" ? UserLists::folder : action == "new.dynamic" ? UserLists::dynamic : UserLists::playlist;
+        askText (kind == UserLists::folder ? "New folder" : kind == UserLists::dynamic ? "New dynamic playlist" : "New playlist", {},
+                 [this, uid, kind, refresh] (juce::String name)
+        {
+            if (name.isEmpty()) return;
+            const auto id = UserLists::get().add (uid, name, kind);
+            refresh();
+            if (kind == UserLists::dynamic) treeAction ("u" + juce::String (id), "rules", {});
+        });
+    }
+    else if (action == "rename")
+    {
+        if (const auto* l = ul.find (uid))
+            askText ("Rename", l->name, [uid, refresh] (juce::String name) { if (name.isNotEmpty()) { UserLists::get().rename (uid, name); refresh(); } });
+    }
+    else if (action == "rules")
+    {
+        if (const auto* l = ul.find (uid))
+            juce::CallOutBox::launchAsynchronously (std::make_unique<RulesEditor> (l->rules, [this, uid] (const UserLists::Rules& r)
+                                                    {
+                                                        UserLists::get().setRules (uid, r);
+                                                        browser.refreshSources();
+                                                    }),
+                                                    browser.getScreenBounds().withSizeKeepingCentre (10, 10), nullptr);
+    }
+    else if (action == "duplicate") { ul.duplicate (uid); refresh(); }
+    else if (action == "delete")
+    {
+        const bool hist = node.startsWith ("hs.") || node.startsWith ("hl.");
+        juce::AlertWindow::showAsync (juce::MessageBoxOptions().withTitle ("Delete").withMessage (hist ? "Delete this history list?" : "Delete this playlist / folder (the tracks stay in the library)?")
+                                        .withButton ("Delete").withButton ("Cancel"),
+                                      [node, uid, hist, refresh] (int r)
+        {
+            if (r != 1) return;
+            if (hist) UserLists::get().deleteHistory (node.startsWith ("hl."), node.fromFirstOccurrenceOf (".", false, false).getIntValue());
+            else UserLists::get().remove (uid);
+            refresh();
+        });
+    }
+    else if (action == "clear")
+    {
+        for (auto id : std::vector<juce::int64> (ul.toPlay())) ul.removeFromToPlay (id);
+        refresh();
+    }
+    else if (action == "toplaylist" || action == "add.dragged")
+    {
+        std::vector<juce::int64> ids;
+        for (auto& t : tracks) if (const auto id = libraryIdFor (t, true); id != 0) ids.push_back (id);
+        if (action == "toplaylist")
+        {
+            const auto id = ul.add (0, browser.getCurrentListName().upToFirstOccurrenceOf ("  (", false, false), UserLists::playlist);
+            ul.addTracks (id, ids);
+        }
+        else if (node == "toplay") { for (auto id : ids) if (std::find (ul.toPlay().begin(), ul.toPlay().end(), id) == ul.toPlay().end()) ul.toggleToPlay (id); }
+        else ul.addTracks (uid, ids);
+        refresh();
+    }
+    else if (action == "analyse") trackAction (tracks, "analyse");
+    else if (action == "stems") trackAction (tracks, "stems.separate");
+    else if (action == "export") openExport (true);
+}
+
+void MainComponent::startRecording (bool)
+{
+    if (recorder.isRecording() || recNaming) return;
+    MasterRecorder::Options o;
+    o.folder = settings.recordingsFolder();
+    o.format = settings.recordFormat;
+    o.source = settings.recordSource;
+    o.lameExe = juce::File (settings.lamePath);
+    o.cueFile = settings.recordCue;
+    o.split = settings.recordSplit;
+    if (o.source >= 0)
+        if (auto err = engine.enableInputs(); err.isNotEmpty()) { flash ("Can't record from the input: " + err); return; }
+    if (auto err = recorder.start (o, engine.getSampleRate(), settings.recordArmed); err.isNotEmpty()) { flash (err); return; }
+    engine.setRecorder (&recorder, o.source);
+    recText = {};
+    flash (settings.recordArmed ? "Recording armed - it starts with the first sound" : "Recording");
+}
+
+void MainComponent::stopRecording()
+{
+    if (! recorder.isRecording() || recNaming) return;
+    recNaming = true;
+    engine.setRecorder (nullptr, -1);
+    const auto def = recorder.defaultName();
+    // The name is asked for after it stops (the file is closed first, so nothing is lost if the box is left open)
+    auto* w = new juce::AlertWindow ("Recording stopped", "Name the recording", juce::MessageBoxIconType::NoIcon);
+    w->addTextEditor ("name", def);
+    w->addButton ("SAVE", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Keep the default name", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, def] (int r)
+    {
+        const auto name = r == 1 ? w->getTextEditorContents ("name").trim() : def;
+        const auto made = recorder.stop (name.isNotEmpty() ? name : def);
+        recNaming = false;
+        recText = {};
+        flash ("Saved " + made);
+    }), true);
+    recText = {};
+}
+
+void MainComponent::toggleSetList()
+{
+    auto& ul = UserLists::get();
+    if (ul.setListRunning())
+    {
+        ul.stopSetList();
+        browser.setSetListRunning (false);
+        if (recorder.isRecording() && recordWithSetList) stopRecording();
+        flash ("Set list stopped - it's in PLAY HISTORY > SET LIST HISTORY");
+        browser.refreshSources();
+        return;
+    }
+    juce::AlertWindow::showAsync (juce::MessageBoxOptions().withTitle ("Start a set list")
+                                    .withMessage ("The tracks you play go into a new set list.\n\nRecord the audio too?")
+                                    .withButton ("Set list + record").withButton ("Set list only").withButton ("Cancel"),
+                                  [this] (int r)
+    {
+        if (r == 0) return;
+        UserLists::get().startSetList();
+        browser.setSetListRunning (true);
+        browser.refreshSources();
+        recordWithSetList = r == 1 && ! recorder.isRecording();
+        if (r == 1 && ! recorder.isRecording()) startRecording (false);
+    });
 }
 
 bool MainComponent::keyPressed (const juce::KeyPress& k)

@@ -345,7 +345,7 @@ void CentrifugeLibrary::replacePlaylists (const juce::String& source, const Play
         for (auto& c : node.children)
         {
             if (c.isSmart) continue;   // smart playlists depend on rekordbox's rules
-            const auto id = addNode (parent, c.name, c.isFolder, seq++, c.isFolder ? nullptr : &c.trackIndices);
+            const auto id = addNode (parent, c.name, c.isFolder, seq++, &c.trackIndices);   // (a folder can hold tracks too)
             if (c.isFolder) walk (c, id);
         }
     };
@@ -618,9 +618,8 @@ std::shared_ptr<LibrarySource> CentrifugeLibrary::makeSource (int view) const
             c.name = k->name;
             c.isFolder = k->folder;
             if (k->folder) build (c, k->id);
-            else
-                for (auto tid : k->tracks)
-                    if (auto f = indexOf.find (tid); f != indexOf.end()) c.trackIndices.push_back (f->second);
+            for (auto tid : k->tracks)
+                if (auto f = indexOf.find (tid); f != indexOf.end()) c.trackIndices.push_back (f->second);
             node.children.push_back (std::move (c));
         }
     };

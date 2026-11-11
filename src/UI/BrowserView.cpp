@@ -1,5 +1,6 @@
 #include "../Library/KeyOpinions.h"
 #include "BrowserView.h"
+#include "../Library/UserLists.h"
 #include "../App/Features.h"
 #include "Theme.h"
 #include "../Library/Anlz.h"
@@ -21,11 +22,22 @@ public:
         if (isSourceRoot) return true;
         return node != nullptr && node->isFolder && ! node->children.empty();
     }
+    // Tracks dragged from the list onto one of your playlists (or TO PLAY) are added to it
+    bool isInterestedInDragSource (const juce::DragAndDropTarget::SourceDetails& d) override
+    {
+        return d.description == juce::var ("centrifuge-tracks") && node != nullptr
+            && ((node->id.startsWith ("u") && ! node->isFolder && ! node->isSmart) || node->id == "toplay");
+    }
+    void itemDropped (const juce::DragAndDropTarget::SourceDetails&, int) override
+    {
+        if (owner.onTreeAction) owner.onTreeAction (node->id, "add.dragged", owner.getDraggedTracks());
+    }
     bool canBeSelected() const override { return true; }
     juce::String getUniqueName() const override { return key; }
     int getItemHeight() const override { return 24; }
 
-    bool isList() const { return allTracks || (node != nullptr && ! node->isFolder); }
+    // a folder that holds tracks itself is a list too
+    bool isList() const { return allTracks || (node != nullptr && (! node->isFolder || ! node->trackIndices.empty())); }
 
     void itemOpennessChanged (bool isNowOpen) override
     {
@@ -46,13 +58,17 @@ public:
     void itemSelectionChanged (bool isNow) override
     {
         if (isNow && isList())
+        {
+            owner.currentNodeId = allTracks ? juce::String ("all") : node != nullptr ? node->id : juce::String();
             owner.showList (src, allTracks ? nullptr : node, isSourceRoot ? src->name : name, key);
+        }
     }
 
-    void itemClicked (const juce::MouseEvent&) override
+    void itemClicked (const juce::MouseEvent& e) override
     {
         owner.treeFocused = true;
-        if (! isList()) setOpen (! isOpen());
+        if (e.mods.isPopupMenu()) { owner.showTreeMenu (*this); return; }
+        if (! isList() || (node != nullptr && node->isFolder)) setOpen (! isOpen());
     }
 
     void paintItem (juce::Graphics& g, int w, int h) override
@@ -75,10 +91,32 @@ public:
             g.setColour (src->kind == LibrarySource::Kind::usbExport ? Theme::warn : Theme::deckColour (0));
             g.fillRect (icon);
         }
+        else if (node != nullptr && (node->id == "toplay" || node->id == "hist" || node->id.startsWith ("hs") || node->id.startsWith ("hl")))
+        {
+            // TO PLAY: a tick list; history: a clock
+            g.setColour (node->id == "toplay" ? Theme::warn : Theme::sync);
+            if (node->id == "toplay") { for (int i = 0; i < 3; ++i) g.fillRect (icon.getX(), icon.getY() + 1.0f + i * 4.0f, i == 1 ? icon.getWidth() * 0.6f : icon.getWidth(), 1.6f); }
+            else
+            {
+                g.drawEllipse (icon.reduced (0.5f), 1.2f);
+                g.drawLine (icon.getCentreX(), icon.getCentreY(), icon.getCentreX(), icon.getY() + 3.0f, 1.2f);
+                g.drawLine (icon.getCentreX(), icon.getCentreY(), icon.getRight() - 3.0f, icon.getCentreY(), 1.2f);
+            }
+        }
         else if (node != nullptr && node->isFolder)
         {
-            g.setColour (Theme::textDim);
-            g.drawRect (icon, 1.2f);
+            // a folder: tab and body
+            const bool special = node->id == "loc" || node->id == "pl" || node->id.startsWith ("hist");
+            g.setColour (special ? Theme::accent : Theme::textDim);
+            juce::Path p;
+            p.startNewSubPath (icon.getX(), icon.getY() + 2.0f);
+            p.lineTo (icon.getX() + 4.5f, icon.getY() + 2.0f);
+            p.lineTo (icon.getX() + 6.0f, icon.getY() + 3.5f);
+            p.lineTo (icon.getRight(), icon.getY() + 3.5f);
+            p.lineTo (icon.getRight(), icon.getBottom() - 1.0f);
+            p.lineTo (icon.getX(), icon.getBottom() - 1.0f);
+            p.closeSubPath();
+            g.strokePath (p, juce::PathStrokeType (1.2f));
         }
         else
         {
@@ -90,7 +128,8 @@ public:
         g.setColour (isSourceRoot ? Theme::text : Theme::text.withAlpha (0.9f));
         g.setFont (Theme::font (13.5f, isSourceRoot));
         juce::String label = name;
-        if (node != nullptr && node->isSmart) label += "  (smart)";
+        if (node != nullptr && node->isSmart) label += "  (dynamic)";
+        if (node != nullptr && node->isFolder && ! node->trackIndices.empty()) label += "  (" + juce::String ((int) node->trackIndices.size()) + ")";
         if (isSourceRoot && src->error.isNotEmpty()) label += "  -  " + src->error;
         if (isSourceRoot && src->kind == LibrarySource::Kind::centrifuge)
             label += src->tracks.empty() ? juce::String ("  (empty - press IMPORT)")
@@ -170,6 +209,8 @@ BrowserView::BrowserView (LibraryManager& lib, StemManager& stems) : library (li
     if (Features::rekordboxCopy) hdr.addColumn ("R/C", 10, 46, 36, 70);
     hdr.addColumn ("Rating", 12, 76, 60, 100);
     hdr.addColumn ("Plays", 13, 48, 40, 80);
+    hdr.addColumn ("Comment", 14, 180, 60, 1000);
+    hdr.addColumn ("Tags", 15, 160, 60, 1000);
     hdr.setStretchToFitActive (false);   // resizing a column moves the ones to its right along, keeping their widths
     table.setRowHeight (24);
     table.setMultipleSelectionEnabled (true);
@@ -214,6 +255,18 @@ BrowserView::BrowserView (LibraryManager& lib, StemManager& stems) : library (li
     viewR.onClick = [this] { setLibraryView (0); };
     viewC.onClick = [this] { setLibraryView (1); };
     viewC.setToggleState (true, juce::dontSendNotification);
+
+    for (auto* b : { &filterButton, &rowsSmaller, &rowsBigger, &setListButton }) addAndMakeVisible (*b);
+    filterButton.setTooltip ("Filter the list: BPM range, keys that go with the master deck, rating, colour, genre, stems, tag");
+    filterButton.setColour (juce::TextButton::buttonOnColourId, Theme::warn);
+    filterButton.onClick = [this] { showFilterPanel(); };
+    rowsSmaller.setTooltip ("Smaller rows");
+    rowsBigger.setTooltip ("Bigger rows (the preview waveform grows with them)");
+    rowsSmaller.onClick = [this] { setRowHeight (table.getRowHeight() - 4); if (onRowHeightChanged) onRowHeightChanged (table.getRowHeight()); };
+    rowsBigger.onClick = [this] { setRowHeight (table.getRowHeight() + 4); if (onRowHeightChanged) onRowHeightChanged (table.getRowHeight()); };
+    setListButton.setTooltip ("Start / stop a SET LIST: the tracks you play are kept in PLAY HISTORY > SET LIST HISTORY");
+    setListButton.setColour (juce::TextButton::buttonOnColourId, Theme::bad);
+    setListButton.onClick = [this] { if (onSetListToggled) onSetListToggled(); };
 
     addAndMakeVisible (countLabel);
     countLabel.setFont (Theme::font (12.5f));
@@ -302,8 +355,16 @@ void BrowserView::resized()
     top.removeFromRight (6);
     load1.setBounds (top.removeFromRight (70));
     top.removeFromRight (10);
-    countLabel.setBounds (top.removeFromRight (100));
-    search.setBounds (top.removeFromLeft (juce::jmin (300, top.getWidth())));
+    countLabel.setBounds (top.removeFromRight (90));
+    top.removeFromRight (6);
+    setListButton.setBounds (top.removeFromRight (98));
+    search.setBounds (top.removeFromLeft (juce::jmin (260, juce::jmax (80, top.getWidth() - 140))));
+    top.removeFromLeft (4);
+    filterButton.setBounds (top.removeFromLeft (64));
+    top.removeFromLeft (4);
+    rowsSmaller.setBounds (top.removeFromLeft (26));
+    top.removeFromLeft (2);
+    rowsBigger.setBounds (top.removeFromLeft (26));
     if (infoOpen) infoPanel.setBounds (r.removeFromRight (juce::jmin (320, r.getWidth() / 2)));
     table.setBounds (r);
 }
@@ -415,9 +476,26 @@ void BrowserView::applyFilter()
     {
         if (currentSource == nullptr || i < 0 || i >= (int) currentSource->tracks.size()) continue;
         const auto& t = currentSource->tracks[(size_t) i];
-        if (q.isEmpty() || t.title.toLowerCase().contains (q) || t.artist.toLowerCase().contains (q)
-            || t.genre.toLowerCase().contains (q) || t.key.toLowerCase() == q || MusicalKey::display (t.key).toLowerCase() == q || t.album.toLowerCase().contains (q))
-            rows.push_back (i);
+        if (! (q.isEmpty() || t.title.toLowerCase().contains (q) || t.artist.toLowerCase().contains (q) || t.comment.toLowerCase().contains (q)
+            || t.genre.toLowerCase().contains (q) || t.key.toLowerCase() == q || MusicalKey::display (t.key).toLowerCase() == q || t.album.toLowerCase().contains (q)))
+            continue;
+        if (filter.any())
+        {
+            UserLists::Rules r;
+            r.bpmMin = filter.bpmMin; r.bpmMax = filter.bpmMax; r.ratingMin = filter.ratingMin; r.colour = filter.colour;
+            r.genre = filter.genre; r.tag = filter.tag; r.stems = filter.stems;
+            if (! UserLists::get().matches (r, t, filter.stems != 0 ? stemQualityOf (t) : -1)) continue;
+            if (filter.keyMode == 1 && masterKey)
+            {
+                // compatible with the master deck: same key, one step round the Camelot wheel, or its relative
+                const auto m = MusicalKey::parse (masterKey()), k = MusicalKey::parse (t.key);
+                if (! m.isValid() || ! k.isValid()) continue;
+                const int d = ((k.camelotNumber() - m.camelotNumber()) % 12 + 12) % 12;
+                const bool ok = (k.minor == m.minor && (d == 0 || d == 1 || d == 11)) || (k.minor != m.minor && d == 0);
+                if (! ok) continue;
+            }
+        }
+        rows.push_back (i);
     }
 
     if (sortColumn >= 1 && currentSource != nullptr)
@@ -442,6 +520,8 @@ void BrowserView::applyFilter()
                 case 10: c = (int) x.versionsDiffer - (int) y.versionsDiffer; break;
                 case 12: c = x.rating - y.rating; break;
                 case 13: c = x.playCount - y.playCount; break;
+                case 14: c = x.comment.compareNatural (y.comment); break;
+                case 15: c = UserLists::get().tagsOf (x.libraryId).joinIntoString (",").compareNatural (UserLists::get().tagsOf (y.libraryId).joinIntoString (",")); break;
                 default: break;
             }
             return sortForwards ? c < 0 : c > 0;
@@ -492,6 +572,15 @@ void BrowserView::paintCell (juce::Graphics& g, int row, int col, int w, int h, 
     {
         case 1: s = juce::String (numberOf (rows[(size_t) row])); g.setColour (Theme::textFaint); just = juce::Justification::centredRight; break;
         case 2: s = t.title; break;
+        case 14: s = t.comment; g.setColour (Theme::textDim); break;
+        case 15:
+        {
+            juce::StringArray names;
+            for (auto& tg : UserLists::get().tagsOf (t.libraryId)) names.add (tg.fromFirstOccurrenceOf ("/", false, false));
+            s = names.joinIntoString (", ");
+            g.setColour (Theme::sync);
+            break;
+        }
         case 3: s = t.artist; g.setColour (Theme::textDim); break;
         case 4: s = t.bpm > 0 ? juce::String (t.bpm, 2) : juce::String(); just = juce::Justification::centredRight; break;
         case 5:
@@ -585,7 +674,7 @@ void BrowserView::paintCell (juce::Graphics& g, int row, int col, int w, int h, 
                 paintPreview (g, area, pd);
                 if (active)
                 {
-                    g.setColour (juce::Colours::black.withAlpha (0.45f));
+                    g.setColour (juce::Colours::black.withAlpha (0.28f));
                     g.fillRect (area.withWidth (area.getWidth() * (float) previewFraction));
                 }
             }
@@ -782,6 +871,49 @@ void BrowserView::showTrackMenu (int)
             }
         }
     }
+    if (anyLibrary)
+    {
+        // playlists, TO PLAY and tags
+        auto& ul = UserLists::get();
+        m.addSeparator();
+        juce::PopupMenu addTo;
+        std::function<void (juce::int64, const juce::String&)> walk = [&] (juce::int64 parent, const juce::String& path)
+        {
+            for (auto& l : ul.lists())
+                if (l.parent == parent)
+                {
+                    if (l.kind == UserLists::folder) walk (l.id, path + l.name + " / ");
+                    else if (l.kind == UserLists::playlist) addTo.addItem (100000 + (int) l.id, path + l.name);
+                }
+        };
+        walk (0, {});
+        addTo.addSeparator();
+        addTo.addItem (60, "New playlist with these tracks...");
+        m.addSubMenu ("Add to playlist", addTo);
+        bool inToPlay = false;
+        for (auto& t : tracks) inToPlay = inToPlay || std::find (ul.toPlay().begin(), ul.toPlay().end(), t.libraryId) != ul.toPlay().end();
+        m.addItem (61, one && inToPlay ? "Remove from TO PLAY" : "Add to TO PLAY");
+        if (currentNodeId.startsWith ("u") || currentNodeId == "toplay")
+            m.addItem (62, "Remove from this list");
+        juce::PopupMenu tagMenu;
+        int tid = 200000;
+        tagIds.clear();
+        for (auto& c : ul.tagCategories())
+        {
+            tagMenu.addSectionHeader (c.name);
+            for (auto& tg : c.tags)
+            {
+                const auto full = c.name + "/" + tg;
+                bool all = true;
+                for (auto& t : tracks) all = all && ul.tagsOf (t.libraryId).contains (full);
+                tagMenu.addItem (tid, tg, true, all);
+                tagIds[tid++] = full;
+            }
+        }
+        tagMenu.addSeparator();
+        tagMenu.addItem (63, "Edit tags and categories...");
+        m.addSubMenu ("Tags", tagMenu);
+    }
     m.addSeparator();
     m.addItem (14, "Analyse  (waveform; grid, BPM and key where missing)");
     m.addItem (15, "Analyse again  (replace the grid, BPM and key)");
@@ -790,6 +922,19 @@ void BrowserView::showTrackMenu (int)
     m.showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [safe, tracks] (int r)
     {
         if (safe == nullptr || safe->onTrackAction == nullptr || r == 0) return;
+        if (r >= 200000)
+        {
+            const auto tag = safe->tagIds[r];
+            bool all = true;
+            for (auto& t : tracks) all = all && UserLists::get().tagsOf (t.libraryId).contains (tag);
+            safe->onTrackAction (tracks, "tag:" + juce::String (all ? "0:" : "1:") + tag);
+            return;
+        }
+        if (r >= 100000) { safe->onTrackAction (tracks, "pl.add:" + juce::String (r - 100000)); return; }
+        if (r == 60) { safe->onTrackAction (tracks, "pl.new"); return; }
+        if (r == 61) { safe->onTrackAction (tracks, "toplay.toggle"); return; }
+        if (r == 62) { safe->onTrackAction (tracks, "list.remove:" + safe->currentNodeId); return; }
+        if (r == 63) { safe->onTrackAction (tracks, "tags.edit"); return; }
         const char* actions[] = { "", "load.0", "load.1", "load.2" };
         const char* clears[] = { "clear.locators", "clear.skips", "clear.hotcues", "clear.phrases", "clear.stemlocs",
                                  "clear.notes", "clear.order", "clear.editversions", "clear.all" };
@@ -1065,6 +1210,182 @@ std::vector<TrackInfo> BrowserView::getSelectedTracks() const
             r.push_back (currentSource->tracks[(size_t) rows[(size_t) row]]);
     }
     return r;
+}
+
+//==============================================================================
+void BrowserView::showTreeMenu (Item& item)
+{
+    const auto* node = item.node;
+    const juce::String id = item.allTracks ? juce::String ("all") : node != nullptr ? node->id : juce::String();
+    if (item.isSourceRoot || id.isEmpty()) return;
+    // the list's tracks (what Analyse / stems / export work on)
+    std::vector<TrackInfo> tracks;
+    if (item.allTracks) tracks = item.src->tracks;
+    else if (node != nullptr) for (int i : node->trackIndices) if (i >= 0 && i < (int) item.src->tracks.size()) tracks.push_back (item.src->tracks[(size_t) i]);
+
+    juce::PopupMenu m;
+    m.addSectionHeader (item.name);
+    const bool userFolder = id == "pl" || (id.startsWith ("u") && node != nullptr && node->isFolder);
+    if (userFolder)
+    {
+        m.addItem (1, "New playlist...");
+        m.addItem (2, "New folder...");
+        m.addItem (3, "New dynamic playlist (fills itself from rules)...");
+    }
+    if (id.startsWith ("u"))
+    {
+        if (userFolder) m.addSeparator();
+        m.addItem (10, "Rename...");
+        if (node != nullptr && node->isSmart) m.addItem (11, "Edit rules...");
+        if (node != nullptr && ! node->isFolder) m.addItem (12, "Duplicate");
+        m.addItem (13, "Delete...");
+    }
+    if (id == "toplay") m.addItem (20, "Clear the list", ! tracks.empty());
+    if (id.startsWith ("hs.") || id.startsWith ("hl."))
+    {
+        m.addItem (30, "Turn into a playlist", ! tracks.empty());
+        if (! id.endsWith (".now")) m.addItem (31, "Delete...");
+    }
+    if (! tracks.empty())
+    {
+        m.addSeparator();
+        m.addItem (40, "Analyse all  (" + juce::String ((int) tracks.size()) + " tracks)");
+        m.addItem (41, "Separate stems for all");
+        m.addItem (42, "Export this list to a USB stick...");
+    }
+    juce::Component::SafePointer<BrowserView> safe (this);
+    auto* itemPtr = &item;
+    m.showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [safe, id, tracks, itemPtr] (int r)
+    {
+        if (safe == nullptr || r == 0 || safe->onTreeAction == nullptr) return;
+        const char* names[] = { "" };
+        juce::ignoreUnused (names);
+        juce::String a;
+        switch (r)
+        {
+            case 1: a = "new.playlist"; break;
+            case 2: a = "new.folder"; break;
+            case 3: a = "new.dynamic"; break;
+            case 10: a = "rename"; break;
+            case 11: a = "rules"; break;
+            case 12: a = "duplicate"; break;
+            case 13: a = "delete"; break;
+            case 20: a = "clear"; break;
+            case 30: a = "toplaylist"; break;
+            case 31: a = "delete"; break;
+            case 40: a = "analyse"; break;
+            case 41: a = "stems"; break;
+            case 42: a = "export"; itemPtr->setSelected (true, true); break;   // shows the list, so the export can take it
+            default: return;
+        }
+        safe->onTreeAction (id, a, tracks);
+    });
+}
+
+void BrowserView::showFilterPanel()
+{
+    struct Panel : juce::Component
+    {
+        explicit Panel (BrowserView& b) : owner (b)
+        {
+            auto num = [this] (juce::TextEditor& e, double v)
+            {
+                addAndMakeVisible (e);
+                e.setInputRestrictions (6, "0123456789.");
+                e.setText (v > 0 ? juce::String (v, 1) : juce::String(), false);
+                e.onTextChange = [this] { apply(); };
+            };
+            num (bpmMin, owner.filter.bpmMin);
+            num (bpmMax, owner.filter.bpmMax);
+            for (auto* c : { &key, &rating, &colour, &stems, &tag }) addAndMakeVisible (*c);
+            key.addItemList ({ "Any key", "Goes with the master deck's key" }, 1);
+            key.setSelectedId (owner.filter.keyMode + 1, juce::dontSendNotification);
+            rating.addItemList ({ "Any rating", "1 star +", "2 stars +", "3 stars +", "4 stars +", "5 stars" }, 1);
+            rating.setSelectedId (owner.filter.ratingMin + 1, juce::dontSendNotification);
+            colour.addItem ("Any colour", 1);
+            const char* cn[] = { "Pink", "Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple" };
+            for (int i = 0; i < 8; ++i) colour.addItem (cn[i], i + 2);
+            colour.setSelectedId (owner.filter.colour + 1, juce::dontSendNotification);
+            stems.addItemList ({ "With or without stems", "With stems", "Without stems" }, 1);
+            stems.setSelectedId (owner.filter.stems + 1, juce::dontSendNotification);
+            tag.addItem ("Any tag", 1);
+            int id = 2;
+            for (auto& c : UserLists::get().tagCategories())
+                for (auto& t : c.tags) { tag.addItem (c.name + " / " + t, id); tagNames.add (c.name + "/" + t); ++id; }
+            const int ti = tagNames.indexOf (owner.filter.tag);
+            tag.setSelectedId (ti >= 0 ? ti + 2 : 1, juce::dontSendNotification);
+            addAndMakeVisible (genre);
+            genre.setText (owner.filter.genre, false);
+            genre.setTextToShowWhenEmpty ("genre contains...", Theme::textFaint);
+            genre.onTextChange = [this] { apply(); };
+            for (auto* c : { &key, &rating, &colour, &stems, &tag }) c->onChange = [this] { apply(); };
+            addAndMakeVisible (clear);
+            clear.onClick = [this]
+            {
+                owner.filter = {};
+                bpmMin.clear(); bpmMax.clear(); genre.clear();
+                for (auto* c : { &key, &rating, &colour, &stems, &tag }) c->setSelectedId (1, juce::dontSendNotification);
+                owner.refilter();
+            };
+            setSize (300, 8 * 30 + 16);
+        }
+        void apply()
+        {
+            auto& f = owner.filter;
+            f.bpmMin = bpmMin.getText().getDoubleValue();
+            f.bpmMax = bpmMax.getText().getDoubleValue();
+            f.keyMode = key.getSelectedId() - 1;
+            f.ratingMin = juce::jmax (0, rating.getSelectedId() - 1);
+            f.colour = juce::jmax (0, colour.getSelectedId() - 1);
+            f.stems = juce::jmax (0, stems.getSelectedId() - 1);
+            f.genre = genre.getText().trim();
+            f.tag = tag.getSelectedId() >= 2 ? tagNames[tag.getSelectedId() - 2] : juce::String();
+            owner.refilter();
+        }
+        void paint (juce::Graphics& g) override
+        {
+            g.fillAll (juce::Colour (0xff141221));
+            g.setColour (Theme::textDim);
+            g.setFont (Theme::font (12.0f));
+            g.drawText ("BPM", 8, 8, 40, 24, juce::Justification::centredLeft);
+            g.drawText ("to", 156, 8, 24, 24, juce::Justification::centred);
+        }
+        void resized() override
+        {
+            bpmMin.setBounds (52, 8, 100, 24);
+            bpmMax.setBounds (184, 8, 100, 24);
+            int y = 38;
+            for (juce::Component* c : { (juce::Component*) &key, (juce::Component*) &rating, (juce::Component*) &colour, (juce::Component*) &genre,
+                                        (juce::Component*) &stems, (juce::Component*) &tag })
+            { c->setBounds (8, y, getWidth() - 16, 24); y += 30; }
+            clear.setBounds (getWidth() - 88, y, 80, 24);
+        }
+        BrowserView& owner;
+        juce::TextEditor bpmMin, bpmMax, genre;
+        juce::ComboBox key, rating, colour, stems, tag;
+        juce::StringArray tagNames;
+        juce::TextButton clear { "CLEAR" };
+    };
+    juce::CallOutBox::launchAsynchronously (std::make_unique<Panel> (*this), filterButton.getScreenBounds(), nullptr);
+}
+
+void BrowserView::scrubPreview (double delta)
+{
+    const auto sel = getSelectedTracks();
+    if (sel.empty() || currentSource == nullptr || ! onPreview) return;
+    const auto& t = sel.front();
+    const bool same = t.file.getFullPathName() == previewPath && previewPath.isNotEmpty();
+    const double len = juce::jmax (1.0, t.durationSec);
+    // an encoder: each step nudges the preview half a second (like scrubbing a record)
+    const double f = juce::jlimit (0.0, 0.999, (same ? previewFraction : 0.0) + delta * 0.5 / len);
+    onPreview (t, currentSource->kind == LibrarySource::Kind::pcCollection, f);
+}
+
+void BrowserView::scrubPreviewTo (double fraction)
+{
+    const auto sel = getSelectedTracks();
+    if (sel.empty() || currentSource == nullptr || ! onPreview) return;
+    onPreview (sel.front(), currentSource->kind == LibrarySource::Kind::pcCollection, juce::jlimit (0.0, 0.999, fraction));
 }
 
 } // namespace orbit

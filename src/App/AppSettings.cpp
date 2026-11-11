@@ -174,6 +174,18 @@ void AppSettings::load()
         str (("deckController" + n).toRawUTF8(), deckController[(size_t) d]);
     }
     boolean ("throwOn", throwOn);
+    num ("browserRowHeight", browserRowHeight);
+    num ("historySeconds", historySeconds);
+    str ("recordFolder", recordFolder);
+    num ("recordFormat", recordFormat);
+    num ("recordSource", recordSource);
+    str ("lamePath", lamePath);
+    boolean ("recordCue", recordCue);
+    boolean ("recordSplit", recordSplit);
+    boolean ("recordArmed", recordArmed);
+    recordFormat = juce::jlimit (0, 2, recordFormat);
+    browserRowHeight = juce::jlimit (20, 72, browserRowHeight);
+    historySeconds = juce::jlimit (5.0, 300.0, historySeconds);
     num ("longPressSec", longPressSec);
     boolean ("hotCuePadColours", hotCuePadColours);
     boolean ("jogDisplay", jogDisplay);
@@ -295,6 +307,15 @@ void AppSettings::save() const
         o->setProperty ("deckController" + n, deckController[(size_t) d]);
     }
     o->setProperty ("throwOn", throwOn);
+    o->setProperty ("browserRowHeight", browserRowHeight);
+    o->setProperty ("historySeconds", historySeconds);
+    o->setProperty ("recordFolder", recordFolder);
+    o->setProperty ("recordFormat", recordFormat);
+    o->setProperty ("recordSource", recordSource);
+    o->setProperty ("lamePath", lamePath);
+    o->setProperty ("recordCue", recordCue);
+    o->setProperty ("recordSplit", recordSplit);
+    o->setProperty ("recordArmed", recordArmed);
     o->setProperty ("longPressSec", longPressSec);
     o->setProperty ("hotCuePadColours", hotCuePadColours);
     o->setProperty ("jogDisplay", jogDisplay);

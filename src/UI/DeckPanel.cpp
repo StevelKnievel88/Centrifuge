@@ -350,7 +350,7 @@ void DeckPanel::paint (juce::Graphics& g)
                 auto xOf = [&] (double sec) { return r.getX() + (float) juce::jlimit (0.0, 1.0, fold.toDisplay (sec) / dlen) * r.getWidth(); };
                 const float px = r.getX() + (float) juce::jlimit (0.0, 1.0, fold.reference / dlen) * r.getWidth();
 
-                g.setColour (juce::Colours::black.withAlpha (0.45f));
+                g.setColour (juce::Colours::black.withAlpha (0.28f));
                 g.fillRect (juce::Rectangle<float> (r.getX(), r.getY(), px - r.getX(), r.getHeight()));
 
                 if (st.loopInSec.load() >= 0 && st.loopOutSec.load() > st.loopInSec.load())

@@ -125,6 +125,11 @@ static std::vector<ActionDef> buildActions()
     add ("browse.tree",     "Browse: playlists / tracks focus", "Browser", B, -1);
     add ("browse.load1",    "Load to deck 1",          "Browser", B, -1);
     add ("browse.load2",    "Load to deck 2",          "Browser", B, -1);
+    add ("browse.tag",      "Add to / remove from TO PLAY (like TAG TRACK)", "Browser", B, -1);
+    add ("browse.scrub",    "Preview scrub (encoder: nudges)", "Browser", E, -1);
+    add ("browse.scrubpos", "Preview position (dial: left = start, right = end)", "Browser", ActionKind::continuous, -1);
+    add ("setlist.toggle",  "SET LIST start / stop", "Browser", B, -1);
+    add ("record.toggle",   "Record start / stop", "View", B, -1);
     add ("view.browser",    "Show / hide browser",     "View", B, -1);
     add ("view.zoom",       "Waveform zoom (encoder)", "View", E, -1);
     add ("view.zoomin",     "Waveform zoom in",        "View", B, -1);

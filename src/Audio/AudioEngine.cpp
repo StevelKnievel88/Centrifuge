@@ -209,18 +209,50 @@ void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
     const int maxBlock = juce::jmax (blockSize, 2048);
     scratchL.assign ((size_t) maxBlock, 0.0f);
     scratchR.assign ((size_t) maxBlock, 0.0f);
+    mixL.assign ((size_t) maxBlock, 0.0f);
+    mixR.assign ((size_t) maxBlock, 0.0f);
     for (auto& d : decks)
         d->prepare (sampleRate, maxBlock);
 }
 
 void AudioEngine::audioDeviceStopped() {}
 
-void AudioEngine::audioDeviceIOCallbackWithContext (const float* const*, int,
+void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputs, int numInputs,
                                                     float* const* outputs, int numOutputs,
                                                     int numSamples, const juce::AudioIODeviceCallbackContext&)
 {
     juce::ScopedNoDenormals noDenormals;
     render (outputs, numOutputs, numSamples);
+    const int in = recordInput.load();
+    if (auto* rec = recorder.load(); rec != nullptr && in >= 0 && in + 1 < numInputs && inputs[in] != nullptr && inputs[in + 1] != nullptr)
+        rec->process (inputs[in], inputs[in + 1], numSamples);
+}
+
+juce::StringArray AudioEngine::inputPairNames() const
+{
+    juce::StringArray r;
+    if (auto* dev = const_cast<juce::AudioDeviceManager&> (deviceManager).getCurrentAudioDevice())
+    {
+        auto names = dev->getInputChannelNames();
+        for (int c = 0; c + 1 < names.size(); c += 2)
+            r.add ("Input " + juce::String (c + 1) + "/" + juce::String (c + 2) + "  (" + names[c] + ")");
+    }
+    return r;
+}
+
+juce::String AudioEngine::enableInputs()
+{
+    auto* dev = deviceManager.getCurrentAudioDevice();
+    if (dev == nullptr) return "No audio device";
+    const int n = dev->getInputChannelNames().size();
+    if (n < 2) return "The audio device has no inputs";
+    if (dev->getActiveInputChannels().countNumberOfSetBits() >= n) return {};
+    auto setup = deviceManager.getAudioDeviceSetup();
+    if (setup.inputDeviceName.isEmpty()) setup.inputDeviceName = setup.outputDeviceName;
+    setup.useDefaultInputChannels = false;
+    setup.inputChannels.clear();
+    setup.inputChannels.setRange (0, n, true);
+    return deviceManager.setAudioDeviceSetup (setup, true);
 }
 
 void AudioEngine::updateSync()
@@ -300,6 +332,7 @@ void AudioEngine::render (float* const* outputs, int numOutputs, int numSamples)
 
     const bool sum = sumToMaster.load();
     const int chunk = (int) scratchL.size();
+    auto* rec = recordInput.load() < 0 ? recorder.load() : nullptr;
 
     for (int start = 0; start < numSamples; start += chunk)
     {
@@ -307,6 +340,12 @@ void AudioEngine::render (float* const* outputs, int numOutputs, int numSamples)
         for (int d = 0; d < maxDecks; ++d)
         {
             decks[(size_t) d]->process (scratchL.data(), scratchR.data(), n);
+            if (rec != nullptr)
+            {
+                if (d == 0) { juce::FloatVectorOperations::copy (mixL.data(), scratchL.data(), n); juce::FloatVectorOperations::copy (mixR.data(), scratchR.data(), n); }
+                else        { juce::FloatVectorOperations::add (mixL.data(), scratchL.data(), n);  juce::FloatVectorOperations::add (mixR.data(), scratchR.data(), n); }
+                if (d == maxDecks - 1) rec->process (mixL.data(), mixR.data(), n);
+            }
 
             if (sum)
             {

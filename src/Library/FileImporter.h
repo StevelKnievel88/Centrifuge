@@ -17,6 +17,7 @@ public:
         double minBpm = 88.0, maxBpm = 175.0;
         double mp3OffsetMs = 0.0;      // the app's MP3 grid correction (grids are stored in rekordbox's time)
         int threads = 0;               // 0 = automatic
+        bool subfolders = true;        // folders: include their sub-folders
     };
 
     struct Result

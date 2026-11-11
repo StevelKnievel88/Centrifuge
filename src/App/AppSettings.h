@@ -107,6 +107,21 @@ struct AppSettings
     // UI
     bool showBrowser = true;
     int browserHeight = 300;
+    int browserRowHeight = 24;
+    double historySeconds = 30.0;
+
+    // Record
+    juce::String recordFolder;         // empty = Music/Centrifuge Recordings
+    int recordFormat = 0;              // 0 WAV, 1 FLAC, 2 MP3 320
+    int recordSource = -1;             // -1 = Centrifuge's mix, otherwise the first channel of an input pair
+    juce::String lamePath;             // lame.exe, for MP3
+    bool recordCue = true, recordSplit = false;
+    bool recordArmed = true;           // starts with the first sound
+    juce::File recordingsFolder() const
+    {
+        return recordFolder.isNotEmpty() ? juce::File (recordFolder)
+                                         : juce::File::getSpecialLocation (juce::File::userMusicDirectory).getChildFile ("Centrifuge Recordings");
+    }      // a track counts as played (history, play count) after this long on air
 
     static juce::File folder();
     static juce::File settingsFile() { return folder().getChildFile ("settings.json"); }

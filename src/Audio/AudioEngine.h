@@ -1,5 +1,6 @@
 #pragma once
 #include "Deck.h"
+#include "MasterRecorder.h"
 #include <juce_audio_devices/juce_audio_devices.h>
 
 namespace orbit
@@ -46,6 +47,14 @@ public:
     /** Peak of outputs 1/2 (decays), for the top bar meter. */
     float getMasterPeak() const { return masterPeak.load(); }
 
+    /** Recording: Centrifuge's mix (decks summed, before the master volume) or an input pair (firstInput >= 0). nullptr stops feeding it. */
+    void setRecorder (MasterRecorder* r, int firstInput) { recordInput = firstInput; recorder = r; }
+    /** The device's input pairs ("1/2", ...), for the recording source. */
+    juce::StringArray inputPairNames() const;
+    /** Opens the device's inputs (they're closed unless something records from them). Returns an error, or empty. */
+    juce::String enableInputs();
+    double getSampleRate() const { return sampleRate; }
+
     int getMasterDeck() const { return masterDeck.load(); }
     double getCpuUsage() const;
     double getOutputLatencySeconds() const { return outputLatency.load(); }
@@ -80,7 +89,9 @@ private:
     float masterNow = 1.0f;
     std::atomic<int> masterDeck { -1 };
 
-    std::vector<float> scratchL, scratchR;
+    std::vector<float> scratchL, scratchR, mixL, mixR;
+    std::atomic<MasterRecorder*> recorder { nullptr };
+    std::atomic<int> recordInput { -1 };
     double sampleRate = 44100.0;
     int blockSize = 512;
 

@@ -135,6 +135,47 @@ public:
             });
         };
 
+        setupSlider (historySec, 5.0, 300.0, 1.0, settings.historySeconds);
+        historySec.setTextValueSuffix (" s");
+        historySec.setTooltip ("A track goes into PLAY HISTORY (and its play count goes up) once it has played this long");
+        historySec.onValueChange = [this] { settings.historySeconds = historySec.getValue(); onChanged(); };
+        add (&historySec, 28, "Counts as played after");
+
+        addSection ("RECORD");
+        add (&recFolder, 28, "Recordings folder");
+        recFolder.setText (settings.recordingsFolder().getFullPathName(), false);
+        recFolder.onReturnKey = recFolder.onFocusLost = [this] { settings.recordFolder = recFolder.getText().trim(); onChanged(); };
+        add (&recFormat, 28, "Format");
+        recFormat.addItemList ({ "WAV (24-bit)", "FLAC (24-bit, lossless, smaller)", "MP3 320 kbps (needs lame.exe)" }, 1);
+        recFormat.setSelectedId (settings.recordFormat + 1, juce::dontSendNotification);
+        recFormat.onChange = [this] { settings.recordFormat = recFormat.getSelectedId() - 1; onChanged(); };
+        add (&lamePath, 28, "LAME encoder (MP3)");
+        lamePath.setText (settings.lamePath, false);
+        lamePath.setTextToShowWhenEmpty ("path to lame.exe - only needed for MP3", Theme::textFaint);
+        lamePath.onReturnKey = lamePath.onFocusLost = [this] { settings.lamePath = lamePath.getText().trim(); onChanged(); };
+        add (&recSource, 28, "Record from");
+        recSource.setTooltip ("Centrifuge's mix is the decks summed (not the XDJ-XZ's EQ, faders or FX). To record exactly what the XDJ-XZ "
+                              "plays, choose the input pair its master comes in on (its USB recording channels)");
+        refreshRecordSources();
+        recSource.onChange = [this]
+        {
+            const int id = recSource.getSelectedId();
+            settings.recordSource = id <= 1 ? -1 : (id - 2) * 2;
+            onChanged();
+        };
+        add (&recArmed, 28, {});
+        recArmed.setButtonText ("Arm: the recording starts with the first sound (and runs until you press REC again)");
+        recArmed.setToggleState (settings.recordArmed, juce::dontSendNotification);
+        recArmed.onClick = [this] { settings.recordArmed = recArmed.getToggleState(); onChanged(); };
+        add (&recCue, 28, {});
+        recCue.setButtonText ("Make a .cue file (track markers for each track played)");
+        recCue.setToggleState (settings.recordCue, juce::dontSendNotification);
+        recCue.onClick = [this] { settings.recordCue = recCue.getToggleState(); onChanged(); };
+        add (&recSplit, 28, {});
+        recSplit.setButtonText ("Split into a file per track after stopping (numbered, named artist - title)");
+        recSplit.setToggleState (settings.recordSplit, juce::dontSendNotification);
+        recSplit.onClick = [this] { settings.recordSplit = recSplit.getToggleState(); onChanged(); };
+
         addSection ("PREP - WAVEFORMS");
         for (int i = 0; i < 2; ++i)
         {
@@ -564,9 +605,20 @@ private:
         s.setRange (lo, hi, step);
         s.setValue (value, juce::dontSendNotification);
     }
+    void refreshRecordSources()
+    {
+        recSource.clear (juce::dontSendNotification);
+        recSource.addItem ("Centrifuge's mix (the decks summed)", 1);
+        const auto pairs = engine.inputPairNames();
+        for (int i = 0; i < pairs.size(); ++i) recSource.addItem (pairs[i], i + 2);
+        const int want = settings.recordSource < 0 ? 1 : settings.recordSource / 2 + 2;
+        if (want > 1 && want - 2 >= pairs.size()) recSource.addItem ("Input " + juce::String (settings.recordSource + 1) + "/" + juce::String (settings.recordSource + 2) + " (not on this device)", want);
+        recSource.setSelectedId (want, juce::dontSendNotification);
+    }
     void changeListenerCallback (juce::ChangeBroadcaster*) override
     {
         settings.audioDeviceState = engine.saveDeviceState();
+        refreshRecordSources();
         refreshRouting();
         onChanged();
     }
@@ -731,6 +783,10 @@ private:
     juce::Slider throwSpeed, markerSize, longPress;
     juce::ComboBox stemFormat;
     juce::ToggleButton padColoursOn, jogScreens;
+    juce::Slider historySec;
+    juce::TextEditor recFolder, lamePath;
+    juce::ComboBox recFormat, recSource;
+    juce::ToggleButton recArmed, recCue, recSplit;
     std::unique_ptr<juce::FileChooser> chooser;
 };
 

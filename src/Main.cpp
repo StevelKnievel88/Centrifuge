@@ -13,6 +13,7 @@
 #include "Audio/TrackAnalyser.h"
 #include "Library/TagReader.h"
 #include "Library/FileImporter.h"
+#include "Audio/MasterRecorder.h"
 
 #if JUCE_WINDOWS
  #include <windows.h>
@@ -30,6 +31,42 @@ static int runCommandLine (const juce::StringArray& args)
         const int i = args.indexOf (flag);
         return i >= 0 && i + 1 < args.size() ? args[i + 1].unquoted() : juce::String();
     };
+
+    if (args.contains ("--rectest"))
+    {
+        // Records 3 tones (armed: 1 s of silence first is skipped), with a marker per "track", as FLAC: cue + split files
+        const juce::File dir (argAfter ("--rectest"));
+        dir.deleteRecursively();
+        MasterRecorder rec;
+        MasterRecorder::Options o;
+        o.folder = dir; o.format = MasterRecorder::flac; o.cueFile = true; o.split = true;
+        auto err = rec.start (o, 44100.0, true);
+        if (err.isNotEmpty()) { std::cout << "rec error " << err << std::endl; return 1; }
+        std::vector<float> l (512), r (512);
+        double t = 0.0;
+        int track = -1;
+        for (int b = 0; b < (int) (7.0 * 44100 / 512); ++b)
+        {
+            const double sec = b * 512 / 44100.0;
+            const int want = sec < 1.0 ? -1 : juce::jmin (2, (int) ((sec - 1.0) / 2.0));
+            if (want != track && want >= 0)
+            {
+                track = want;
+                TrackInfo ti; ti.artist = "Artist " + juce::String (track + 1); ti.title = "Tone " + juce::String (track + 1);
+                rec.addMarker (rec.elapsedSeconds(), ti);
+            }
+            for (int i = 0; i < 512; ++i, t += 1.0 / 44100.0)
+                l[(size_t) i] = r[(size_t) i] = want < 0 ? 0.0f : 0.3f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * (220.0 * (want + 1)) * t);
+            rec.process (l.data(), r.data(), 512);
+            juce::Thread::sleep (1);   // (roughly real-time, so the writer keeps up as it would)
+        }
+        std::cout << "rec elapsed " << rec.elapsedSeconds() << std::endl;
+        std::cout << "rec made " << rec.stop ("Test set") << std::endl;
+        for (auto& f : dir.findChildFiles (juce::File::findFiles, true))
+            std::cout << "  " << f.getRelativePathFrom (dir) << " " << f.getSize() << std::endl;
+        std::cout << dir.getChildFile ("Test set.cue").loadFileAsString() << std::endl;
+        return 0;
+    }
 
     if (args.contains ("--gridtest"))
     {

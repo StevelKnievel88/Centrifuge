@@ -30,7 +30,7 @@ namespace
         return all.size() - 1;
     }
 
-    Dir scan (const juce::File& dir, juce::Array<juce::File>& all, int depth = 0)
+    Dir scan (const juce::File& dir, juce::Array<juce::File>& all, int depth = 0, bool subfolders = true)
     {
         Dir d { dir, {}, {} };
         if (depth > 12) return d;
@@ -38,14 +38,14 @@ namespace
         entries.sort();
         for (auto& e : entries)
         {
-            if (e.isDirectory()) { auto s = scan (e, all, depth + 1); if (s.hasAudio()) d.subs.push_back (std::move (s)); }
+            if (e.isDirectory()) { if (! subfolders) continue; auto s = scan (e, all, depth + 1, true); if (s.hasAudio()) d.subs.push_back (std::move (s)); }
             else if (FileImporter::isAudioFile (e)) d.files.push_back (addFile (e, all));
         }
         return d;
     }
 
-    /** A folder as playlists: a folder with sub-folders becomes a playlist folder (its own tracks go in a playlist
-        of the same name inside it); a folder of tracks only becomes a playlist. */
+    /** A folder as playlists: a folder of tracks only becomes a playlist; a folder with sub-folders becomes a playlist
+        folder, and its own tracks show when you click it (it's a folder and a list at once). */
     PlaylistNode toNode (const Dir& d, int& count)
     {
         PlaylistNode n;
@@ -57,14 +57,8 @@ namespace
             return n;
         }
         n.isFolder = true;
-        if (! d.files.empty())
-        {
-            PlaylistNode own;
-            own.name = d.dir.getFileName();
-            own.trackIndices = d.files;
-            n.children.push_back (std::move (own));
-            ++count;
-        }
+        n.trackIndices = d.files;
+        if (! d.files.empty()) ++count;
         for (auto& s : d.subs) n.children.push_back (toNode (s, count));
         return n;
     }
@@ -137,7 +131,7 @@ FileImporter::Result FileImporter::run (CentrifugeLibrary& library, AudioFileLoa
     std::vector<Dir> dirs;
     for (auto& item : items)
     {
-        if (item.isDirectory()) { auto d = scan (item, all); if (d.hasAudio()) dirs.push_back (std::move (d)); }
+        if (item.isDirectory()) { auto d = scan (item, all, 0, o.subfolders); if (d.hasAudio()) dirs.push_back (std::move (d)); }
         else if (isAudioFile (item)) addFile (item, all);
     }
     if (all.isEmpty()) { res.errors.add ("No audio files found"); return res; }

@@ -136,6 +136,11 @@ private:
     juce::TableListBox table { "tracks", this };
     juce::TextEditor search;
     juce::TextButton load1 { "LOAD 1" }, load2 { "LOAD 2" }, expandButton { "EXPAND" }, infoButton { "INFO" };
+    juce::TextButton filterButton { "FILTER" }, rowsSmaller { "-" }, rowsBigger { "+" }, setListButton { "SET LIST" };
+    void showFilterPanel();
+    void showTreeMenu (Item& item);
+    juce::String currentNodeId;
+    std::map<int, juce::String> tagIds;   // track menu: tag item ids
     TrackInfoPanel infoPanel;
     bool infoOpen = false;
     void selectedRowsChanged (int) override { infoPanel.setTracks (getSelectedTracks()); }
@@ -175,6 +180,32 @@ private:
     class Header;
     friend class Header;
   public:
+    /** A tree list's menu action (new / rename / delete / duplicate / rules / analyse / stems / export / clear ...)
+        on the list `nodeId` ("pl", "u12", "toplay", "hs.now", "loc", a location playlist's id ...), with its tracks. */
+    std::function<void (const juce::String& nodeId, const juce::String& action, const std::vector<TrackInfo>& tracks)> onTreeAction;
+    /** The key the master deck plays in (for the "compatible keys" filter). */
+    std::function<juce::String()> masterKey;
+    /** SET LIST button. */
+    std::function<void()> onSetListToggled;
+    void setSetListRunning (bool on) { setListButton.setToggleState (on, juce::dontSendNotification); setListButton.setButtonText (on ? "SET LIST ON" : "SET LIST"); }
+    /** Row height (the preview column follows it). */
+    std::function<void (int)> onRowHeightChanged;
+    void setRowHeight (int h) { table.setRowHeight (juce::jlimit (20, 72, h)); table.repaint(); }
+    /** Preview scrub for the highlighted track: a relative nudge (encoder), or a position 0..1 (dial). */
+    void scrubPreview (double delta);
+    void scrubPreviewTo (double fraction);
+
+    struct Filter
+    {
+        double bpmMin = 0.0, bpmMax = 0.0;
+        int keyMode = 0;          // 0 any, 1 compatible with the master deck's key
+        int ratingMin = 0, colour = 0, stems = 0;
+        juce::String genre, tag;
+        bool any() const { return bpmMin > 0 || bpmMax > 0 || keyMode != 0 || ratingMin > 0 || colour > 0 || stems != 0 || genre.isNotEmpty() || tag.isNotEmpty(); }
+    };
+    Filter filter;
+    void refilter() { applyFilter(); filterButton.setToggleState (filter.any(), juce::dontSendNotification); }
+
     /** Makes the current order (as sorted now) the list's # order, and turns sorting off. */
     void saveOrderAsDefault();
     void resetSavedOrder();

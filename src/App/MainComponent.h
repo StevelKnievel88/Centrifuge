@@ -78,7 +78,7 @@ private:
     void runImport (std::shared_ptr<const LibrarySource> source, std::vector<int> onlyTracks);
   public:
     /** Adds audio files / folders that aren't in rekordbox (analysed by Centrifuge). */
-    void addMusic (const juce::Array<juce::File>& items);
+    void addMusic (const juce::Array<juce::File>& items, int subfolders = -1);   // -1 = ask when a folder has subfolders
   private:
     void chooseMusic (bool folders);
     void askRename (int deck, bool hotCue, int index, const juce::String& current);
@@ -110,6 +110,7 @@ private:
 
     OrbitLookAndFeel lookAndFeel;
     CueStore cueStore { AppSettings::folder().getChildFile ("cues.json") };
+    MasterRecorder recorder;   // (before the engine, which feeds it)
     AudioEngine engine;
     ActionRouter router { engine };
     MidiManager midi { router };
@@ -148,6 +149,16 @@ private:
     juce::uint32 lastLibraryRefresh = 0;
     std::array<std::shared_ptr<const LibrarySource>, 2> sourceCache;
     std::array<int, 2> sourceCacheVersion { -1, -1 };
+    void withUserLists (LibrarySource& src);
+    void treeAction (const juce::String& node, const juce::String& action, const std::vector<TrackInfo>& tracks);
+    void askText (const juce::String& title, const juce::String& current, std::function<void (juce::String)> done);
+    void toggleSetList();
+    bool recordWithSetList = false;
+    void startRecording (bool askSource);
+    void stopRecording();
+    juce::TextButton recButton { "REC" };
+    juce::String recText;
+    bool recNaming = false;
     int dragging = 0, dragStartValue = 0;
     bool browserExpanded = false;
     std::array<int, AudioEngine::totalDecks> stemPreviewSerial {};   // the track whose stems preview was saved

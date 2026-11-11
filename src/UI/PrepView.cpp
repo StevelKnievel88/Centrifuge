@@ -241,7 +241,7 @@ void PrepView::paint (juce::Graphics& g)
                 const double t = fold.toDisplay (st.positionSec.load(), st.playSegment.load());
                 fold.reference = t;
                 auto xOfD = [&] (double d) { return r.getX() + (float) juce::jlimit (0.0, 1.0, d / len) * r.getWidth(); };
-                g.setColour (juce::Colours::black.withAlpha (0.45f));
+                g.setColour (juce::Colours::black.withAlpha (0.28f));
                 g.fillRect (r.withRight (xOfD (t)));
                 if (overviewGrid) paintOverviewGrid (g, r, track->grid, st.lengthSec.load(), &fold, track->phrases.empty() ? 0.0f : juce::jmax (2.0f, juce::jmin (6.0f, r.getHeight() * 0.14f)));
                 {
