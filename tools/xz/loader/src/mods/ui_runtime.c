@@ -157,7 +157,7 @@ static void apply(void *context, const struct xz_ui_action *actions, size_t coun
             if (a->deck >= 0 && a->deck < 2) { model.deck[a->deck].bypass = a->value != 0; levels(a->deck); }
             break;
         case XZ_UI_SET_THEME:
-            if (a->index >= 0 && a->index < XZ_THEME_COUNT) {model.theme = a->index;xz_native_skin_request(a->index);}
+            /* Centrifuge has one look: theme changes are ignored */
             break;
         case XZ_UI_STEM_PAGE:
             if (a->index >= 0 && a->index < 4) model.stem_page = a->index;
@@ -514,8 +514,9 @@ int xz_ui_runtime_start(int audio_ready, int key_ready, int stems_enabled) {
     if(forced_theme&&forced_theme[0]>='0'&&forced_theme[0]<='9'&&
        (!forced_theme[1]||(forced_theme[1]>='0'&&forced_theme[1]<='9'&&!forced_theme[2]))){
         int chosen=forced_theme[0]-'0';if(forced_theme[1])chosen=chosen*10+forced_theme[1]-'0';
-        if(chosen<XZ_THEME_COUNT)model.theme=chosen;
+        (void)chosen;
     }
+    model.theme=3; /* Centrifuge: always the Centrifuge look, whatever a settings file says */
     const char *native_view = getenv("XZ_MODS_NATIVE_VIEW");
     if (native_view && !strcmp(native_view,"1")) { model.fb_takeover=0; __atomic_store_n(&fb_takeover_active,0,__ATOMIC_RELEASE); }
     if (audio_ready && force_stems && !strcmp(force_stems,"1")) {

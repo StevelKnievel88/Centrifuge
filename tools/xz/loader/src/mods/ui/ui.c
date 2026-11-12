@@ -6,8 +6,8 @@
 #include <stdio.h>
 #include <string.h>
 
-static const enum xz_ui_page menu_pages[4]={XZ_UI_CONTROLS,XZ_UI_THEMES,XZ_UI_CONNECTION,XZ_UI_SETTINGS};
-static const char *menu_names[4]={"CONTROLS","APPEARANCE","STREAM","ADVANCED"};
+static const enum xz_ui_page menu_pages[3]={XZ_UI_CONTROLS,XZ_UI_CONNECTION,XZ_UI_SETTINGS};
+static const char *menu_names[3]={"CONTROLS","STREAM","ADVANCED"};
 static const char *stem_pages[4]={"HOT CUE","BEAT LOOP","SLIP LOOP","BEAT JUMP"};
 static const char *stems[3]={"DRUM/BASS","INST","VOCALS"};
 static const char *pads[8]={"A","B","C","D","E","F","G","H"};
@@ -130,7 +130,7 @@ uint32_t xz_ui_stem_color(int theme,int index){
 void xz_ui_init(struct xz_ui *u){memset(u,0,sizeof(*u));u->capture=-1;u->page=XZ_UI_CONTROLS;}
 size_t xz_ui_layout(const struct xz_ui *u,const struct xz_ui_model *m,struct xz_ui_widget w[XZ_UI_WIDGETS]){
  size_t n=0;int i;
- for(i=0;i<4;i++)add(w,&n,12+i*168,46,160,44,XZ_UI_PANEL,menu_pages[i],0,menu_names[i]);
+ for(i=0;i<3;i++)add(w,&n,12+i*168,46,160,44,XZ_UI_PANEL,menu_pages[i],0,menu_names[i]);
  add(w,&n,700,46,88,44,XZ_UI_CLOSE,0,0,"CLOSE");
  if(u->page==XZ_UI_STEMS||u->page==XZ_UI_XPAD||u->page==XZ_UI_SETTINGS)
   for(i=0;i<2;i++)add(w,&n,12+i*170,100,162,38,XZ_UI_DECK,i,0,"USB DECK");
@@ -167,7 +167,7 @@ size_t xz_ui_layout(const struct xz_ui *u,const struct xz_ui_model *m,struct xz_
   add(w,&n,412,254,376,44,XZ_UI_PAD_FEEDBACK,0,0,"STEM PAD LIGHTS");
   for(i=0;i<4;i++)add(w,&n,12+i*196,334,188,44,XZ_UI_STEM_PAGE,i,0,stem_pages[i]);
  }else if(u->page==XZ_UI_THEMES){
-  for(i=0;i<XZ_THEME_COUNT;i++)add(w,&n,12+(i%3)*262,158+(i/3)*70,252,62,XZ_UI_SET_THEME,i,0,xz_theme_name(i));
+  (void)i; /* Centrifuge has one look; there is nothing to choose */
  }else if(u->page==XZ_UI_CONNECTION){
   add(w,&n,492,142,296,42,XZ_UI_TAKEOVER_TOGGLE,0,0,"STREAM VIEW");
   add(w,&n,492,238,94,40,XZ_UI_TAKEOVER_ASSIGN,0,0,"LINK");

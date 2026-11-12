@@ -28,7 +28,7 @@ static inline const struct xz_theme_palette *xz_theme_palette(int theme) {
  return &colors[xz_theme_id(theme)];
 }
 static inline const char *xz_theme_name(int theme) {
- static const char *const names[XZ_THEME_COUNT]={"STOCK","WHITE","CYBERPUNK","CENTRIFUGE","MOCHA","AURORA","SANDSTONE","GAME BOY","SUPER NINTENDO","WINDOWS 95","GAME BOY COLOR","AQUA / ITUNES"};
+ static const char *const names[XZ_THEME_COUNT]={"CENTRIFUGE","CENTRIFUGE","CENTRIFUGE","CENTRIFUGE","CENTRIFUGE","CENTRIFUGE","CENTRIFUGE","CENTRIFUGE","CENTRIFUGE","CENTRIFUGE","CENTRIFUGE","CENTRIFUGE"};
  return names[xz_theme_id(theme)];
 }
 static inline uint16_t xz_theme_rgb565(uint32_t c) { return (uint16_t)(((c>>8)&0xf800)|((c>>5)&0x7e0)|((c>>3)&31)); }
