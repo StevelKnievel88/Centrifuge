@@ -33,14 +33,12 @@ def rgb565(image: Image.Image) -> bytes:
 
 
 def logo_strip() -> Image.Image:
-    """560 x 92: the Centrifuge wordmark where the stock screen shows its own logo with no track loaded."""
-    art = Image.open(BRANDING / 'centrifuge-splash-800x480.png').convert('RGB')
-    lum = np.asarray(art.convert('L'))
-    ys, xs = np.where(lum > 40)
-    art = art.crop((int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1))
-    art.thumbnail((540, 84), Image.Resampling.LANCZOS)
-    out = Image.new('RGB', (560, 92), (5, 4, 9))
-    out.paste(art, ((560 - art.width) // 2, (92 - art.height) // 2))
+    """560 x 92: the Centrifuge wordmark where the stock screen shows its own logo with no track loaded.
+    Drawn to size by the user, so it is used exactly as it is."""
+    art = Image.open(BRANDING / 'centrifuge-xz-logo-560x92.png').convert('RGBA')
+    assert art.size == (560, 92), art.size
+    out = Image.new('RGB', art.size, (0, 0, 0))          # anything transparent becomes black
+    out.paste(art, (0, 0), art)
     return out
 
 
