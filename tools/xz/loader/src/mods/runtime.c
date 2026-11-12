@@ -102,7 +102,8 @@ static int known_application(void) {
     int exit_status = pclose(result);
     if (!read_ok || exit_status != 0) return 0;
     return strncmp(digest, "627f39fbabb0b47f2d45f4aeac7e5899 ", 33) == 0
-        || strncmp(digest, "6a7ccb454e52afa26a73f3380706c9ca ", 33) == 0;
+        || strncmp(digest, "6a7ccb454e52afa26a73f3380706c9ca ", 33) == 0
+        || strncmp(digest, "02d8a03bca0e3952eafb13517eb6a956 ", 33) == 0;   /* Centrifuge: deck-select patch only */
 }
 
 int xz_hook_slot(uint32_t address, uint32_t expected, void *replacement, void **original) {

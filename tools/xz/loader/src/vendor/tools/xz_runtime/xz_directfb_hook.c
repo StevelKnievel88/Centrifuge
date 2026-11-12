@@ -490,8 +490,20 @@ static void cf_knob_extra(char link, char kind, uint32_t a, uint32_t b, const vo
     if (cf_knob_fd < 0 || !data || length == 0) return;
     if (length > 512u) length = 512u;
     now = wallclock_ms();
-    last = &cf_extra_last[link == 'a' ? 0 : 1][k][(a ^ (a >> 8) ^ length) & 7u];
-    if (*last && now - *last < 50u) return;
+    {
+        /* Keep a frame when it differs from the last one kept in its slot (a knob moved), otherwise one per 50 ms.
+         * All-zero reads are idle polls and only kept at the slow rate. */
+        static uint32_t sums[2][3][8];
+        unsigned slot = (a ^ (a >> 8) ^ length) & 7u;
+        const uint8_t *bytes = (const uint8_t *)data;
+        uint32_t sum = 2166136261u, index, any = 0;
+        if (kind == 'R' || kind == 'W') {
+            for (index = 0; index < length; ++index) { sum = (sum ^ bytes[index]) * 16777619u; any |= bytes[index]; }
+        }
+        last = &cf_extra_last[link == 'a' ? 0 : 1][k][slot];
+        if (*last && now - *last < 50u && (!any || sum == sums[link == 'a' ? 0 : 1][k][slot])) return;
+        if (any) sums[link == 'a' ? 0 : 1][k][slot] = sum;
+    }
     if (cf_knob_written + 20u + length > CF_KNOB_CAP_BYTES) return;
     *last = now ? now : 1u;
     header[0] = (uint32_t)'K' | ((uint32_t)(unsigned char)link << 8) | ((uint32_t)(unsigned char)kind << 16);

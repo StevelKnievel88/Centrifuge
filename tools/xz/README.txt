@@ -31,7 +31,8 @@ Double-click "Centrifuge XZ Tools.exe" for a menu:
          the faders are DRUM/BASS, INST and VOCALS. Power button and eject work as normal.
      Knob capture: about a minute after the normal screen appears, turn these knobs slowly, one at a time,
      fully left then fully right, about 3 seconds each: channel 3 TRIM, HI, MID, LOW, then channel 4
-     TRIM, HI, MID, LOW. Wait 3 more minutes, power off, and send Claude the "Centrifuge\loader-log" folder.
+     TRIM, HI, MID, LOW. Repeat the whole sweep for each position of the channel 3 and 4 input selector
+     switches. Wait 3 more minutes, power off, and send Claude the "Centrifuge\loader-log" folder.
 
   Options 2 and 3 only read information. They do NOT change the player, the firmware, or anything on the XZ, and run
   from RAM only - boot without the stick and the XZ is completely standard. The tool won't overwrite an

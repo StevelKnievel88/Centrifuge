@@ -590,9 +590,12 @@ def testloader(volume: str, force: bool = False) -> int:
     return 0
 
 
-PATCHED_RBP_MD5 = '6a7ccb454e52afa26a73f3380706c9ca'
+PATCHED_RBP_MD5 = '02d8a03bca0e3952eafb13517eb6a956'
 # The two small changes the XZ Mods runtime needs in the 1.26 player (offset, bytes before, bytes after).
-RBP_PATCHES = ((0x132d0c, '440050e30100a083', '0300a0e31eff2fe1'), (0xd1fb8, '800080e0ac3c07e3', '0100a0e31eff2fe1'))
+# Only the deck-select patch. The toolkit's other patch (0x132d0c) forces the colour waveform mode, which needs
+# rekordbox's colour preview data; tracks analysed by Centrifuge don't carry it, so the overview only filled in as
+# the track played and the scrolling waveform was blank. Without it the deck uses its own WAVEFORM COLOR setting.
+RBP_PATCHES = ((0xd1fb8, '800080e0ac3c07e3', '0100a0e31eff2fe1'),)
 
 
 def stock_rbp(key: bytes) -> bytes:
@@ -728,6 +731,8 @@ def loader(volume: str, force: bool = False) -> int:
     say('\nKnob capture for Claude: about a minute after the normal screen appears, turn these knobs slowly, one at')
     say('a time, fully left then fully right, about 3 seconds each, in this order:')
     say('  channel 3: TRIM, HI, MID, LOW      then channel 4: TRIM, HI, MID, LOW')
+    say('Do the whole sweep once for EACH position of the channel 3 and 4 input selector switches (set both')
+    say('switches to the same position, sweep, move both to the next position, sweep again).')
     say('Wait 3 more minutes, power off with the button, and send the "Centrifuge\\loader-log" folder from the stick.')
     say('\nNothing is installed on the deck: power off and remove the stick and it is completely standard again.')
     return 0
