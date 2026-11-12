@@ -374,10 +374,15 @@ int openat(int dirfd, const char *path, int flags, ...) {
     return fd;
 }
 
+static void cf_knob_extra(char link, char kind, uint32_t a, uint32_t b, const void *data, uint32_t length);
 ssize_t read(int fd, void *buffer, size_t count) {
     ssize_t result;
     if (!original_read) original_read = (ReadFn)dlsym(RTLD_NEXT, "read");
     result = original_read(fd, buffer, count);
+    if ((fd == subucom_fd_a || fd == subucom_fd_b) && result > 0) {
+        if (!original_write) original_write = (WriteFn)dlsym(RTLD_NEXT, "write");
+        cf_knob_extra(fd == subucom_fd_a ? 'a' : 'b', 'R', 0u, (uint32_t)result, buffer, (uint32_t)result);
+    }
     if (fd == hidg_fd && result > 8 && hidg_traced < XZ_HIDG_TRACE_LIMIT) {
         const uint8_t *bytes = (const uint8_t *)buffer;
         char line[192];
@@ -474,6 +479,31 @@ static void cf_knob_capture(char link, const uint32_t *fields) {
     }
 }
 
+/* Centrifuge: everything else on the sub-MCU links (read(), write(), and any other ioctl), so the frames
+ * coming IN from the mixer - which carry the knob positions - can be found. Same record layout:
+ * 'K', link, kind ('R' read, 'W' write, 'I' other ioctl), 0, ms, a (ioctl request or 0), b (result), len, bytes.
+ * Each (link, kind, slot) is kept to one record per 50 ms. */
+static uint32_t cf_extra_last[2][3][8];
+static void cf_knob_extra(char link, char kind, uint32_t a, uint32_t b, const void *data, uint32_t length) {
+    uint32_t header[5], now, *last;
+    unsigned k = kind == 'R' ? 0u : kind == 'W' ? 1u : 2u;
+    if (cf_knob_fd < 0 || !data || length == 0) return;
+    if (length > 512u) length = 512u;
+    now = wallclock_ms();
+    last = &cf_extra_last[link == 'a' ? 0 : 1][k][(a ^ (a >> 8) ^ length) & 7u];
+    if (*last && now - *last < 50u) return;
+    if (cf_knob_written + 20u + length > CF_KNOB_CAP_BYTES) return;
+    *last = now ? now : 1u;
+    header[0] = (uint32_t)'K' | ((uint32_t)(unsigned char)link << 8) | ((uint32_t)(unsigned char)kind << 16);
+    header[1] = now; header[2] = a; header[3] = b; header[4] = length;
+    if (original_write(cf_knob_fd, header, sizeof(header)) != (ssize_t)sizeof(header)) return;
+    if (original_write(cf_knob_fd, data, length) != (ssize_t)length) {
+        static const uint8_t zero[512];
+        original_write(cf_knob_fd, zero, length);
+    }
+    cf_knob_written += 20u + length;
+}
+
 ssize_t write(int fd, const void *buffer, size_t count) {
     if (!original_write) original_write = (WriteFn)dlsym(RTLD_NEXT, "write");
     if ((fd == subucom_fd_a || fd == subucom_fd_b) && subucom_traced < XZ_SUBUCOM_TRACE_LIMIT) {
@@ -490,6 +520,8 @@ ssize_t write(int fd, const void *buffer, size_t count) {
         }
         log_line(line);
     }
+    if (fd == subucom_fd_a || fd == subucom_fd_b)
+        cf_knob_extra(fd == subucom_fd_a ? 'a' : 'b', 'W', 0u, (uint32_t)count, buffer, (uint32_t)count);
     return original_write(fd, buffer, count);
 }
 
@@ -526,6 +558,16 @@ int ioctl(int fd, unsigned long request, ...) {
         int result = original_ioctl(fd, request, argument);
         if ((fd == subucom_fd_a || fd == subucom_fd_b) && request == SUBUCOM_TRANSFER_IOCTL && argument)
             cf_knob_capture(fd == subucom_fd_a ? 'a' : 'b', (const uint32_t *)argument);
+        else if ((fd == subucom_fd_a || fd == subucom_fd_b) && (uintptr_t)argument >= 0x10000u) {
+            /* another request: keep the 32 bytes at its argument, and whatever its 3rd/4th words point at */
+            const uint32_t *words = (const uint32_t *)argument;
+            char link = fd == subucom_fd_a ? 'a' : 'b';
+            cf_knob_extra(link, 'I', (uint32_t)request, (uint32_t)result, argument, 32u);
+            if (((request >> 8) & 0xffu) == 0x70u && ((request >> 16) & 0x3fffu) >= 16u && words[1] && words[1] <= 512u) {
+                if (words[2] >= 0x10000u) cf_knob_extra(link, 'I', (uint32_t)request ^ 0x2u, words[0], (const void *)(uintptr_t)words[2], words[1]);
+                if (words[3] >= 0x10000u) cf_knob_extra(link, 'I', (uint32_t)request ^ 0x3u, words[0], (const void *)(uintptr_t)words[3], words[1]);
+            }
+        }
         return result;
     }
 }
