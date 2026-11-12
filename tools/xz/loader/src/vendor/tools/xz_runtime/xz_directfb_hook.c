@@ -235,6 +235,16 @@ static volatile int raw_touch_fd = -1;
 #define SUBUCOM_TRANSFER_IOCTL 0x40107000ul
 static volatile int subucom_fd_a = -1;
 static volatile int subucom_fd_b = -1;
+static volatile int cf_more_fd[3] = {-1, -1, -1};   /* Centrifuge: subucom_spi_rdy1.0 / rdy2.0 / rdy4.0, capture only */
+static char cf_link(int fd) {
+    if (fd < 0) return 0;
+    if (fd == subucom_fd_a) return 'a';
+    if (fd == subucom_fd_b) return 'b';
+    if (fd == cf_more_fd[0]) return 'c';
+    if (fd == cf_more_fd[1]) return 'd';
+    if (fd == cf_more_fd[2]) return 'e';
+    return 0;
+}
 static volatile int subucom_traced;
 /* Serato can set the jog-wheel logo, and the community protocol notes put that
  * behind an authenticated HID channel with an extended header for large
@@ -318,6 +328,12 @@ static void capture_touch_fd(const char *path, int fd) {
     } else if (strstr(path, "subucom_spi3.1")) {
         subucom_fd_b = fd;
         log_line("SUBUCOM_B_HOOKED");
+    } else if (strstr(path, "subucom_spi_rdy1")) {
+        cf_more_fd[0] = fd; log_line("SUBUCOM_RDY1_SEEN");
+    } else if (strstr(path, "subucom_spi_rdy2")) {
+        cf_more_fd[1] = fd; log_line("SUBUCOM_RDY2_SEEN");
+    } else if (strstr(path, "subucom_spi_rdy4")) {
+        cf_more_fd[2] = fd; log_line("SUBUCOM_RDY4_SEEN");
     } else if (strstr(path, "hidg")) {
         hidg_fd = fd;
         log_line("HIDG_HOOKED");
@@ -379,9 +395,9 @@ ssize_t read(int fd, void *buffer, size_t count) {
     ssize_t result;
     if (!original_read) original_read = (ReadFn)dlsym(RTLD_NEXT, "read");
     result = original_read(fd, buffer, count);
-    if ((fd == subucom_fd_a || fd == subucom_fd_b) && result > 0) {
+    if (result > 0 && cf_link(fd)) {
         if (!original_write) original_write = (WriteFn)dlsym(RTLD_NEXT, "write");
-        cf_knob_extra(fd == subucom_fd_a ? 'a' : 'b', 'R', 0u, (uint32_t)result, buffer, (uint32_t)result);
+        cf_knob_extra(cf_link(fd), 'R', 0u, (uint32_t)result, buffer, (uint32_t)result);
     }
     if (fd == hidg_fd && result > 8 && hidg_traced < XZ_HIDG_TRACE_LIMIT) {
         const uint8_t *bytes = (const uint8_t *)buffer;
@@ -441,6 +457,8 @@ ssize_t read(int fd, void *buffer, size_t count) {
  * so an unexpected non-pointer field fails with EFAULT instead of faulting.
  * Record: 'K', link, field, 0, ms, f0, f3, len (LE u32 each), then len bytes. */
 static uint32_t wallclock_ms(void);
+static void *cf_mixer_watch(void *unused);
+static pthread_mutex_t cf_knob_mutex = PTHREAD_MUTEX_INITIALIZER;
 #define CF_KNOB_CAP_BYTES (8u * 1024u * 1024u)
 static int cf_knob_fd = -2;
 static uint32_t cf_knob_last[2][2];
@@ -457,6 +475,10 @@ static void cf_knob_capture(char link, const uint32_t *fields) {
         cf_knob_fd = open("/dev/shm/cf-knobs.bin", O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
         if (cf_knob_fd < 0) { cf_knob_fd = -1; return; }
         log_line("CF_KNOB_CAPTURE_STARTED");
+        {
+            pthread_t watcher;
+            if (pthread_create(&watcher, NULL, cf_mixer_watch, NULL) == 0) pthread_detach(watcher);
+        }
     }
     now = wallclock_ms();
     for (which = 2; which <= 3; ++which) {
@@ -464,11 +486,12 @@ static void cf_knob_capture(char link, const uint32_t *fields) {
         uint32_t *last = &cf_knob_last[link == 'a' ? 0 : 1][which - 2];
         if (fields[which] < 0x10000u || cf_knob_bad[link == 'a' ? 0 : 1][which - 2]) continue;
         if (*last && now - *last < 50u) continue;
-        if (cf_knob_written + 20u + length > CF_KNOB_CAP_BYTES) { close(cf_knob_fd); cf_knob_fd = -1; return; }
+        if (cf_knob_written + 20u + length > CF_KNOB_CAP_BYTES) continue;
+        pthread_mutex_lock(&cf_knob_mutex);
         *last = now ? now : 1u;
         header[0] = (uint32_t)'K' | ((uint32_t)(unsigned char)link << 8) | ((uint32_t)which << 16);
         header[1] = now; header[2] = fields[0]; header[3] = fields[3]; header[4] = length;
-        if (original_write(cf_knob_fd, header, sizeof(header)) != (ssize_t)sizeof(header)) { close(cf_knob_fd); cf_knob_fd = -1; return; }
+        if (original_write(cf_knob_fd, header, sizeof(header)) != (ssize_t)sizeof(header)) { pthread_mutex_unlock(&cf_knob_mutex); continue; }
         if (original_write(cf_knob_fd, (const void *)(uintptr_t)fields[which], length) != (ssize_t)length) {
             /* Not a readable buffer: pad so records stay aligned, and stop probing this field. */
             static const uint8_t zero[512];
@@ -476,6 +499,7 @@ static void cf_knob_capture(char link, const uint32_t *fields) {
             cf_knob_bad[link == 'a' ? 0 : 1][which - 2] = 1;
         }
         cf_knob_written += 20u + length;
+        pthread_mutex_unlock(&cf_knob_mutex);
     }
 }
 
@@ -483,37 +507,68 @@ static void cf_knob_capture(char link, const uint32_t *fields) {
  * coming IN from the mixer - which carry the knob positions - can be found. Same record layout:
  * 'K', link, kind ('R' read, 'W' write, 'I' other ioctl), 0, ms, a (ioctl request or 0), b (result), len, bytes.
  * Each (link, kind, slot) is kept to one record per 50 ms. */
-static uint32_t cf_extra_last[2][3][8];
+static uint32_t cf_extra_last[8][3][8];
+static unsigned cf_li(char link) { unsigned i = (unsigned)(link - 'a'); return i < 8u ? i : 7u; }
 static void cf_knob_extra(char link, char kind, uint32_t a, uint32_t b, const void *data, uint32_t length) {
     uint32_t header[5], now, *last;
-    unsigned k = kind == 'R' ? 0u : kind == 'W' ? 1u : 2u;
+    unsigned k = kind == 'R' || kind == 'M' ? 0u : kind == 'W' ? 1u : 2u;
     if (cf_knob_fd < 0 || !data || length == 0) return;
     if (length > 512u) length = 512u;
     now = wallclock_ms();
     {
         /* Keep a frame when it differs from the last one kept in its slot (a knob moved), otherwise one per 50 ms.
          * All-zero reads are idle polls and only kept at the slow rate. */
-        static uint32_t sums[2][3][8];
+        static uint32_t sums[8][3][8];
         unsigned slot = (a ^ (a >> 8) ^ length) & 7u;
         const uint8_t *bytes = (const uint8_t *)data;
         uint32_t sum = 2166136261u, index, any = 0;
-        if (kind == 'R' || kind == 'W') {
+        if (kind == 'R' || kind == 'W' || kind == 'M') {
             for (index = 0; index < length; ++index) { sum = (sum ^ bytes[index]) * 16777619u; any |= bytes[index]; }
         }
-        last = &cf_extra_last[link == 'a' ? 0 : 1][k][slot];
-        if (*last && now - *last < 50u && (!any || sum == sums[link == 'a' ? 0 : 1][k][slot])) return;
-        if (any) sums[link == 'a' ? 0 : 1][k][slot] = sum;
+        last = &cf_extra_last[cf_li(link)][k][slot];
+        if (*last && now - *last < 50u && (!any || sum == sums[cf_li(link)][k][slot])) return;
+        if (any) sums[cf_li(link)][k][slot] = sum;
     }
-    if (cf_knob_written + 20u + length > CF_KNOB_CAP_BYTES) return;
     *last = now ? now : 1u;
     header[0] = (uint32_t)'K' | ((uint32_t)(unsigned char)link << 8) | ((uint32_t)(unsigned char)kind << 16);
     header[1] = now; header[2] = a; header[3] = b; header[4] = length;
-    if (original_write(cf_knob_fd, header, sizeof(header)) != (ssize_t)sizeof(header)) return;
-    if (original_write(cf_knob_fd, data, length) != (ssize_t)length) {
-        static const uint8_t zero[512];
-        original_write(cf_knob_fd, zero, length);
+    pthread_mutex_lock(&cf_knob_mutex);                 /* records from different threads must not interleave */
+    if (cf_knob_written + 20u + length <= CF_KNOB_CAP_BYTES
+        && original_write(cf_knob_fd, header, sizeof(header)) == (ssize_t)sizeof(header)) {
+        if (original_write(cf_knob_fd, data, length) != (ssize_t)length) {
+            static const uint8_t zero[512];
+            original_write(cf_knob_fd, zero, length);
+        }
+        cf_knob_written += 20u + length;
     }
-    cf_knob_written += 20u + length;
+    pthread_mutex_unlock(&cf_knob_mutex);
+}
+
+/* Centrifuge: the player's own copy of the last good frame from the mixer. ui::MixerCpuCom keeps it at
+ * object+0x140 (56 bytes: 52 of data and the CRC) and it is reached as *(*(0x01c8a308) + 0x50). Read through
+ * /proc/self/mem so a wrong pointer is an error, not a crash. Recorded as link 'm', kind 'M', on every change. */
+static void *cf_mixer_watch(void *unused) {
+    int mem = open("/proc/self/mem", O_RDONLY | O_CLOEXEC);
+    uint32_t manager = 0, mixer = 0, vtable = 0, announced = 0;
+    uint8_t frame[56];
+    (void)unused;
+    if (mem < 0) { log_line("CF_MIXER_WATCH_NO_MEM"); return NULL; }
+    for (;;) {
+        usleep(20000);
+        if (cf_knob_fd < 0) continue;
+        if (pread(mem, &manager, 4, (off_t)0x01c8a308u) != 4 || manager < 0x10000u) continue;
+        if (pread(mem, &mixer, 4, (off_t)(manager + 0x50u)) != 4 || mixer < 0x10000u) continue;
+        if (pread(mem, &vtable, 4, (off_t)mixer) != 4) continue;
+        if (pread(mem, frame, sizeof(frame), (off_t)(mixer + 0x140u)) != (ssize_t)sizeof(frame)) continue;
+        if (!announced) {
+            char line[96];
+            announced = 1;
+            snprintf(line, sizeof(line), "CF_MIXER_WATCH manager=%08x mixer=%08x vtable=%08x", manager, mixer, vtable);
+            log_line(line);
+        }
+        cf_knob_extra('m', 'M', vtable, mixer, frame, sizeof(frame));
+    }
+    return NULL;
 }
 
 ssize_t write(int fd, const void *buffer, size_t count) {
@@ -532,8 +587,8 @@ ssize_t write(int fd, const void *buffer, size_t count) {
         }
         log_line(line);
     }
-    if (fd == subucom_fd_a || fd == subucom_fd_b)
-        cf_knob_extra(fd == subucom_fd_a ? 'a' : 'b', 'W', 0u, (uint32_t)count, buffer, (uint32_t)count);
+    if (cf_link(fd))
+        cf_knob_extra(cf_link(fd), 'W', 0u, (uint32_t)count, buffer, (uint32_t)count);
     return original_write(fd, buffer, count);
 }
 
@@ -570,10 +625,10 @@ int ioctl(int fd, unsigned long request, ...) {
         int result = original_ioctl(fd, request, argument);
         if ((fd == subucom_fd_a || fd == subucom_fd_b) && request == SUBUCOM_TRANSFER_IOCTL && argument)
             cf_knob_capture(fd == subucom_fd_a ? 'a' : 'b', (const uint32_t *)argument);
-        else if ((fd == subucom_fd_a || fd == subucom_fd_b) && (uintptr_t)argument >= 0x10000u) {
+        else if (cf_link(fd) && (uintptr_t)argument >= 0x10000u) {
             /* another request: keep the 32 bytes at its argument, and whatever its 3rd/4th words point at */
             const uint32_t *words = (const uint32_t *)argument;
-            char link = fd == subucom_fd_a ? 'a' : 'b';
+            char link = cf_link(fd);
             cf_knob_extra(link, 'I', (uint32_t)request, (uint32_t)result, argument, 32u);
             if (((request >> 8) & 0xffu) == 0x70u && ((request >> 16) & 0x3fffu) >= 16u && words[1] && words[1] <= 512u) {
                 if (words[2] >= 0x10000u) cf_knob_extra(link, 'I', (uint32_t)request ^ 0x2u, words[0], (const void *)(uintptr_t)words[2], words[1]);
