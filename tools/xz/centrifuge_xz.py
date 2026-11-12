@@ -686,6 +686,14 @@ def loader(volume: str, force: bool = False) -> int:
         say(f'{dest} already exists. Run from the menu to replace it.')
         return 2
     files = loader_payload()
+    # The deck cannot run a script with Windows line endings (a checkout on Windows can add them), so make sure
+    # every text file in the image has Unix ones before it is written.
+    for name in list(files):
+        if not name.endswith(('.so', '.rgb565')) and b'\0' not in files[name]:
+            files[name] = files[name].replace(b'\r\n', b'\n')
+    if not files['autoexec.sh'].startswith(b'#!/bin/sh\n') or b'\r' in files['autoexec.sh']:
+        say('The loader start-up script in this build is damaged. Nothing was written.')
+        return 2
     key = boot_key()
     say('Preparing the player program (from the official 1.26 firmware)')
     files['rbp.patched'] = patched_rbp(stock_rbp(key))

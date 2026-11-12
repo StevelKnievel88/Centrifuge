@@ -1,0 +1,4 @@
+# The XDJ-XZ runs these as they are: never convert their line endings.
+tools/xz/loader/payload/** -text
+tools/xz/bin/** -text
+*.sh text eol=lf
