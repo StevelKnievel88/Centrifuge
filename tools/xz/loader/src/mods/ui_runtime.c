@@ -547,7 +547,7 @@ int xz_ui_runtime_start(int audio_ready, int key_ready, int stems_enabled) {
     __atomic_store_n(&started, 1, __ATOMIC_RELEASE);
     if (xz_native_inline_start(inline_enabled,render_inline,NULL)) xz_log("Native inline stems unavailable: window ABI guard failed");
     if (xz_native_led_start()) xz_log("Native pad LED feedback unavailable");
-    if (xz_native_skin_start(model.theme)) xz_log("Native whole-interface theme adapter unavailable");
+    if (xz_native_skin_start(0)) xz_log("Native whole-interface theme adapter unavailable");
     xz_log("UI touch adapter installed; MODS badge opens the panel");
     return 0;
 }

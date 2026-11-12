@@ -330,8 +330,12 @@ if [ -f /dev/shm/cf-knob-capture ] && [ ! -f /tmp/cf_knob_copier ]; then
     touch /tmp/cf_knob_copier
     (
         cd /
-        for WAIT in 75 75 90 120 180; do
-            sleep "$WAIT"
+        # Every 15 seconds for 20 minutes, so whenever the deck is switched off the stick holds all but the
+        # last few seconds of the capture.
+        COUNT=0
+        while [ "$COUNT" -lt 80 ]; do
+            COUNT=$((COUNT + 1))
+            sleep 15
             mount -o remount,rw "$USB" 2>/dev/null
             cp /dev/shm/cf-knobs.bin "$OUT/knob-capture.bin" 2>/dev/null
             cp /tmp/xz_directfb_hook.log "$OUT/hook-log.txt" 2>/dev/null
