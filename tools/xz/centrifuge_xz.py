@@ -382,20 +382,16 @@ SCREEN_SH = (
     "(\n"
     "  cd /\n"
     "  sleep 12\n"                      # let the deck finish booting and own the screen first
+    # Log to /dev/shm (NOT the USB) so the stick is never held open and can be pulled/ejected freely.
+    "  LOG=/dev/shm/cf-screen.log\n"
+    "  /dev/shm/cfxz-screen /dev/shm/cf-screen.565 \"$LOG\" >/dev/null 2>&1 &\n"
+    # Copy the startup/diagnostic log to the stick ONCE (after it has written its probe + discovery lines),
+    # then stop touching the USB entirely so nothing keeps it busy.
+    "  sleep 6\n"
     "  mount -o remount,rw \"$USB\" 2>/dev/null\n"
-    "  {\n"
-    "    echo '--- /proc/fb ---'; cat /proc/fb 2>/dev/null\n"
-    "    for d in /sys/class/graphics/fb0 /sys/class/graphics/fb1; do\n"
-    "      echo \"--- $d ---\"\n"
-    "      echo \"virtual_size: $(cat $d/virtual_size 2>/dev/null)\"\n"
-    "      echo \"bits_per_pixel: $(cat $d/bits_per_pixel 2>/dev/null)\"\n"
-    "      echo \"stride: $(cat $d/stride 2>/dev/null)\"\n"
-    "      echo \"modes: $(cat $d/modes 2>/dev/null)\"\n"
-    "      echo \"blank: $(cat $d/blank 2>/dev/null)\"\n"
-    "    done\n"
-    "  } > \"$USB/cf-screen-sys.txt\" 2>&1\n"
+    "  cp \"$LOG\" \"$USB/cf-screen.log\" 2>/dev/null\n"
     "  sync\n"
-    "  /dev/shm/cfxz-screen /dev/shm/cf-screen.565 \"$USB/cf-screen.log\" >/dev/null 2>&1\n"
+    "  mount -o remount,ro \"$USB\" 2>/dev/null\n"
     ") &\n"
     "exit 0\n"
 ).encode('ascii')
@@ -429,7 +425,8 @@ def screen(volume: str, force: bool = False) -> int:
     say('rock steady, with a spinning platter and a moving playhead. To get a clean, flicker-free')
     say('display it pauses the stock player while the Centrifuge screen is up, so the deck itself is')
     say('frozen during this prototype (no browsing/playback yet - that comes with the standalone audio).')
-    say('Everything is RAM-only: power off and remove the stick and the deck is 100% back to stock.')
+    say('The POWER button still works: press it to shut down cleanly as normal. Everything is RAM-only,')
+    say('so after it powers off, remove the stick and the deck is 100% back to stock.')
     return 0
 
 
