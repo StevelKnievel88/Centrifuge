@@ -589,6 +589,8 @@ ssize_t write(int fd, const void *buffer, size_t count) {
     }
     if (cf_link(fd))
         cf_knob_extra(cf_link(fd), 'W', 0u, (uint32_t)count, buffer, (uint32_t)count);
+    else if (fd >= 0 && fd == hidg_fd)                  /* what the player reports to a connected computer */
+        cf_knob_extra('h', 'W', 0u, (uint32_t)count, buffer, (uint32_t)count);
     return original_write(fd, buffer, count);
 }
 
