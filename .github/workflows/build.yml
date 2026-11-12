@@ -261,7 +261,7 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --quiet pyinstaller==6.11.1 cryptography pycdlib inflate64
-          python -m PyInstaller --onefile --console --name "Centrifuge XZ Tools" --distpath xztools --workpath xzbuild --specpath xzbuild --add-data "${{ github.workspace }}\tools\xz\bin\cfxz-peek;bin" --add-data "${{ github.workspace }}\tools\xz\bin\centrifuge-splash.rgb565;bin" --add-data "${{ github.workspace }}\tools\xz\bin\cfxz-screen;bin" --add-data "${{ github.workspace }}\tools\xz\bin\centrifuge-screen.rgb565;bin" tools/xz/centrifuge_xz.py
+          python -m PyInstaller --onefile --console --name "Centrifuge XZ Tools" --distpath xztools --workpath xzbuild --specpath xzbuild --add-data "${{ github.workspace }}\tools\xz\bin\cfxz-peek;bin" --add-data "${{ github.workspace }}\tools\xz\bin\centrifuge-splash.rgb565;bin" --add-data "${{ github.workspace }}\tools\xz\bin\cfxz-screen;bin" --add-data "${{ github.workspace }}\tools\xz\bin\centrifuge-screen.rgb565;bin" --add-data "${{ github.workspace }}\tools\xz\loader\payload;loader" tools/xz/centrifuge_xz.py
 
       - name: Package
         shell: pwsh

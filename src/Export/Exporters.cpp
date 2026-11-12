@@ -260,10 +260,9 @@ bool exportToUsb (const juce::File& root, const std::vector<ExportItem>& items, 
         if (it.key.isNotEmpty())
             extras->setProperty (it.key, it.centrifuge.toVar());
 
-        // Stems for the XDJ-XZ (XZ Mods loader). Hashed from the copy on the stick, so it must stay unchanged.
+        // Stems for the XDJ-XZ (Centrifuge loader). Hashed from the copy on the stick, so it must stay unchanged.
         if (xz != nullptr && xz->loadStems)
         {
-            if (! XzStems::isSupportedFile (dest)) { ++xzSkipped["not WAV/FLAC"]; continue; }
             if (progress.report && ! progress.report ((float) i / (float) juce::jmax<size_t> (1, items.size()), "XZ stems: " + t.displayArtistTitle()))
             {
                 error = "Export cancelled";
@@ -275,7 +274,9 @@ bool exportToUsb (const juce::File& root, const std::vector<ExportItem>& items, 
             auto stems = xz->loadStems (t, *audio);
             if (stems == nullptr) { ++xzNoStems; continue; }
             juce::String reason;
-            switch (XzStems::write (root, dest, *audio, *stems, reason))
+            // Short WAV/FLAC tracks use the small in-memory layout; everything else is streamed (no 6:20 limit).
+            switch (XzStems::fitsShortLayout (dest, *audio) ? XzStems::write (root, dest, *audio, *stems, reason)
+                                                            : XzStems::writePaged (root, dest, *audio, *stems, reason))
             {
                 case XzStems::Result::written: ++xzWritten; break;
                 case XzStems::Result::skipped: ++xzSkipped[reason]; break;

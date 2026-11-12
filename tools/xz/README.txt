@@ -22,7 +22,18 @@ Double-click "Centrifuge XZ Tools.exe" for a menu:
          LOW) across their range, back and forth, for about a minute.
        - Switch off, put the stick in the PC, and send Claude the "Centrifuge-XZ-recon" folder (zip it).
 
-  Both only read information. They do NOT change the player, the firmware, or anything on the XZ, and run
+  6. Write the CENTRIFUGE LOADER to a USB stick
+     The real thing: the deck runs as normal with the Centrifuge menu, stems and key shift on top.
+       - Export your music to the stick from Centrifuge first (Export to USB, with
+         "Also write stems for the XDJ-XZ" ticked) so the tracks and their stems are on it.
+       - Then run option 6 on the same stick. Put it in the XZ while it's OFF and switch on.
+       - MODS (top right of the deck screen) opens the Centrifuge menu. Tracks with stems show STEMS;
+         the faders are DRUM/BASS, INST and VOCALS. Power button and eject work as normal.
+     Knob capture: about a minute after the normal screen appears, turn these knobs slowly, one at a time,
+     fully left then fully right, about 3 seconds each: channel 3 TRIM, HI, MID, LOW, then channel 4
+     TRIM, HI, MID, LOW. Wait 3 more minutes, power off, and send Claude the "Centrifuge\loader-log" folder.
+
+  Options 2 and 3 only read information. They do NOT change the player, the firmware, or anything on the XZ, and run
   from RAM only - boot without the stick and the XZ is completely standard. The tool won't overwrite an
   existing autoexec.bin unless you tell it to.
 
@@ -33,5 +44,7 @@ Downloads are cached in %LOCALAPPDATA%\Centrifuge\xz. Windows may warn that the 
 
 Credits
 -------
+The Centrifuge loader (option 6) is built on the XZ Mods runtime by OpticMystic / VJ.Tools, used under
+the MIT and MPL-2.0 licences. Its source, with Centrifuge's changes, is in tools/xz/loader/src.
 The firmware download, boot key and image authoring follow the XZ Mods builder by OpticMystic
 (https://github.com/OpticMystic/xdj-xz-toolkit, MIT licence). Thank you.

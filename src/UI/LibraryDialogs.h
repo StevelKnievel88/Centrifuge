@@ -57,7 +57,7 @@ private:
 
     juce::ComboBox what, version;
     juce::TextEditor path;
-    juce::ToggleButton xzStems { "Also write stems for the XDJ-XZ (XZ Mods loader)" };
+    juce::ToggleButton xzStems { "Also write stems for the XDJ-XZ (Centrifuge loader)" };
     juce::TextButton choose { "CHOOSE..." }, go { "EXPORT" }, cancel { "CLOSE" };
     std::unique_ptr<juce::FileChooser> chooser;
 

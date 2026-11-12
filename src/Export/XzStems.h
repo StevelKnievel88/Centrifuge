@@ -38,6 +38,23 @@ namespace XzStems
         `stems` must be complete and aligned with it. `reason` says why on skipped / failed. */
     Result write (const juce::File& stickRoot, const juce::File& trackOnStick, const TrackAudio& audio,
                   const StemAudio& stems, juce::String& reason);
+
+    /** True if the short in-memory layout above can hold this track (WAV/FLAC, 44.1 kHz, up to 6:20). */
+    bool fitsShortLayout (const juce::File& trackOnStick, const TrackAudio& audio);
+
+    /** The streamed layout, for everything the short one can't hold: any length, any file type.
+        The deck reads it in pages straight off the stick instead of loading it all, so there is no 6:20 limit.
+        It is much bigger on the stick: seven 96 kHz stereo files per track (each fader on its own, every pair,
+        and the full mix the deck lines the stems up against) - roughly 2.5 MB a second before compression.
+
+        On the stick (the track must be under <stick>/Contents):
+          CDJMODS/index.json                              which bundle belongs to which track
+          CDJMODS/stems/<bundle>/overcue-manifest.json
+          CDJMODS/stems/<bundle>/stems-sidecar-<role>.s16le.pgz
+          CDJMODS/stems/<bundle>/stems-<role>-waveform.EXT   (drums, harmonics, vocal)
+        Roles: drums = Drums + Bass, harmonics = Inst, vocal = Vocal. */
+    Result writePaged (const juce::File& stickRoot, const juce::File& trackOnStick, const TrackAudio& audio,
+                       const StemAudio& stems, juce::String& reason);
 }
 
 } // namespace orbit

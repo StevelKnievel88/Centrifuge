@@ -10,6 +10,7 @@
 #include "Stems/DemucsSeparator.h"
 #include "Library/CentrifugeLibrary.h"
 #include "Export/Exporters.h"
+#include "Export/XzStems.h"
 #include "Audio/TrackAnalyser.h"
 #include "Library/TagReader.h"
 #include "Library/FileImporter.h"
@@ -119,6 +120,52 @@ static int runCommandLine (const juce::StringArray& args)
             if (! ok || back.genre != "Psytrance") ++bad;
         }
         return bad;
+    }
+
+    if (args.contains ("--xzpaged-test"))
+    {
+        // Writes a made-up track + stems to <dir>/Contents and packs them in the streamed XZ layout, for checking
+        // against the loader's own decoder. --seconds N (default 20), --rate R (default 44100).
+        const auto root = juce::File (argAfter ("--xzpaged-test"));
+        const double rate = argAfter ("--rate").isNotEmpty() ? argAfter ("--rate").getDoubleValue() : 44100.0;
+        const double seconds = argAfter ("--seconds").isNotEmpty() ? argAfter ("--seconds").getDoubleValue() : 20.0;
+        const auto n = (int64_t) (rate * seconds);
+        const double freqs[4] = { 110.0, 55.0, 440.0, 1000.0 };   // drums, bass, inst, vocal
+        StemAudio::Ptr stems = new StemAudio();
+        TrackAudio::Ptr audio = new TrackAudio();
+        stems->sampleRate = audio->sampleRate = rate;
+        stems->numFrames = audio->numFrames = n;
+        audio->left.assign ((size_t) n, 0.0f);
+        audio->right.assign ((size_t) n, 0.0f);
+        for (int s = 0; s < 4; ++s)
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                auto& v = stems->channels[(size_t) (s * 2 + ch)];
+                v.resize ((size_t) n);
+                for (int64_t i = 0; i < n; ++i)
+                {
+                    const float x = 0.2f * (float) std::sin (juce::MathConstants<double>::twoPi * freqs[s] * (double) i / rate);
+                    v[(size_t) i] = StemAudio::fromFloat (x);
+                    (ch == 0 ? audio->left : audio->right)[(size_t) i] += x;
+                }
+            }
+        stems->validFrames = n;
+        const auto track = root.getChildFile ("Contents").getChildFile ("Test Artist").getChildFile (juce::String::fromUTF8 ("Tr\xc3\xa4" "ck one.wav"));
+        track.getParentDirectory().createDirectory();
+        {
+            juce::WavAudioFormat wav;
+            track.deleteFile();
+            std::unique_ptr<juce::OutputStream> os = std::make_unique<juce::FileOutputStream> (track);
+            auto w = wav.createWriterFor (os, juce::AudioFormatWriterOptions{}.withSampleRate (rate).withNumChannels (2).withBitsPerSample (16));
+            if (w == nullptr) return 2;
+            const float* chans[] = { audio->left.data(), audio->right.data() };
+            w->writeFromFloatArrays (chans, 2, (int) n);
+        }
+        juce::String reason;
+        const auto res = XzStems::writePaged (root, track, *audio, *stems, reason);
+        std::cout << (res == XzStems::Result::written ? "written" : res == XzStems::Result::skipped ? "skipped: " : "failed: ") << reason
+                  << "\n" << track.getFullPathName() << std::endl;
+        return res == XzStems::Result::written ? 0 : 1;
     }
 
     if (args.contains ("--separate"))

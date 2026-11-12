@@ -293,9 +293,19 @@ def author_autoexec(files: dict, key: bytes) -> bytes:
     iso = pycdlib.PyCdlib()
     iso.new(interchange_level=3, vol_ident='UsbAuto', rock_ridge='1.09')
     n = 0
+    dirs = {'': ''}                                      # folder path -> its ISO path ("a/b" names make folders)
+    for name in sorted(files):
+        parts = name.split('/')[:-1]
+        for depth in range(1, len(parts) + 1):
+            folder = '/'.join(parts[:depth])
+            if folder not in dirs:
+                n += 1
+                dirs[folder] = dirs['/'.join(parts[:depth - 1])] + f'/D{n:07d}'
+                iso.add_directory(iso_path=dirs[folder], rr_name=parts[depth - 1], file_mode=0o40555)
     for name, data in files.items():
         n += 1
-        iso.add_fp(io.BytesIO(data), len(data), f'/F{n:07d};1', rr_name=name, file_mode=0o100755)
+        folder, _, leaf = name.rpartition('/')
+        iso.add_fp(io.BytesIO(data), len(data), dirs[folder] + f'/F{n:07d};1', rr_name=leaf, file_mode=0o100755)
     out = io.BytesIO()
     iso.write_fp(out)
     iso.close()
@@ -580,6 +590,141 @@ def testloader(volume: str, force: bool = False) -> int:
     return 0
 
 
+PATCHED_RBP_MD5 = '6a7ccb454e52afa26a73f3380706c9ca'
+# The two small changes the XZ Mods runtime needs in the 1.26 player (offset, bytes before, bytes after).
+RBP_PATCHES = ((0x132d0c, '440050e30100a083', '0300a0e31eff2fe1'), (0xd1fb8, '800080e0ac3c07e3', '0100a0e31eff2fe1'))
+
+
+def stock_rbp(key: bytes) -> bytes:
+    """The XDJ-XZ 1.26 player program, taken from the official firmware download (cached after the first time)."""
+    cached = data_root() / 'rbp-1.26.bin'
+    if cached.is_file():
+        data = cached.read_bytes()
+        if hashlib.sha256(data).hexdigest() == STOCK_RBP_SHA256:
+            return data
+    say('Getting the official XDJ-XZ 1.26 firmware from AlphaTheta (about 70 MB)')
+    fw = download(FIRMWARE, data_root() / 'firmware')
+    with zipfile.ZipFile(fw) as z:
+        upd = [i for i in z.infolist() if i.filename.lower().endswith('.upd')]
+        if len(upd) != 1:
+            raise ValueError('Unexpected firmware ZIP')
+        data = z.read(upd[0])
+    data = decrypt(data[:len(data) // 512 * 512], key)
+    if data[32769:32774] != b'CD001':
+        raise ValueError('The firmware did not decrypt - check the downloads')
+    iso = pycdlib.PyCdlib()
+    iso.open_fp(io.BytesIO(data))
+    found = None
+    try:
+        for directory, _, files in iso.walk(rr_path='/'):
+            for name in files:
+                path = directory.rstrip('/') + '/' + name
+                if name != 'rbp' and not name.endswith(('.tar.gz', '.tgz', '.tar')) and name != 'pdj':
+                    continue
+                buf = io.BytesIO()
+                try:
+                    iso.get_file_from_iso_fp(buf, rr_path=path)
+                except Exception:  # noqa: BLE001 - symlinks have no data
+                    continue
+                content = buf.getvalue()
+                if name == 'rbp' and hashlib.sha256(content).hexdigest() == STOCK_RBP_SHA256:
+                    found = content
+                    break
+                try:
+                    with tarfile.open(fileobj=io.BytesIO(content), mode='r:*') as t:
+                        for m in t:
+                            if m.isfile() and m.name.rsplit('/', 1)[-1] == 'rbp' and m.size <= 16 * 1024 * 1024:
+                                body = t.extractfile(m).read()
+                                if hashlib.sha256(body).hexdigest() == STOCK_RBP_SHA256:
+                                    found = body
+                                    break
+                except tarfile.TarError:
+                    pass
+                if found:
+                    break
+            if found:
+                break
+    finally:
+        iso.close()
+    if found is None:
+        raise ValueError('The 1.26 player program was not found in the firmware download')
+    cached.write_bytes(found)
+    return found
+
+
+def patched_rbp(stock: bytes) -> bytes:
+    data = bytearray(stock)
+    for offset, before, after in RBP_PATCHES:
+        expected = bytes.fromhex(before)
+        if bytes(data[offset:offset + len(expected)]) != expected:
+            raise ValueError('The player program is not the expected 1.26 build')
+        data[offset:offset + len(expected)] = bytes.fromhex(after)
+    if hashlib.md5(bytes(data)).hexdigest() != PATCHED_RBP_MD5:
+        raise ValueError('The patched player program did not come out as expected')
+    return bytes(data)
+
+
+def loader_payload() -> dict:
+    """The bundled Centrifuge loader files (name -> bytes), built by tools/xz/loader/build.py."""
+    base = getattr(sys, '_MEIPASS', None)
+    root = (Path(base) / 'loader') if base else (Path(__file__).resolve().parent / 'loader' / 'payload')
+    files = {p.relative_to(root).as_posix(): p.read_bytes() for p in sorted(root.rglob('*')) if p.is_file()}
+    for needed in ('autoexec.sh', 'tools/libxz-mods.so', 'tools/libxz-directfb-hook.so', 'mods-mode'):
+        if needed not in files:
+            raise ValueError('The Centrifuge loader files are missing from this build')
+    return files
+
+
+def loader(volume: str, force: bool = False) -> int:
+    say('Centrifuge XZ tools - write the CENTRIFUGE LOADER to a USB stick\n')
+    vol = Path(volume)
+    if not vol.is_dir():
+        say(f'That drive / folder is not there: {volume}')
+        return 2
+    dest = vol / 'autoexec.bin'
+    if dest.exists() and not force:
+        say(f'{dest} already exists. Run from the menu to replace it.')
+        return 2
+    files = loader_payload()
+    key = boot_key()
+    say('Preparing the player program (from the official 1.26 firmware)')
+    files['rbp.patched'] = patched_rbp(stock_rbp(key))
+    for name in ('rbp.patched', 'tools/libxz-mods.so', 'tools/libxz-directfb-hook.so'):
+        files[name + '.md5'] = (hashlib.md5(files[name]).hexdigest() + '  ' + name.rsplit('/', 1)[-1] + '\n').encode('ascii')
+    say('Building the Centrifuge loader')
+    image = author_autoexec(files, key)
+
+    # read it back the way the deck will, and check every file
+    plain = decrypt(image, key)
+    iso = pycdlib.PyCdlib()
+    iso.open_fp(io.BytesIO(plain))
+    try:
+        for name, data in files.items():
+            buf = io.BytesIO()
+            iso.get_file_from_iso_fp(buf, rr_path='/' + name)
+            if buf.getvalue() != data:
+                raise ValueError(f'The loader image failed its check ({name})')
+    finally:
+        iso.close()
+
+    tmp = vol / '.centrifuge-autoexec.tmp'
+    tmp.write_bytes(image)
+    os.replace(tmp, dest)
+    say(f'\nWritten and checked: {dest}  ({len(image) // (1024 * 1024)} MB)')
+    say('\nThis is the Centrifuge loader: the deck runs as normal with the Centrifuge menu, stems and key shift on top.')
+    say('Put the stick in the XZ while it is OFF, then switch on. Start-up takes a little longer than usual.')
+    say('  - MODS (top right of the screen) opens the Centrifuge menu.')
+    say('  - Tracks with stems on the stick (export them from Centrifuge with "Also write stems for the XDJ-XZ")')
+    say('    show STEMS; the faders are DRUM/BASS, INST and VOCALS.')
+    say('  - The power button, eject and everything else work as normal.')
+    say('\nKnob capture for Claude: about a minute after the normal screen appears, turn these knobs slowly, one at')
+    say('a time, fully left then fully right, about 3 seconds each, in this order:')
+    say('  channel 3: TRIM, HI, MID, LOW      then channel 4: TRIM, HI, MID, LOW')
+    say('Wait 3 more minutes, power off with the button, and send the "Centrifuge\\loader-log" folder from the stick.')
+    say('\nNothing is installed on the deck: power off and remove the stick and it is completely standard again.')
+    return 0
+
+
 def menu() -> int:
     say('Centrifuge XZ Tools')
     say('===================\n')
@@ -588,11 +733,12 @@ def menu() -> int:
     say('  3. Write a RECON loader to a USB stick (reads hardware info + knob values)')
     say('  4. Write a SPLASH loader to a USB stick (Centrifuge logo on the screen at boot)')
     say('  5. Write the SCREEN prototype to a USB stick (live Centrifuge screen on the deck)')
+    say('  6. Write the CENTRIFUGE LOADER to a USB stick (Centrifuge menu, stems and key shift on the deck)')
     say('')
-    choice = input('Choose 1-5 (or press Enter to cancel): ').strip()
+    choice = input('Choose 1-6 (or press Enter to cancel): ').strip()
     if choice == '1':
         return extract()
-    if choice in ('2', '3', '4', '5'):
+    if choice in ('2', '3', '4', '5', '6'):
         vol = input('USB drive to write to, e.g. E:\\  : ').strip().strip('"')
         force = False
         if vol and (Path(vol) / 'autoexec.bin').exists():
@@ -600,7 +746,7 @@ def menu() -> int:
             if not force:
                 say('Left it as it is.')
                 return 0
-        return {'2': testloader, '3': recon, '4': splash, '5': screen}[choice](vol, force)
+        return {'2': testloader, '3': recon, '4': splash, '5': screen, '6': loader}[choice](vol, force)
     say('Cancelled.')
     return 0
 
@@ -620,6 +766,8 @@ def main() -> int:
             return splash(args[1])
         if args[0] == 'screen' and len(args) >= 2:
             return screen(args[1])
+        if args[0] == 'loader' and len(args) >= 2:
+            return loader(args[1])
         say(__doc__)
         return 1
     except Exception as e:  # noqa: BLE001
