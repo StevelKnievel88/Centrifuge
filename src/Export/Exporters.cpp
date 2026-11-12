@@ -274,12 +274,21 @@ bool exportToUsb (const juce::File& root, const std::vector<ExportItem>& items, 
             auto stems = xz->loadStems (t, *audio);
             if (stems == nullptr) { ++xzNoStems; continue; }
             juce::String reason;
+            const auto withinTrack = [&] (float f)
+            {
+                return ! progress.report
+                    || progress.report (((float) i + f) / (float) juce::jmax<size_t> (1, items.size()), "XZ stems: " + t.displayArtistTitle());
+            };
+            if (! withinTrack (0.0f)) { error = "Export cancelled"; return false; }
             // Short WAV/FLAC tracks use the small in-memory layout; everything else is streamed (no 6:20 limit).
             switch (XzStems::fitsShortLayout (dest, *audio) ? XzStems::write (root, dest, *audio, *stems, reason)
-                                                            : XzStems::writePaged (root, dest, *audio, *stems, reason))
+                                                            : XzStems::writePaged (root, dest, *audio, *stems, reason, withinTrack))
             {
                 case XzStems::Result::written: ++xzWritten; break;
-                case XzStems::Result::skipped: ++xzSkipped[reason]; break;
+                case XzStems::Result::skipped:
+                    if (reason == "stopped") { error = "Export cancelled"; return false; }
+                    ++xzSkipped[reason];
+                    break;
                 case XzStems::Result::failed:  ++xzFailed; break;
             }
         }

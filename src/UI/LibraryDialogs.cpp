@@ -51,7 +51,7 @@ ExportView::ExportView (CentrifugeLibrary& l, AudioFileLoader& fl, StemManager& 
         });
     };
     go.onClick = [this] { if (! running) start(); };
-    cancel.onClick = [this] { if (running) stop = true; else close(); };
+    cancel.onClick = [this] { if (running) { stop = true; cancel.setButtonText ("STOPPING..."); } else close(); };
 }
 
 ExportView::~ExportView()

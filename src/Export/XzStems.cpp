@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <thread>
 
 namespace orbit
 {
@@ -217,7 +218,7 @@ namespace
         {
             juce::MemoryOutputStream packed;
             {
-                juce::GZIPCompressorOutputStream z (packed, 6);   // zlib format
+                juce::GZIPCompressorOutputStream z (packed, 1);   // zlib format; music barely shrinks, so favour speed
                 z.write (raw, (size_t) bytes);
             }
             const juce::SHA256 sum (raw, (size_t) bytes);
@@ -267,8 +268,9 @@ namespace
 }
 
 Result writePaged (const juce::File& stickRoot, const juce::File& track, const TrackAudio& audio,
-                   const StemAudio& stems, juce::String& reason)
+                   const StemAudio& stems, juce::String& reason, const std::function<bool (float)>& progress)
 {
+    auto keepGoing = [&progress] (float f) { return ! progress || progress (f); };
     if (stems.numFrames != audio.numFrames || ! stems.isComplete()) { reason = "stems incomplete"; return Result::skipped; }
     if (audio.sampleRate < 8000.0 || audio.numFrames <= 0) { reason = "empty track"; return Result::skipped; }
     const auto contents = stickRoot.getChildFile ("Contents");
@@ -280,6 +282,7 @@ Result writePaged (const juce::File& stickRoot, const juce::File& track, const T
     if (outFrames < 1 || outFrames > 500000000) { reason = "too long"; return Result::skipped; }
     const int pageCount = (int) ((outFrames + pageFrames - 1) / pageFrames);
 
+    if (! keepGoing (0.0f)) { reason = "stopped"; return Result::skipped; }
     const juce::String sourceSha = juce::SHA256 (track).toHexString();
     if (sourceSha.length() != 64) { reason = "couldn't read " + track.getFileName(); return Result::failed; }
     const juce::String bundle = sourceSha.substring (0, 16);
@@ -311,6 +314,7 @@ Result writePaged (const juce::File& stickRoot, const juce::File& track, const T
             gain[(size_t) r] = peak[(size_t) r] > 0.94f ? 0.94f / peak[(size_t) r] : 1.0f;
     }
 
+    if (! keepGoing (0.03f)) { reason = "stopped"; return Result::skipped; }
     auto parent = stickRoot.getChildFile ("CDJMODS").getChildFile ("stems");
     if (! parent.createDirectory()) { reason = "couldn't create " + parent.getFullPathName(); return Result::failed; }
     auto tmp = parent.getChildFile (".tmp-" + bundle);
@@ -329,7 +333,8 @@ Result writePaged (const juce::File& stickRoot, const juce::File& track, const T
     std::array<std::vector<float>, 6> in, out;
     for (auto& v : in) v.resize ((size_t) inBlock);
     for (auto& v : out) v.resize ((size_t) pageFrames);
-    std::vector<unsigned char> page ((size_t) pageBytes);
+    std::array<std::vector<unsigned char>, numRoles> pages;
+    for (auto& pg : pages) pg.resize ((size_t) pageBytes);
 
     const int waveStep = pagedRate / waveEntriesPerSecond;
     std::array<std::vector<unsigned char>, 3> wave;
@@ -340,32 +345,54 @@ Result writePaged (const juce::File& stickRoot, const juce::File& track, const T
     for (juce::int64 done = 0; done < outFrames; done += pageFrames)
     {
         const int frames = (int) std::min<juce::int64> (pageFrames, outFrames - done);
-        int used = 0;
-        for (int c = 0; c < 6; ++c)
+        if (! keepGoing (0.05f + 0.93f * (float) ((double) done / (double) outFrames)))
         {
-            auto& src = in[(size_t) c];
-            for (int i = 0; i < inBlock; ++i)
-            {
-                const auto at = inPos + i;
-                src[(size_t) i] = at < audio.numFrames ? base (c / 2, c % 2, (size_t) at) : 0.0f;
-            }
-            used = resamplers[(size_t) c].process (ratio, src.data(), out[(size_t) c].data(), frames);
+            for (auto& f : files) f.out.reset();
+            tmp.deleteRecursively();
+            reason = "stopped";
+            return Result::skipped;
         }
-        inPos += used;
 
-        for (int r = 0; r < numRoles; ++r)
+        // The six channels are resampled side by side, then the seven files are packed side by side.
+        std::array<int, 6> usedBy {};
         {
-            const float k = gain[(size_t) r] * 32767.0f;
-            for (int i = 0; i < frames; ++i)
-                for (int ch = 0; ch < 2; ++ch)
+            std::array<std::thread, 6> workers;
+            for (int c = 0; c < 6; ++c)
+                workers[(size_t) c] = std::thread ([&, c]
                 {
-                    float v = 0.0f;
-                    for (int f = 0; f < 3; ++f) if (roles[r].mask & (1u << f)) v += out[(size_t) (f * 2 + ch)][(size_t) i];
-                    const int s = juce::jlimit (-32767, 32767, (int) std::lrint (v * k));
-                    page[(size_t) (i * 4 + ch * 2)] = (unsigned char) (s & 0xff);
-                    page[(size_t) (i * 4 + ch * 2 + 1)] = (unsigned char) ((s >> 8) & 0xff);
-                }
-            if (! files[(size_t) r].addPage (page.data(), frames * 4)) return fail ("couldn't write to the stick (is it full?)");
+                    auto& src = in[(size_t) c];
+                    for (int i = 0; i < inBlock; ++i)
+                    {
+                        const auto at = inPos + i;
+                        src[(size_t) i] = at < audio.numFrames ? base (c / 2, c % 2, (size_t) at) : 0.0f;
+                    }
+                    usedBy[(size_t) c] = resamplers[(size_t) c].process (ratio, src.data(), out[(size_t) c].data(), frames);
+                });
+            for (auto& w : workers) w.join();
+        }
+        inPos += usedBy[0];
+
+        {
+            std::array<std::thread, numRoles> workers;
+            std::array<bool, numRoles> wrote {};
+            for (int r = 0; r < numRoles; ++r)
+                workers[(size_t) r] = std::thread ([&, r]
+                {
+                    auto& page = pages[(size_t) r];
+                    const float k = gain[(size_t) r] * 32767.0f;
+                    for (int i = 0; i < frames; ++i)
+                        for (int ch = 0; ch < 2; ++ch)
+                        {
+                            float v = 0.0f;
+                            for (int f = 0; f < 3; ++f) if (roles[r].mask & (1u << f)) v += out[(size_t) (f * 2 + ch)][(size_t) i];
+                            const int s = juce::jlimit (-32767, 32767, (int) std::lrint (v * k));
+                            page[(size_t) (i * 4 + ch * 2)] = (unsigned char) (s & 0xff);
+                            page[(size_t) (i * 4 + ch * 2 + 1)] = (unsigned char) ((s >> 8) & 0xff);
+                        }
+                    wrote[(size_t) r] = files[(size_t) r].addPage (page.data(), frames * 4);
+                });
+            for (auto& w : workers) w.join();
+            for (bool ok : wrote) if (! ok) return fail ("couldn't write to the stick (is it full?)");
         }
 
         for (int i = 0; i < frames; ++i)

@@ -1,6 +1,7 @@
 #pragma once
 #include "../Audio/TrackAudio.h"
 #include <juce_core/juce_core.h>
+#include <functional>
 
 namespace orbit
 {
@@ -54,7 +55,8 @@ namespace XzStems
           CDJMODS/stems/<bundle>/stems-<role>-waveform.EXT   (drums, harmonics, vocal)
         Roles: drums = Drums + Bass, harmonics = Inst, vocal = Vocal. */
     Result writePaged (const juce::File& stickRoot, const juce::File& trackOnStick, const TrackAudio& audio,
-                       const StemAudio& stems, juce::String& reason);
+                       const StemAudio& stems, juce::String& reason,
+                       const std::function<bool (float)>& progress = {});   // called often; return false to stop
 }
 
 } // namespace orbit
