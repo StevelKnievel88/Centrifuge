@@ -55,8 +55,10 @@ void DeckPanel::resized()
     rowStatus = r.removeFromTop (26.0f);
     r.removeFromTop (6.0f);
     // the overview gives way first, so the transport row keeps at least 30 px
-    const float fixed = 6.0f + 8.0f + 26.0f + 6.0f + 22.0f + 6.0f + 30.0f;
-    rowOverview = r.removeFromTop (juce::jlimit (22.0f, 56.0f, juce::jmin (r.getHeight() * 0.36f, r.getHeight() - fixed)));
+    // (the bar grid's strip comes on top of the overview's own height: the deck is that much taller)
+    const float fixed = 6.0f + 8.0f + 26.0f + 6.0f + 22.0f + 6.0f + 30.0f + gridStripH + 1.0f;
+    rowOverview = r.removeFromTop (juce::jlimit (22.0f, 56.0f, juce::jmin ((r.getHeight() - gridStripH - 1.0f) * 0.36f, r.getHeight() - fixed))
+                                   + gridStripH + 1.0f);
     r.removeFromTop (8.0f);
     rowPads = r.removeFromTop (26.0f);
     r.removeFromTop (6.0f);
@@ -92,6 +94,7 @@ void DeckPanel::timerCallback()
     mix (std::floor (st.positionSec.load() * 10.0)); mix (st.bpm.load()); mix (st.playing.load()); mix (st.sync.load());
     mix (st.master.load()); mix (st.keyLock.load()); mix (st.quantize.load()); mix (st.loopActive.load());
     mix (st.tempoRatio.load() * 100.0); mix (st.stemsReady.load()); mix (std::floor (st.stemsProgress.load() * 100.0f));
+    mix (router.isStemCtlFilterMode (deck));
     mix (st.cuePointSec.load()); mix (st.endWarning.load() ? std::floor (juce::Time::getMillisecondCounter() / 400.0) : 0.0);
     for (size_t i = 0; i < 8; ++i) mix (st.hotStart[i].load());
     for (size_t i = 0; i < 4; ++i) mix (st.stemGain[i].load() * 100.0f);
@@ -227,58 +230,9 @@ void DeckPanel::paint (juce::Graphics& g)
 
         // (The phase meter for both decks is in the top bar.)
 
-        // Edit targets: R = rekordbox copy, C = Centrifuge version (both lit = edit both); GRID opens the grid editor
-        if (! Features::rekordboxCopy)
-        {
-            const auto p = juce::String ("d") + juce::String (deck + 1) + ".";
-            // (GRID sits left of the hot cue pads)
-            // Edited view on / off, and which edit version is playing
-            r.removeFromLeft (4.0f);
-            auto ev = r.removeFromLeft (58.0f).reduced (1.0f, 3.0f);
-            chip (g, ev, "EDITED", editView, Theme::sync);
-            regions.push_back ({ ev, p + "editview", 0 });
-            if (loaded && editor != nullptr)
-            {
-                r.removeFromLeft (4.0f);
-                auto name = editor->activeEdit (deck);
-                const bool any = editor->hasEdits (deck);
-                juce::String text = name.isNotEmpty() ? name : (any ? juce::String ("UNSAVED EDITS") : juce::String ("ORIGINAL"));
-                if (name.isNotEmpty() && editor->activeEditModified (deck)) text << " *";
-                // The longest wording that fits the space left: "EDIT: name", "name", then "EDIT"
-                const float room = juce::jmax (36.0f, r.getWidth() - 480.0f);
-                juce::String shown;
-                for (auto cand : { "EDIT: " + text, text, juce::String ("EDIT") })
-                    if (psyched::Fonts::label().getStringWidthFloat (cand.toUpperCase()) + 22.0f <= juce::jmin (room, 190.0f)) { shown = cand; break; }
-                if (shown.isEmpty()) shown = "EDIT";
-                const float w = juce::jmin (room, juce::jlimit (44.0f, 190.0f, psyched::Fonts::label().getStringWidthFloat (shown.toUpperCase()) + 22.0f));
-                auto vc = r.removeFromLeft (w).reduced (1.0f, 3.0f);
-                chip (g, vc, shown, name.isNotEmpty() || any, Theme::sync.brighter (0.3f));
-                regions.push_back ({ vc, p + "editver", 0 });
-            }
-        }
-        else
-        {
-            const auto p = juce::String ("d") + juce::String (deck + 1) + ".";
-            r.removeFromLeft (10.0f);
-            const bool er = editor != nullptr && editor->editsRekordbox (deck), ec = editor != nullptr && editor->editsCentrifuge (deck);
-            auto rc = r.removeFromLeft (24.0f).reduced (1.0f, 3.0f);
-            chip (g, rc, "R", er, juce::Colour (0xff4fa3ff));
-            regions.push_back ({ rc, p + "edit.r", 0 });
-            auto cc = r.removeFromLeft (24.0f).reduced (1.0f, 3.0f);
-            chip (g, cc, "C", ec, Theme::accent);
-            regions.push_back ({ cc, p + "edit.c", 0 });
-            if (editor != nullptr && editor->versionsDiffer (deck))
-            {
-                g.setColour (Theme::accent);
-                g.setFont (Theme::font (10.0f, true));
-                g.drawText ("R/C DIFFER", r.removeFromLeft (64.0f), juce::Justification::centred);
-            }
-        }
-
-        // Tempo + range
-        auto right = r.removeFromRight (juce::jmax (440.0f, r.getWidth() - 4.0f));
+        // Tempo + range on the right (under the BPM)
         const double pct = (st.tempoRatio.load() - 1.0) * 100.0;
-        auto tempo = right.removeFromRight (right.getWidth() < 470.0f ? 80.0f : 100.0f);
+        auto tempo = r.removeFromRight (r.getWidth() < 560.0f ? 80.0f : 100.0f);
         g.setColour (Theme::text);
         g.setFont (Theme::font (14.0f, true));
         auto pctArea = tempo.removeFromTop (16.0f);
@@ -292,61 +246,92 @@ void DeckPanel::paint (juce::Graphics& g)
         const float rw = psyched::Fonts::label().getStringWidthFloat (rangeText) + 12.0f;
         regions.push_back ({ tempo.withLeft (tempo.getRight() - rw), "d" + juce::String (deck + 1) + ".pitchrange", 0 });   // click: 6 / 10 / 16 % / wide
 
-        right.removeFromRight (8.0f);
+        // From the right: vinyl speed (lined up with the right of the key buttons above), then QUANTIZE / VINYL / SLIP / REV,
+        // then MASTER / SYNC / MT; EDITED and the edit version take the room left on the left
         const auto p = juce::String ("d") + juce::String (deck + 1) + ".";
+        const float keyRight = rowInfo.getRight() - 111.0f;
+        r = r.withRight (juce::jmin (r.getRight(), keyRight));
+        const bool tight = r.getWidth() < 760.0f;
         auto addChip = [&] (const juce::String& label, bool lit, juce::Colour c, const juce::String& action, float w)
         {
-            auto cr = right.removeFromLeft (w).reduced (2.0f, 3.0f);
+            auto cr = r.removeFromRight (w).reduced (2.0f, 3.0f);
             chip (g, cr, label, lit, c);
             regions.push_back ({ cr, action, 0 });
         };
-        // (compact when the deck is narrow)
-        const bool tight = right.getWidth() < 470.0f;
-        addChip ("MASTER", st.master.load(), Theme::accent, p + "master", tight ? 48.0f : 52.0f);
-        addChip ("SYNC", st.sync.load(), col, p + "sync", tight ? 36.0f : 40.0f);
-        addChip ("MT", st.keyLock.load(), Theme::warn, p + "keylock", 26.0f);
-        addChip (tight ? "QUANT" : "QUANTIZE", st.quantize.load(), Theme::bad.withSaturation (0.6f), p + "quantize", tight ? 44.0f : 62.0f);
-        addChip (st.vinylMode.load() ? "VINYL" : "CDJ", st.vinylMode.load(), juce::Colour (0xff2f4dff), p + "jog.vinyl", tight ? 42.0f : 50.0f);
-        addChip (st.slipping.load() ? "SLIPPING" : "SLIP", st.slip.load(), Theme::sync.brighter (0.2f), p + "slip", st.slipping.load() ? 60.0f : 36.0f);
-        addChip ("REV", st.reversing.load(), Theme::bad, p + "reverse", 32.0f);   // backwards while held
         {
-            // vinyl speed: brake (stop) / start, click for the choices
-            const bool b = st.brakeOn.load(), s2 = st.startOn.load();
-            const juce::String t = b && s2 ? "BRK+ST" : b ? "BRAKE" : s2 ? "START" : "INST";
-            auto cr = right.removeFromLeft (48.0f).reduced (2.0f, 3.0f);
-            chip (g, cr, t, b || s2, Theme::warn.withRotatedHue (0.08f));
-            regions.push_back ({ cr, "vinylspeed", 10 });
-            // how slow: a knob (drag up / down) from instant to 3 s, and a button that locks it to beats (1/4 beat - 2 bars)
+            // vinyl speed: brake (stop) / start (click for the choices), how slow (a knob, drag up / down), and the
+            // button that locks it to beats (1/4 beat - 2 bars)
             const auto vc = Theme::warn.withRotatedHue (0.08f);
             const double beats = st.brakeBeats.load();
-            auto knob = right.removeFromLeft (22.0f).reduced (2.0f, 2.0f);
-            knob = knob.withSizeKeepingCentre (juce::jmin (knob.getWidth(), knob.getHeight()), juce::jmin (knob.getWidth(), knob.getHeight()));
-            const float v = beats > 0.0 ? (float) (std::log2 (beats / 0.25) / 4.0) : (float) juce::jlimit (0.0, 1.0, st.brakeSeconds.load() / 3.0);
-            const float a0 = -juce::MathConstants<float>::pi * 0.75f, a1 = juce::MathConstants<float>::pi * 0.75f;
-            juce::Path arc, val;
-            const auto kc = knob.getCentre();
-            const float kr = knob.getWidth() * 0.42f;
-            arc.addCentredArc (kc.x, kc.y, kr, kr, 0.0f, a0, a1, true);
-            val.addCentredArc (kc.x, kc.y, kr, kr, 0.0f, a0, a0 + (a1 - a0) * juce::jlimit (0.0f, 1.0f, v), true);
-            g.setColour (Theme::line);
-            g.strokePath (arc, juce::PathStrokeType (2.0f));
-            g.setColour (vc);
-            g.strokePath (val, juce::PathStrokeType (2.2f));
-            regions.push_back ({ knob, "brakeknob", 13 });
-            auto sync = right.removeFromLeft (beats > 0.0 ? 50.0f : 36.0f).reduced (2.0f, 3.0f);
+            auto sync = r.removeFromRight (beats > 0.0 ? 50.0f : 40.0f).reduced (2.0f, 3.0f);
             chip (g, sync, beats > 0.0 ? jumpSizeText (beats) : juce::String ("BEAT"), beats > 0.0, vc);
             regions.push_back ({ sync, "brakesync", 14 });
+            auto knob = r.removeFromRight (24.0f).reduced (1.0f, 1.0f);
+            knob = knob.withSizeKeepingCentre (juce::jmin (knob.getWidth(), knob.getHeight()), juce::jmin (knob.getWidth(), knob.getHeight()));
+            paintVinylSpeedKnob (g, knob, st, vc);
+            regions.push_back ({ knob, "brakeknob", 13 });
+            const bool b = st.brakeOn.load(), s2 = st.startOn.load();
+            const juce::String t = b && s2 ? "BRAKE + START" : b ? "BRAKE" : s2 ? "START" : "INSTANT";
+            auto cr = r.removeFromRight (tight ? 84.0f : 98.0f).reduced (2.0f, 3.0f);
+            chip (g, cr, t, b || s2, vc);
+            regions.push_back ({ cr, "vinylspeed", 10 });
+        }
+        r.removeFromRight (tight ? 6.0f : 12.0f);
+        addChip ("REV", st.reversing.load(), Theme::bad, p + "reverse", 32.0f);   // backwards while held
+        addChip (st.slipping.load() ? "SLIPPING" : "SLIP", st.slip.load(), Theme::sync.brighter (0.2f), p + "slip", st.slipping.load() ? 60.0f : 36.0f);
+        addChip (st.vinylMode.load() ? "VINYL" : "CDJ", st.vinylMode.load(), juce::Colour (0xff2f4dff), p + "jog.vinyl", tight ? 42.0f : 50.0f);
+        addChip (tight ? "QUANT" : "QUANTIZE", st.quantize.load(), Theme::bad.withSaturation (0.6f), p + "quantize", tight ? 44.0f : 62.0f);
+        r.removeFromRight (tight ? 6.0f : 12.0f);
+        addChip ("MT", st.keyLock.load(), Theme::warn, p + "keylock", 26.0f);
+        addChip ("SYNC", st.sync.load(), col, p + "sync", tight ? 36.0f : 40.0f);
+        addChip ("MASTER", st.master.load(), Theme::accent, p + "master", tight ? 48.0f : 52.0f);
+        r.removeFromRight (6.0f);
+
+        // Edit targets: R = rekordbox copy, C = Centrifuge version (both lit = edit both)
+        if (! Features::rekordboxCopy)
+        {
+            // Edited view on / off, and which edit version is playing (room for the version's name)
+            r.removeFromLeft (4.0f);
+            auto ev = r.removeFromLeft (58.0f).reduced (1.0f, 3.0f);
+            chip (g, ev, "EDITED", editView, Theme::sync);
+            regions.push_back ({ ev, p + "editview", 0 });
+            if (loaded && editor != nullptr)
+            {
+                r.removeFromLeft (4.0f);
+                auto name = editor->activeEdit (deck);
+                const bool any = editor->hasEdits (deck);
+                juce::String text = name.isNotEmpty() ? name : (any ? juce::String ("UNSAVED EDITS") : juce::String ("ORIGINAL"));
+                if (name.isNotEmpty() && editor->activeEditModified (deck)) text << " *";
+                // The longest wording that fits the space left: "EDIT: name", "name", then "EDIT"
+                const float room = juce::jmax (36.0f, juce::jmin (r.getWidth(), 330.0f));
+                juce::String shown;
+                for (auto cand : { "EDIT: " + text, text, juce::String ("EDIT") })
+                    if (psyched::Fonts::label().getStringWidthFloat (cand.toUpperCase()) + 22.0f <= room) { shown = cand; break; }
+                if (shown.isEmpty()) shown = "EDIT";
+                const float w = juce::jmin (room, juce::jmax (juce::jmin (room, 140.0f), psyched::Fonts::label().getStringWidthFloat (shown.toUpperCase()) + 22.0f));
+                auto vc = r.removeFromLeft (w).reduced (1.0f, 3.0f);
+                chip (g, vc, shown, name.isNotEmpty() || any, Theme::sync.brighter (0.3f));
+                regions.push_back ({ vc, p + "editver", 0 });
+            }
+        }
+        else
+        {
+            r.removeFromLeft (10.0f);
+            const bool er = editor != nullptr && editor->editsRekordbox (deck), ec = editor != nullptr && editor->editsCentrifuge (deck);
+            auto rc = r.removeFromLeft (24.0f).reduced (1.0f, 3.0f);
+            chip (g, rc, "R", er, juce::Colour (0xff4fa3ff));
+            regions.push_back ({ rc, p + "edit.r", 0 });
+            auto cc = r.removeFromLeft (24.0f).reduced (1.0f, 3.0f);
+            chip (g, cc, "C", ec, Theme::accent);
+            regions.push_back ({ cc, p + "edit.c", 0 });
         }
     }
 
     // --- Overview --------------------------------------------------------------
     {
         auto r = rowOverview;
-        // grid toggle on the left; stem separation progress in a strip underneath (against the track and playhead)
-        auto toggle = r.removeFromLeft (20.0f);
-        r.removeFromLeft (4.0f);
-        paintGridToggle (g, toggle, overviewGrid, styledColour ("overviewgrid", Theme::sync));
-        regions.push_back ({ toggle, "overviewgrid", 7 });
+        // the bar grid in a black strip along the top (always there; the deck is that much taller); stem separation
+        // progress in a strip underneath (against the track and playhead)
         auto progress = r.removeFromBottom (4.0f);
         r.removeFromBottom (1.0f);
         if (loaded && st.stemsReady.load() && st.stemsProgress.load() < 0.999f)
@@ -365,7 +350,7 @@ void DeckPanel::paint (juce::Graphics& g)
             const float scale = g.getInternalContext().getPhysicalPixelScaleFactor();
             const int pw = (int) std::lround (r.getWidth() * scale);
             // the waveform sits between the bar strip along the top (grid on) and the phrase strip along the bottom
-            const float barStrip = overviewGrid ? overviewStripHeight (r.getHeight()) : 0.0f;
+            const float barStrip = gridStripH;
             const float phraseStrip = track->phrases.empty() ? 0.0f : overviewStripHeight (r.getHeight());
             const auto waveArea = r.withTrimmedTop (barStrip > 0.0f ? barStrip + 1.0f : 0.0f)
                                    .withTrimmedBottom (phraseStrip > 0.0f ? phraseStrip + 1.0f : 0.0f);
@@ -416,13 +401,13 @@ void DeckPanel::paint (juce::Graphics& g)
                         g.setColour (juce::Colours::black.withAlpha (st.skipsOn.load() ? 0.62f : 0.35f));
                         g.fillRect (juce::Rectangle<float>::leftTopRightBottom (x0, r.getY(), x1, r.getBottom()));
                     }
-                if (overviewGrid) paintOverviewGrid (g, r, track->grid, len, &fold, track->phrases.empty() ? 0.0f : overviewStripHeight (r.getHeight()), overviewStripHeight (r.getHeight()));
+                paintOverviewGrid (g, r, track->grid, len, &fold, track->phrases.empty() ? 0.0f : overviewStripHeight (r.getHeight()), gridStripH);
                 if (viewWindow)
                 {
                     // the part the scrolling waveform shows
                     const auto [vis, ph] = viewWindow();
                     auto xOfD = [&] (double d) { return r.getX() + (float) (d / dlen) * r.getWidth(); };
-                    paintOverviewViewBox (g, r, xOfD (fold.reference - vis * ph), xOfD (fold.reference + vis * (1.0 - ph)), col, ! track->phrases.empty(), overviewGrid ? overviewStripHeight (r.getHeight()) : 0.0f);
+                    paintOverviewViewBox (g, r, xOfD (fold.reference - vis * ph), xOfD (fold.reference + vis * (1.0 - ph)), col, ! track->phrases.empty(), gridStripH);
                 }
                 paintOverviewMarks (g, r, TrackMarks::fromDeck (st, track->phrases, track.get()), false, &fold);
                 if (st.stemsReady.load() && st.stemsProgress.load() < 0.999f)
@@ -492,10 +477,23 @@ void DeckPanel::paint (juce::Graphics& g)
             auto pad = juce::Rectangle<float> (r.getX() + i * (w + 5.0f), r.getY(), w, r.getHeight());
             const bool set = st.hotStart[(size_t) i].load() >= 0.0;
             const auto c = juce::Colour (st.hotColour[(size_t) i].load());
-            g.setColour (set ? c.withAlpha (0.9f) : Theme::panelHi);
-            g.fillRect (pad);
-            g.setColour (set ? c.brighter (0.3f) : Theme::line);
-            g.drawRect (pad.reduced (0.5f), 1.0f);
+            if (set)
+            {
+                // a 2 px outline in the cue's colour, a 2 px black line inside it, then the colour
+                g.setColour (c.brighter (0.3f));
+                g.fillRect (pad);
+                g.setColour (juce::Colours::black);
+                g.fillRect (pad.reduced (2.0f));
+                g.setColour (c.withAlpha (0.9f));
+                g.fillRect (pad.reduced (4.0f));
+            }
+            else
+            {
+                g.setColour (Theme::panelHi);
+                g.fillRect (pad);
+                g.setColour (Theme::line);
+                g.drawRect (pad.reduced (0.5f), 1.0f);
+            }
             g.setColour (set ? juce::Colours::black : Theme::textFaint);
             g.setFont (Theme::font (12.0f, true));
             auto label = juce::String::charToString ((juce::juce_wchar) ('A' + i));
@@ -530,7 +528,7 @@ void DeckPanel::paint (juce::Graphics& g)
             regions.push_back ({ prev, pp + "callprev", 0 });
             regions.push_back ({ next, pp + "callnext", 0 });
 
-            // track skip (previous / next track in the list), search (fast through the track while held), scrub dial
+            // track skip (previous / next track in the list), search (fast through the track while held)
             auto icon = [&g] (juce::Rectangle<float> b, int dir, bool bar, bool lit, juce::Colour c)
             {
                 auto t = b.reduced (b.getWidth() * 0.22f, b.getHeight() * 0.28f);
@@ -557,22 +555,6 @@ void DeckPanel::paint (juce::Graphics& g)
             regions.push_back ({ tNext, pp + "track.next", 0 });
             regions.push_back ({ sBack, pp + "search.back", 0 });
             regions.push_back ({ sFwd, pp + "search.fwd", 0 });
-            {
-                // scrub dial: drag sideways to move through the track (you hear it, like the platter); right-click: its colour
-                auto dial = rest.removeFromLeft (rest.getHeight()).reduced (1.0f);
-                rest.removeFromLeft (6.0f);
-                const auto dc = styledColour ("scrub", Theme::sync);
-                g.setColour (Theme::panelHi);
-                g.fillEllipse (dial);
-                g.setColour (scrubDrag ? dc : dc.withAlpha (0.45f));
-                g.drawEllipse (dial.reduced (0.5f), 1.2f);
-                const float a = (float) std::fmod (st.positionSec.load() / 1.8, 1.0) * juce::MathConstants<float>::twoPi;
-                const auto cc = dial.getCentre();
-                const float rr = dial.getWidth() * 0.36f;
-                g.setColour (dc);
-                g.drawLine (cc.x, cc.y, cc.x + rr * std::sin (a), cc.y - rr * std::cos (a), 1.6f);
-                regions.push_back ({ dial, pp + "scrub", 12 });
-            }
             paintNotesBox (g, rest);
         }
         for (int k = 0; k < 4; ++k)
@@ -675,7 +657,8 @@ void DeckPanel::paint (juce::Graphics& g)
         {
             auto b = juce::Rectangle<float> (r.getX() + s * (sw + 6.0f), r.getY() + 1.0f, sw, r.getHeight() - 2.0f);
             juce::Rectangle<float> bar, filterBar;
-            paintStemControl (g, b, s, st.stemGain[(size_t) s].load(), st.stemFilter[(size_t) s].load(), ready, bar, filterBar);
+            paintStemControl (g, b, s, st.stemGain[(size_t) s].load(), st.stemFilter[(size_t) s].load(), ready, bar, filterBar,
+                              router.isStemCtlFilterMode (deck) ? 1 : 2);
             regions.push_back ({ bar, p + "stem." + juce::String (s + 1) + ".mute", 2 });
             regions.push_back ({ filterBar, p + "stem." + juce::String (s + 1) + ".filter", 9 });
         }
@@ -804,6 +787,35 @@ void DeckPanel::showDeckColourMenu (juce::Rectangle<float> area)
         if (result == 200) set (safe->deck == 0 ? psyched::Colours::cyan : psyched::Colours::pink);
         else if (handleCueColourMenu (result, 100, screen, current, set)) {}
     });
+}
+
+void DeckPanel::paintVinylSpeedKnob (juce::Graphics& g, juce::Rectangle<float> knob, const Deck::Published& st, juce::Colour c)
+{
+    const double beats = st.brakeBeats.load();
+    const float v = beats > 0.0 ? (float) (std::log2 (beats / 0.25) / 4.0) : (float) juce::jlimit (0.0, 1.0, st.brakeSeconds.load() / 3.0);
+    const float a0 = -juce::MathConstants<float>::pi * 0.75f, a1 = juce::MathConstants<float>::pi * 0.75f;
+    const auto kc = knob.getCentre();
+    const float kr = knob.getWidth() * 0.36f;
+    juce::Path arc, val;
+    arc.addCentredArc (kc.x, kc.y, kr, kr, 0.0f, a0, a1, true);
+    val.addCentredArc (kc.x, kc.y, kr, kr, 0.0f, a0, a0 + (a1 - a0) * juce::jlimit (0.0f, 1.0f, v), true);
+    g.setColour (Theme::line);
+    g.strokePath (arc, juce::PathStrokeType (2.0f));
+    g.setColour (c);
+    g.strokePath (val, juce::PathStrokeType (2.2f));
+    if (beats > 0.0)
+        for (int k = 0; k <= 4; ++k)
+        {
+            // a notch per beat step, just outside the ring
+            const float a = a0 + (a1 - a0) * (float) k / 4.0f;
+            const float r0 = kr + 2.0f, r1 = kr + 4.0f;
+            g.setColour (k <= (int) std::lround (v * 4.0f) ? c : Theme::textDim);
+            g.drawLine (kc.x + r0 * std::sin (a), kc.y - r0 * std::cos (a), kc.x + r1 * std::sin (a), kc.y - r1 * std::cos (a), 1.2f);
+        }
+    // the pointer
+    const float a = a0 + (a1 - a0) * juce::jlimit (0.0f, 1.0f, v);
+    g.setColour (c);
+    g.drawLine (kc.x, kc.y, kc.x + (kr - 1.0f) * std::sin (a), kc.y - (kr - 1.0f) * std::cos (a), 1.4f);
 }
 
 const DeckPanel::Region* DeckPanel::regionAt (juce::Point<float> p) const

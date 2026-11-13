@@ -50,6 +50,7 @@ public:
     void setEditView (bool on) { if (on != editView) { editView = on; overviewWidth = 0; repaint(); } }
     std::function<void (int deck)> onEditViewToggled;
     /** Bar lines and minute marks over the overview. */
+    static constexpr float gridStripH = 8.0f;   // the overview's bar grid strip (always shown)
     void setOverviewGrid (bool on) { if (on != overviewGrid) { overviewGrid = on; repaint(); } }
     std::function<void()> onOverviewGridToggled;
     /** A stem's control (or all four: stem -1) changed between level / low-pass / high-pass. */
@@ -123,6 +124,8 @@ private:
     void updateFold();
     void showEditVersionMenu (juce::Rectangle<float> area);
     void paintNotesBox (juce::Graphics& g, juce::Rectangle<float> r);
+    /** The vinyl speed knob: instant (left) to slow (right); locked to beats, a notch for each step (1/4 beat - 1 bar). */
+    void paintVinylSpeedKnob (juce::Graphics& g, juce::Rectangle<float> knob, const Deck::Published& st, juce::Colour c);
     void showStemModeMenu (int stem, juce::Rectangle<float> area);
     void setStemMode (int stem, int mode);
     bool overviewGrid = false;

@@ -41,6 +41,10 @@ public:
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override { if (auto f = onFinished) { onFinished = nullptr; f(); } }
     std::function<void()> onFinished;
+    /** One frame of the animation at e seconds (3 s long; fades out from 2.6 s), the rotor at `angle`: for pictures
+        that aren't on screen (the XDJ-XZ's). spinSpeedAt: how fast it spins then (0..1, radians = speed * dt * 16). */
+    static void paintFrame (juce::Graphics& g, juce::Rectangle<float> bounds, float e, float angle);
+    static float spinSpeedAt (float e);
 
 private:
     void tick (double t);

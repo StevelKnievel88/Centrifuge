@@ -6,7 +6,7 @@
 namespace orbit
 {
 
-/** Both decks' phrase position, stacked (deck 1 above deck 2), as in Mirari's phrase meter:
+/** Both decks' phrase position (32 bars, a block per beat), stacked (deck 1 above deck 2), as in Mirari's phrase meter:
     one block per beat over a 16-bar phrase, a small gap between bars and a wider one every 4 bars.
     Played blocks take the deck's colour (every other bar a shade darker); the current beat flashes. */
 class PhaseMeter : public juce::Component, private juce::Timer
@@ -159,24 +159,26 @@ private:
 
         int phrase = 16;
         const double b = beatPosition (d, phrase);
+        // 32 bars, a block per beat (128 blocks): the phrase playing is outlined over its own length
         const int bars = layoutBars;
-        const int upb = 1;                               // a block per bar
-        const int n = bars;
-        const int inPhrase = juce::jlimit (1, n, phrase); // blocks the phrase covers
-        const float gapUnit = 2.5f, gap4 = 7.0f, gap16 = 11.0f;
+        const int upb = 4;
+        const int n = bars * upb;
+        const int inPhrase = juce::jlimit (1, n, phrase * upb);
+        const float gapUnit = 1.0f, gapBar = 3.0f, gap4 = 6.0f, gap16 = 9.0f;
         auto gapAfter = [&] (int i)   // gap after block i
         {
-            const int barEnd = i + 1;
+            if ((i + 1) % upb != 0) return gapUnit;
+            const int barEnd = (i + 1) / upb;
             if (barEnd % 16 == 0) return gap16;
             if (barEnd % 4 == 0) return gap4;
-            return gapUnit;
+            return gapBar;
         };
         float gaps = 0.0f;
         for (int i = 0; i < n - 1; ++i) gaps += gapAfter (i);
         const float bw = juce::jmax (1.0f, (r.getWidth() - gaps) / (float) n);
-        const double unitPos = b < 0.0 ? -1.0 : b / 4.0;
-        const int cur = unitPos < 0.0 ? -1 : (int) std::floor (unitPos) % juce::jmax (1, phrase) % n;
-        const double frac = b < 0.0 ? 0.0 : b - std::floor (b);   // flashes on every beat
+        const double unitPos = b;   // a block per beat
+        const int cur = unitPos < 0.0 ? -1 : (int) std::floor (unitPos) % juce::jmax (1, inPhrase) % n;
+        const double frac = b < 0.0 ? 0.0 : b - std::floor (b);   // each block flashes on its beat
 
         std::vector<float> xs ((size_t) n);
         float x = r.getX();
@@ -187,7 +189,7 @@ private:
             juce::Colour c = juce::Colour (0xff1d1a2e);
             const int bar = i / upb;
             if (cur >= 0 && i < cur)
-                c = (bar / 4) % 2 == 1 ? col.darker (0.9f) : col;   // alternate 4-bar groups darker
+                c = bar % 2 == 1 ? col.darker (0.9f) : col;   // alternate bars darker
             if (i == cur)
             {
                 const float flash = (float) std::exp (-frac * 6.0);
@@ -202,7 +204,7 @@ private:
             // (alternating light / darker with the bars, like the infill)
             if (i < inPhrase && i != cur)
             {
-                g.setColour ((bar / 4) % 2 == 1 ? col.darker (0.9f) : col);
+                g.setColour (bar % 2 == 1 ? col.darker (0.9f) : col);
                 g.drawRect (blk, 1.0f);
             }
             x += bw;

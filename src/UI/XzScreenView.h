@@ -38,6 +38,9 @@ public:
     void setBrowserShown (bool b) { browserShown = b; }
     bool isBrowserShown() const { return browserShown; }
 
+    /** The start-up animation and logo over the screen for 5 s (when streaming starts). */
+    void startSplash() { splashStart = juce::Time::getMillisecondCounterHiRes() / 1000.0; splashAngle = 0.4f; splashLast = -1.0; }
+
     /** Advances the waveforms and paints the screen. */
     juce::Image render();
 
@@ -72,6 +75,8 @@ private:
     void showDeckColourMenu (int deck, juce::Rectangle<float> badge);
     void showEditVersionMenu (int deck, juce::Rectangle<float> area);
     Popup popup;
+    double splashStart = -1.0, splashLast = -1.0;
+    float splashAngle = 0.4f;
     TrackEditor* editor = nullptr;
     std::array<juce::Rectangle<float>, 2> badgeRects, editViewRects, editVerRects;
 
@@ -100,6 +105,11 @@ private:
     std::vector<int> browserRowIndex, treeRowIndex;
     juce::Rectangle<float> load1Rect, load2Rect, closeRect, searchRect, filterRect, setListRect, infoRect, listArea, treeArea;
     float listDragY = 0.0f, listDragX = 0.0f, colScroll = 0.0f, colMaxScroll = 0.0f;
+    std::vector<std::pair<int, float>> colEdges;   // the column header: each column's id and its right edge (on the screen)
+    juce::Rectangle<float> colHeaderRect;
+    int resizingCol = -1;
+    float resizeStartW = 0.0f, resizeStartX = 0.0f;
+    std::function<void()> onXzColumnsResized;
     int dragAxis = 0;              // browser drags: 0 not decided yet, 1 up / down (the selection), 2 sideways (the columns)
     bool dragInTree = false, infoShown = false;
     void paintBrowserInfo (juce::Graphics& g, juce::Rectangle<float> r);

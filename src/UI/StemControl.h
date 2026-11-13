@@ -12,8 +12,9 @@ namespace orbit
     with LP / HP at the ends. Both controls store 0..1 with 0.5 = untouched; the filter's centre third is "open".
     Returns both bars' areas (for clicks and drags). */
 inline void paintStemControl (juce::Graphics& g, juce::Rectangle<float> r, int stem, float volume, float filter, bool ready,
-                              juce::Rectangle<float>& volArea, juce::Rectangle<float>& filterArea)
+                              juce::Rectangle<float>& volArea, juce::Rectangle<float>& filterArea, int dim = 0)
 {
+    // dim: 1 = the volume bar, 2 = the filter bar (the one the switched knobs aren't working: dimmer, grey text)
     const auto sc = Theme::stemColour (stem);
     const float gap = r.getHeight() >= 24.0f ? 2.0f : 1.0f;
     volArea = r.removeFromTop ((r.getHeight() - gap) * 0.5f);
@@ -32,12 +33,12 @@ inline void paintStemControl (juce::Graphics& g, juce::Rectangle<float> r, int s
         const float level = juce::jlimit (0.0f, 1.0f, volume * 2.0f);
         if (ready && level > 0.0f)
         {
-            g.setColour (fill);
+            g.setColour (dim == 1 ? fill.withMultipliedBrightness (0.45f) : fill);
             g.fillRect (b.reduced (3.0f).withWidth ((b.getWidth() - 6.0f) * level));   // a black gap inside the outline
         }
         g.setColour (edge);
         g.drawRect (b, 1.0f);
-        g.setColour (ready ? (level <= 0.001f ? Theme::textFaint : juce::Colours::white) : Theme::textFaint);
+        g.setColour (ready && dim != 1 ? (level <= 0.001f ? Theme::textFaint : juce::Colours::white) : Theme::textFaint);
         g.setFont (Theme::font (fontH, true));
         g.drawText (juce::String (stemName (stem)).toUpperCase(), b.toNearestInt(), juce::Justification::centred, false);
     }
@@ -53,7 +54,7 @@ inline void paintStemControl (juce::Graphics& g, juce::Rectangle<float> r, int s
              right = in.withX (in.getX() + 2.0f * third).withWidth (third);
         if (ready)
         {
-            g.setColour (fill);
+            g.setColour (dim == 2 ? fill.withMultipliedBrightness (0.45f) : fill);
             g.fillRect (centre.reduced (0.5f, 0.0f));   // always lit
             const float f = juce::jlimit (0.0f, 1.0f, filter);
             if (f < 0.5f)   // low-pass: grows out to the left from the centre block
@@ -69,7 +70,7 @@ inline void paintStemControl (juce::Graphics& g, juce::Rectangle<float> r, int s
         }
         g.setColour (edge);
         g.drawRect (b, 1.0f);
-        g.setColour (ready ? juce::Colours::white : Theme::textFaint);
+        g.setColour (ready && dim != 2 ? juce::Colours::white : Theme::textFaint);
         const float small = juce::jmax (7.5f, fontH - 1.0f);
         g.setFont (Theme::font (small, true));
         if (left.getWidth() >= 14.0f)

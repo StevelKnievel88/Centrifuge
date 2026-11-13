@@ -693,6 +693,14 @@ private:
                 main.getXzView().touch (1, 570, 40); main.getXzView().touch (2, 570, 40);
                 main.getBrowser().focusTracks();
                 main.getXzView().setBrowserShown (false);
+                main.getXzView().startSplash();
+                main.renderXzScreen();
+                juce::Thread::sleep (2500);
+                auto simg = main.renderXzScreen();
+                juce::FileOutputStream sos (shots.getChildFile ("02d_xz_splash.png"));
+                sos.setPosition (0);
+                sos.truncate();
+                juce::PNGImageFormat().writeImageToStream (simg, sos);
             }
             main.showPage (1);
             stage = 4;

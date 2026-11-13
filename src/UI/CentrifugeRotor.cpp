@@ -182,18 +182,27 @@ void CentrifugeSplash::tick (double t)
 
 void CentrifugeSplash::paint (juce::Graphics& g)
 {
-    const float e = (float) elapsed;
+    paintFrame (g, getLocalBounds().toFloat(), (float) elapsed, angle);
+}
+
+float CentrifugeSplash::spinSpeedAt (float e)
+{
+    return juce::jlimit (0.0f, 1.0f, e < 0.35f ? 0.0f : e < 1.4f ? (e - 0.35f) / 1.05f : e < 2.1f ? 1.0f : 1.0f - (e - 2.1f) / 0.6f);
+}
+
+void CentrifugeSplash::paintFrame (juce::Graphics& g, juce::Rectangle<float> bounds, float e, float angle)
+{
     const float alpha = e < 2.6f ? 1.0f : juce::jmax (0.0f, 1.0f - (e - 2.6f) / 0.4f);
     g.setColour (Theme::bg.withAlpha (alpha));
-    g.fillAll();
+    g.fillRect (bounds);
     if (alpha <= 0.0f) return;
 
     const float spd = juce::jlimit (0.0f, 1.0f, e < 0.35f ? 0.0f : e < 1.4f ? (e - 0.35f) / 1.05f : e < 2.1f ? 1.0f : 1.0f - (e - 2.1f) / 0.6f);
     const float fill = juce::jlimit (0.0f, 1.0f, (e - 0.9f) / 1.1f);
     const float streaks = e > 0.8f && e < 2.3f ? spd : 0.0f;
 
-    const float size = juce::jmin ((float) getHeight() * 0.42f, (float) getWidth() * 0.4f, 320.0f);
-    auto area = juce::Rectangle<float> (size, size).withCentre (getLocalBounds().toFloat().getCentre().translated (0.0f, -size * 0.12f));
+    const float size = juce::jmin (bounds.getHeight() * 0.42f, bounds.getWidth() * 0.4f, 320.0f);
+    auto area = juce::Rectangle<float> (size, size).withCentre (bounds.getCentre().translated (0.0f, -size * 0.12f));
 
     juce::Graphics::ScopedSaveState ss (g);
     g.setOpacity (alpha);

@@ -26,7 +26,6 @@ static std::vector<ActionDef> buildActions()
         add (p + "track.next",  "Track skip forward (next track in the list)", D + " - Transport", B, d);
         add (p + "search.back", "Search back (while held)",    D + " - Transport", B, d, true);
         add (p + "search.fwd",  "Search forward (while held)", D + " - Transport", B, d, true);
-        add (p + "scrub",       "Scrub dial (encoder: moves through the track, you hear it)", D + " - Transport", E, d);
         add (p + "needle",      "Needle search (position)", D + " - Transport", C, d);
 
         add (p + "jog.touch",   "Jog: top touch",        D + " - Jog", B, d);
@@ -40,7 +39,7 @@ static std::vector<ActionDef> buildActions()
 
         add (p + "pitch",       "Tempo slider",          D + " - Tempo", C, d);
         add (p + "pitchrange",  "Tempo range (6/10/16 %/Wide)", D + " - Tempo", B, d);
-        add (p + "tempo.reset", "Tempo reset",           D + " - Tempo", B, d);
+        add (p + "tempo.reset", "Tempo reset (lit while the tempo isn't at 0 %)", D + " - Tempo", B, d, true);
         add (p + "bend.up",     "Pitch bend +",          D + " - Tempo", B, d);
         add (p + "bend.down",   "Pitch bend -",          D + " - Tempo", B, d);
         add (p + "keylock",     "Master tempo (key lock)", D + " - Tempo", B, d, true);
@@ -135,7 +134,8 @@ static std::vector<ActionDef> buildActions()
     }
 
     const auto B = ActionKind::button, E = ActionKind::encoder;
-    add ("browse.scroll",   "Browse: scroll",          "Browser", E, -1);
+    add ("browse.scroll",   "Browse: scroll (zooms the waveforms while the browser is hidden / closed on the XZ)", "Browser", E, -1);
+    add ("view.zoom",       "Waveform zoom (encoder)", "View", E, -1);
     add ("browse.enter",    "Browse: select / open",   "Browser", B, -1);
     add ("browse.back",     "Browse: back",            "Browser", B, -1);
     add ("browse.tree",     "Browse: playlists / tracks focus", "Browser", B, -1);

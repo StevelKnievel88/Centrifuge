@@ -169,6 +169,8 @@ private:   // (after the browser: it shows it)
     void askText (const juce::String& title, const juce::String& current, std::function<void (juce::String)> done);
     void toggleSetList();
     void startSetList (bool record);
+    void zoomWaves (double steps);
+    bool xzWasStreaming = false;
     bool recordWithSetList = false;
     void startRecording (bool askSource);
     void stopRecording();

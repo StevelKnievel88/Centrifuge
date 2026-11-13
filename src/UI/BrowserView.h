@@ -180,6 +180,7 @@ private:
     void setLibraryView (int v);
     juce::Label countLabel;
     bool treeFocused = false;
+    const LibrarySource* lastFilteredSource = nullptr;
     bool dragHover = false;
     std::vector<TrackInfo> dragged;
     bool draggedPc = false;
@@ -215,12 +216,27 @@ private:
     /** Columns shown on the XDJ-XZ screen's browser (its own list, chosen from the column header's right-click menu). */
     std::set<int> xzColumns { 2, 11, 3, 4, 5, 6 };
     std::function<void()> onXzColumnsChanged;
-    juce::String getXzColumnState() const { juce::StringArray a; for (int c : xzColumns) a.add (juce::String (c)); return a.joinIntoString (","); }
+    std::map<int, int> xzColumnWidths;   // the XZ screen's own widths (dragged on its screen), by column id
+    /** "id" or "id:width" per column, comma separated. */
+    juce::String getXzColumnState() const
+    {
+        juce::StringArray a;
+        for (int c : xzColumns) a.add (juce::String (c) + (xzColumnWidths.count (c) ? ":" + juce::String (xzColumnWidths.at (c)) : juce::String()));
+        for (auto& [c, w] : xzColumnWidths) if (xzColumns.count (c) == 0) a.add ("-" + juce::String (c) + ":" + juce::String (w));
+        return a.joinIntoString (",");
+    }
     void setXzColumnState (const juce::String& s)
     {
         if (s.isEmpty()) return;
         xzColumns.clear();
-        for (auto& t : juce::StringArray::fromTokens (s, ",", {})) if (t.getIntValue() > 0) xzColumns.insert (t.getIntValue());
+        for (auto& t : juce::StringArray::fromTokens (s, ",", {}))
+        {
+            const bool hidden = t.startsWith ("-");
+            const int id = t.trimCharactersAtStart ("-").getIntValue();
+            if (id <= 0) continue;
+            if (! hidden) xzColumns.insert (id);
+            if (t.contains (":")) xzColumnWidths[id] = juce::jlimit (30, 600, t.fromFirstOccurrenceOf (":", false, false).getIntValue());
+        }
     }
     /** The library tree for the XZ screen: rows as shown (open folders included). */
     int getTreeRowCount() const { return tree.getNumRowsInTree(); }

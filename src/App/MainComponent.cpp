@@ -354,7 +354,13 @@ MainComponent::MainComponent()
     };
     xzView.onDeckColour = deck1.onDeckColour;
     xzView.onEditViewToggled = deck1.onEditViewToggled;
-    xzTimer.f = [this] { if (xzLink.isEnabled() && xzLink.isConnected()) xzLink.submitFrame (xzView.render()); };
+    xzTimer.f = [this]
+    {
+        const bool on = xzLink.isEnabled() && xzLink.isConnected();
+        if (on && ! xzWasStreaming) xzView.startSplash();   // the start-up animation and logo when streaming starts
+        xzWasStreaming = on;
+        if (on) xzLink.submitFrame (xzView.render());
+    };
     xzTimer.startTimerHz (25);
 
     applySettings();
@@ -580,7 +586,16 @@ void MainComponent::handleAppAction (const juce::String& id, int deck, const Act
     }
 
     if (id == "deck.load")           browser.loadSelected (deck);
-    else if (id == "browse.scroll")  browser.scroll ((int) std::round (v.delta));
+    else if (id == "browse.scroll")
+    {
+        // the browse knob zooms the scrolling waveforms while there's no browser to scroll: on the XZ screen when
+        // its browser is closed (streaming), on the computer when the browser is hidden
+        const bool browserUp = xzLink.isEnabled() && xzLink.isConnected() ? xzView.isBrowserShown()
+                                                                             : browser.isShowing() && ! browser.isCollapsed();
+        if (browserUp) browser.scroll ((int) std::round (v.delta));
+        else zoomWaves (v.delta);
+    }
+    else if (id == "view.zoom") zoomWaves (v.delta);
     else if (id == "xz.stream")       { if (v.down) xzLink.sendCommand (1); }
     else if (id == "xz.stems")        { if (v.down) xzLink.sendCommand (2); }
     else if (id == "xz.mods")         { if (v.down) xzLink.sendCommand (3); }
@@ -865,7 +880,8 @@ void MainComponent::resized()
     else if (page == 0)
     {
         // The decks keep a fixed height
-        const int deckH = juce::jlimit (150, juce::jmax (150, r.getHeight() / 2), settings.deckPanelHeight);
+        // (plus the overview's bar grid strip)
+        const int deckH = juce::jlimit (150, juce::jmax (150, r.getHeight() / 2), settings.deckPanelHeight) + (int) DeckPanel::gridStripH + 1;
         auto decks = r.removeFromTop (deckH);
         deck1.setBounds (decks.removeFromLeft (decks.getWidth() / 2).withTrimmedRight (1));
         deck2.setBounds (decks);
@@ -1720,6 +1736,15 @@ void MainComponent::stopRecording()
         flash ("Saved " + made);
     }), true);
     recText = {};
+}
+
+void MainComponent::zoomWaves (double steps)
+{
+    // each step of the knob: 10 % closer (clockwise) or further out
+    if (steps == 0.0) return;
+    waves.setVisibleSeconds (waves.getVisibleSeconds() * std::pow (1.1, -steps));
+    settings.visibleSeconds = waves.getVisibleSeconds();   // (saved with the other settings on the way out)
+    xzView.getWaves().setVisibleSeconds (settings.visibleSeconds);
 }
 
 void MainComponent::toggleSetList()

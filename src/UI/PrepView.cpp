@@ -344,10 +344,23 @@ void PrepView::paint (juce::Graphics& g)
             auto pad = juce::Rectangle<float> (r.getX() + i * (w + 5.0f), r.getY(), w, r.getHeight());
             const bool set = st.hotStart[(size_t) i].load() >= 0.0;
             const auto c = juce::Colour (st.hotColour[(size_t) i].load());
-            g.setColour (set ? c.withAlpha (0.9f) : Theme::panelHi);
-            g.fillRect (pad);
-            g.setColour (set ? c.brighter (0.3f) : Theme::line);
-            g.drawRect (pad.reduced (0.5f), 1.0f);
+            if (set)
+            {
+                // a 2 px outline in the cue's colour, a 2 px black line inside it, then the colour
+                g.setColour (c.brighter (0.3f));
+                g.fillRect (pad);
+                g.setColour (juce::Colours::black);
+                g.fillRect (pad.reduced (2.0f));
+                g.setColour (c.withAlpha (0.9f));
+                g.fillRect (pad.reduced (4.0f));
+            }
+            else
+            {
+                g.setColour (Theme::panelHi);
+                g.fillRect (pad);
+                g.setColour (Theme::line);
+                g.drawRect (pad.reduced (0.5f), 1.0f);
+            }
             regions.push_back ({ pad, "hot." + juce::String (i), 3 });
             auto label = juce::String::charToString ((juce::juce_wchar) ('A' + i));
             if (set && st.hotEnd[(size_t) i].load() > st.hotStart[(size_t) i].load())

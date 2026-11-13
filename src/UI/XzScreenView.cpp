@@ -4,6 +4,7 @@
 #include "../Audio/MusicalKey.h"
 #include "ButtonStyles.h"
 #include "ColourPicker.h"
+#include "CentrifugeRotor.h"
 
 namespace orbit
 {
@@ -96,6 +97,21 @@ void XzScreenView::touch (int type, int x, int y)
         drag = Drag::none;
         if (browserShown)
         {
+            // tapping anywhere but the search box ends typing in it
+            if (! searchRect.contains (p) && browser.search.hasKeyboardFocus (true)) browser.table.grabKeyboardFocus();
+            // a column's edge in the header: drag to make it wider / narrower (the XZ's own widths)
+            if (colHeaderRect.expanded (0.0f, 6.0f).contains (p))
+                for (auto& [id, right] : colEdges)
+                    if (std::abs (p.x - right) < 12.0f)
+                    {
+                        resizingCol = id;
+                        resizeStartX = p.x;
+                        resizeStartW = (float) (browser.xzColumnWidths.count (id) ? browser.xzColumnWidths[id] : 0);
+                        if (resizeStartW <= 0.0f) resizeStartW = (float) juce::jlimit (40, 360, browser.table.getHeader().getColumnWidth (id));
+                        drag = Drag::browserList;
+                        dragAxis = 3;
+                        return;
+                    }
             if (load1Rect.contains (p)) { browser.loadSelected (0); return; }
             if (load2Rect.contains (p)) { browser.loadSelected (1); return; }
             if (closeRect.contains (p)) { browserShown = false; return; }
@@ -149,6 +165,11 @@ void XzScreenView::touch (int type, int x, int y)
     else if (drag == Drag::browserList && type == 3)
     {
         // up / down moves the selection a row at a time; sideways (the track list) shows the other columns
+        if (dragAxis == 3 && resizingCol > 0)
+        {
+            browser.xzColumnWidths[resizingCol] = (int) juce::jlimit (30.0f, 600.0f, resizeStartW + (p.x - resizeStartX));
+            return;
+        }
         if (dragAxis == 0 && (std::abs (p.x - listDragX) > 8.0f || std::abs (p.y - listDragY) > 8.0f))
             dragAxis = (! dragInTree && std::abs (p.x - listDragX) > std::abs (p.y - listDragY)) ? 2 : 1;
         if (dragAxis == 2)
@@ -174,7 +195,13 @@ void XzScreenView::touch (int type, int x, int y)
             }
         }
     }
-    if (type == 2) { drag = Drag::none; dragDeck = -1; }
+    if (type == 2)
+    {
+        if (dragAxis == 3 && resizingCol > 0 && browser.onXzColumnsChanged) browser.onXzColumnsChanged();
+        resizingCol = -1;
+        drag = Drag::none;
+        dragDeck = -1;
+    }
 }
 
 void XzScreenView::openPopup (juce::String title, juce::Rectangle<float> anchor, std::vector<Popup::Item> items, bool swatches,
@@ -238,6 +265,22 @@ void XzScreenView::showEditVersionMenu (int deck, juce::Rectangle<float> area)
 void XzScreenView::paintOverChildren (juce::Graphics& g)
 {
     if (popup.open) paintPopup (g);
+    if (splashStart >= 0.0)
+    {
+        // the start-up animation, stretched to 5 s
+        const double now = juce::Time::getMillisecondCounterHiRes() / 1000.0;
+        const float e = (float) ((now - splashStart) * 3.0 / 5.0);
+        const float dt = splashLast < 0.0 ? 0.0f : (float) juce::jlimit (0.0, 0.1, (now - splashLast) * 3.0 / 5.0);
+        splashLast = now;
+        splashAngle = std::fmod (splashAngle + CentrifugeSplash::spinSpeedAt (e) * dt * 16.0f, juce::MathConstants<float>::twoPi);
+        if (e >= 3.0f) splashStart = -1.0;
+        else
+        {
+            g.setColour (psyched::Colours::void_);
+            if (e < 2.6f) g.fillAll();
+            CentrifugeSplash::paintFrame (g, getLocalBounds().toFloat(), e, splashAngle);
+        }
+    }
 }
 
 void XzScreenView::paintPopup (juce::Graphics& g)
@@ -456,7 +499,8 @@ void XzScreenView::paintBrowser (juce::Graphics& g, juce::Rectangle<int> area)
     {
         const int id = hdr.getColumnIdOfIndex (i, false);
         if (browser.xzColumns.count (id) == 0) continue;
-        const float w = (float) juce::jlimit (40, 360, hdr.getColumnWidth (id));
+        const float w = browser.xzColumnWidths.count (id) ? (float) browser.xzColumnWidths[id]
+                                                          : (float) juce::jlimit (40, 360, hdr.getColumnWidth (id));
         cols.push_back ({ id, w });
         total += w;
     }
@@ -465,7 +509,9 @@ void XzScreenView::paintBrowser (juce::Graphics& g, juce::Rectangle<int> area)
     colMaxScroll = juce::jmax (0.0f, total - r.getWidth());
     colScroll = juce::jlimit (0.0f, colMaxScroll, colScroll);
 
-    auto headRow = r.removeFromTop (20.0f);
+    auto headRow = r.removeFromTop (22.0f);
+    colHeaderRect = headRow;
+    colEdges.clear();
     {
         juce::Graphics::ScopedSaveState ss (g);
         g.reduceClipRegion (headRow.toNearestInt());
@@ -476,8 +522,9 @@ void XzScreenView::paintBrowser (juce::Graphics& g, juce::Rectangle<int> area)
             g.setColour (Theme::textDim);
             g.drawText (hdr.getColumnName (id).toUpperCase(), juce::Rectangle<float> (x + 4.0f, headRow.getY(), w - 8.0f, headRow.getHeight()),
                         juce::Justification::centredLeft, true);
-            g.setColour (Theme::line);
-            g.fillRect (x + w - 1.0f, headRow.getY() + 4.0f, 1.0f, headRow.getHeight() - 8.0f);
+            g.setColour (id == resizingCol ? Theme::accent : Theme::line);
+            g.fillRect (x + w - (id == resizingCol ? 2.0f : 1.0f), headRow.getY() + 3.0f, id == resizingCol ? 3.0f : 1.0f, headRow.getHeight() - 6.0f);
+            colEdges.push_back ({ id, x + w });
             x += w;
         }
         g.setColour (Theme::line);
@@ -639,17 +686,6 @@ void XzScreenView::paintInfo (juce::Graphics& g, int deck, juce::Rectangle<float
     g.setColour (st.master.load() ? Theme::accent : Theme::text);
     g.setFont (Theme::mono (24.0f, true));
     g.drawText (loaded && bpm > 0 ? juce::String (bpm, 2) : "--.--", bpmArea, juce::Justification::centredRight);
-    // SYNC / SLIP / LOOP, only while they're on
-    auto lit = [&] (const juce::String& text, bool on, juce::Colour c)
-    {
-        if (! on) return;
-        auto b = top.removeFromRight (juce::jmax (36.0f, psyched::Fonts::label().getStringWidthFloat (text) + 12.0f)).reduced (0.0f, 3.0f);
-        psyched::paintChip (g, b, text, c, psyched::ChipState::on);
-        top.removeFromRight (4.0f);
-    };
-    lit ("LOOP", st.loopActive.load(), Theme::accent);
-    lit ("SLIP", st.slip.load(), Theme::warn);
-    lit ("SYNC", st.sync.load(), Theme::sync);
     g.setColour (loaded ? Theme::text : Theme::textFaint);
     g.setFont (Theme::font (18.0f, true));
     g.drawText (loaded ? track->info.title : juce::String ("No track loaded"), top, juce::Justification::centredLeft, true);
@@ -736,10 +772,7 @@ void XzScreenView::paintInfo (juce::Graphics& g, int deck, juce::Rectangle<float
 
     // Overview, with the grid button on its left
     r.removeFromTop (2.0f);
-    auto gridBtn = r.removeFromLeft (16.0f);
-    paintGridToggle (g, gridBtn, overviewGrid, styledColour ("overviewgrid", Theme::sync));
-    gridRects[(size_t) deck] = gridBtn.expanded (4.0f, 0.0f);
-    r.removeFromLeft (4.0f);
+    gridRects[(size_t) deck] = {};
     auto ov = r;
     overviewRects[(size_t) deck] = ov;
     g.setColour (juce::Colours::black);
@@ -747,7 +780,7 @@ void XzScreenView::paintInfo (juce::Graphics& g, int deck, juce::Rectangle<float
     if (! loaded || track->waveform == nullptr) return;
 
     // the waveform fits between the bar strip along the top (grid on) and the phrase strip along the bottom
-    const float barStrip = overviewGrid ? overviewStripHeight (ov.getHeight()) : 0.0f;
+    const float barStrip = 7.0f;   // the bar grid's strip, always shown
     const float phraseStrip = track->phrases.empty() ? 0.0f : overviewStripHeight (ov.getHeight(), true);
     auto waveArea = ov.withTrimmedTop (barStrip > 0.0f ? barStrip + 1.0f : 0.0f).withTrimmedBottom (phraseStrip > 0.0f ? phraseStrip + 1.0f : 0.0f);
     auto& o = overviews[(size_t) deck];
@@ -778,9 +811,7 @@ void XzScreenView::paintInfo (juce::Graphics& g, int deck, juce::Rectangle<float
     const float px = ov.getX() + (float) juce::jlimit (0.0, 1.0, fold.reference / dlen) * ov.getWidth();
     g.setColour (juce::Colours::black.withAlpha (0.35f));
     g.fillRect (juce::Rectangle<float> (ov.getX(), ov.getY(), px - ov.getX(), ov.getHeight()));
-    if (overviewGrid)
-        paintOverviewGrid (g, ov, track->grid, len, &fold, track->phrases.empty() ? 0.0f : overviewStripHeight (ov.getHeight()),
-                           overviewStripHeight (ov.getHeight()));
+    paintOverviewGrid (g, ov, track->grid, len, &fold, track->phrases.empty() ? 0.0f : overviewStripHeight (ov.getHeight(), true), barStrip);
     paintOverviewMarks (g, ov, TrackMarks::fromDeck (st, track->phrases, track.get()), true, &fold);
     g.setColour (juce::Colours::white);
     g.fillRect (juce::Rectangle<float> (px - 1.0f, ov.getY(), 2.0f, ov.getHeight()));

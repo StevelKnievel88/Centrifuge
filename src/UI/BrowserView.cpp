@@ -171,35 +171,63 @@ class BrowserView::Header : public juce::TableHeaderComponent
 {
 public:
     explicit Header (BrowserView& o) : owner (o) {}
-    void addMenuItems (juce::PopupMenu& menu, int columnIdClicked) override
+    /** Right-click: a panel that stays open while you tick (click outside it to close): the columns here and the
+        columns on the XDJ-XZ screen side by side, and the # order buttons. */
+    void showColumnChooserMenu (int) override
     {
-        menu.addItem (9001, "Save this order as the list's # order (renumbers 1, 2, 3 ... as shown now)");
-        menu.addItem (9002, "Reset the # order (back to the list's own order)");
-        menu.addSeparator();
-        // two lists: the columns here (below) and the columns on the XDJ-XZ screen's browser
-        juce::PopupMenu xz;
-        for (int i = 0; i < getNumColumns (false); ++i)
+        struct Panel : juce::Component
         {
-            const int id = getColumnIdOfIndex (i, false);
-            xz.addItem (9100 + id, getColumnName (id), true, owner.xzColumns.count (id) > 0);
-        }
-        menu.addSubMenu ("Columns on the XDJ-XZ screen", xz);
-        menu.addSectionHeader ("Columns here");
-        juce::TableHeaderComponent::addMenuItems (menu, columnIdClicked);
+            Panel (Header& h) : header (h)
+            {
+                addAndMakeVisible (saveOrder);
+                addAndMakeVisible (resetOrder);
+                saveOrder.setTooltip ("Renumbers the # column 1, 2, 3 ... in the order the list is shown now");
+                saveOrder.onClick = [this] { header.owner.saveOrderAsDefault(); };
+                resetOrder.onClick = [this] { header.owner.resetSavedOrder(); };
+                for (int i = 0; i < header.getNumColumns (false); ++i)
+                {
+                    const int id = header.getColumnIdOfIndex (i, false);
+                    auto* here = hereBoxes.add (new juce::ToggleButton (header.getColumnName (id)));
+                    here->setToggleState (header.isColumnVisible (id), juce::dontSendNotification);
+                    here->onClick = [this, id, here] { header.setColumnVisible (id, here->getToggleState()); };
+                    addAndMakeVisible (here);
+                    auto* xz = xzBoxes.add (new juce::ToggleButton (header.getColumnName (id)));
+                    xz->setToggleState (header.owner.xzColumns.count (id) > 0, juce::dontSendNotification);
+                    xz->onClick = [this, id, xz]
+                    {
+                        if (xz->getToggleState()) header.owner.xzColumns.insert (id); else header.owner.xzColumns.erase (id);
+                        if (header.owner.onXzColumnsChanged) header.owner.onXzColumnsChanged();
+                    };
+                    addAndMakeVisible (xz);
+                }
+                setSize (380, 76 + 24 * hereBoxes.size() + 10);
+            }
+            void paint (juce::Graphics& g) override
+            {
+                g.fillAll (juce::Colour (0xff141221));
+                psyched::paintLabel (g, "COLUMNS HERE", juce::Rectangle<float> (10.0f, 50.0f, 170.0f, 20.0f), juce::Justification::centredLeft, Theme::accent, 10.0f);
+                psyched::paintLabel (g, "ON THE XDJ-XZ SCREEN", juce::Rectangle<float> (196.0f, 50.0f, 180.0f, 20.0f), juce::Justification::centredLeft, Theme::accent, 10.0f);
+                g.setColour (Theme::line);
+                g.fillRect (188, 50, 1, getHeight() - 58);
+            }
+            void resized() override
+            {
+                saveOrder.setBounds (10, 10, 220, 28);
+                resetOrder.setBounds (236, 10, getWidth() - 246, 28);
+                for (int i = 0; i < hereBoxes.size(); ++i)
+                {
+                    hereBoxes[i]->setBounds (10, 76 + i * 24, 170, 22);
+                    xzBoxes[i]->setBounds (196, 76 + i * 24, 174, 22);
+                }
+            }
+            Header& header;
+            juce::TextButton saveOrder { "SAVE THIS ORDER AS #" }, resetOrder { "RESET # ORDER" };
+            juce::OwnedArray<juce::ToggleButton> hereBoxes, xzBoxes;
+        };
+        juce::CallOutBox::launchAsynchronously (std::make_unique<Panel> (*this), getScreenBounds().withWidth (40)
+                                                    .withX (getMouseXYRelative().x + getScreenX()), nullptr);
     }
-    void reactToMenuItem (int menuReturnId, int columnIdClicked) override
-    {
-        if (menuReturnId > 9100 && menuReturnId < 9200)
-        {
-            const int id = menuReturnId - 9100;
-            if (owner.xzColumns.count (id) > 0) owner.xzColumns.erase (id); else owner.xzColumns.insert (id);
-            if (owner.onXzColumnsChanged) owner.onXzColumnsChanged();
-            return;
-        }
-        if (menuReturnId == 9001) owner.saveOrderAsDefault();
-        else if (menuReturnId == 9002) owner.resetSavedOrder();
-        else juce::TableHeaderComponent::reactToMenuItem (menuReturnId, columnIdClicked);
-    }
+
 private:
     BrowserView& owner;
 };
@@ -505,6 +533,10 @@ void BrowserView::showList (std::shared_ptr<const LibrarySource> src, const Play
 
 void BrowserView::applyFilter()
 {
+    // the highlighted track stays highlighted (and in view) when the list is sorted or filtered again
+    const int selRow = table.getSelectedRow();
+    const int keepTrack = selRow >= 0 && selRow < (int) rows.size() && currentSource.get() == lastFilteredSource ? rows[(size_t) selRow] : -1;
+    lastFilteredSource = currentSource.get();
     rows.clear();
     const auto q = search.getText().trim().toLowerCase();
     for (int i : allRows)
@@ -565,6 +597,13 @@ void BrowserView::applyFilter()
 
     countLabel.setText (juce::String ((int) rows.size()) + " tracks", juce::dontSendNotification);
     table.updateContent();
+    if (keepTrack >= 0)
+        if (auto it = std::find (rows.begin(), rows.end(), keepTrack); it != rows.end())
+        {
+            const int row = (int) (it - rows.begin());
+            table.selectRow (row);
+            table.scrollToEnsureRowIsOnscreen (row);
+        }
     table.repaint();
     if (infoOpen) infoPanel.setTracks (getSelectedTracks());
 }
