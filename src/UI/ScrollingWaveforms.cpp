@@ -172,7 +172,7 @@ void ScrollingWaveforms::onVBlank (double t)
         const bool playing = st.playing.load();
         const double rate = st.tempoRatio.load();
         dv.fold.reference = dv.shownPos;
-        const double raw = dv.fold.toDisplay (st.positionSec.load() - (playing ? latency * rate : 0.0), st.playSegment.load());
+        const double raw = dv.fold.toDisplay (st.positionSec.load() - (playing ? (latency - extraLead) * rate : 0.0), st.playSegment.load());
         const double prev = dv.shownPos;
         dv.shownPos = dv.smoother.update (raw, playing, rate, t);
         if (std::abs (dv.shownPos - prev) > 1.0e-6) moving = true;
@@ -231,14 +231,14 @@ juce::Rectangle<int> ScrollingWaveforms::dividerBounds (int deck) const
 int ScrollingWaveforms::dividerAt (juce::Point<int> p) const
 {
     for (int d = 0; d < numSlots(); ++d)
-        if (hasBottomLane (d) && dividerBounds (d).expanded (0, 3).contains (p))
+        if (hasBottomLane (d) && dividerBounds (d).expanded (0, touchMode ? 14 : 3).contains (p))
             return d;
     return -1;
 }
 
 bool ScrollingWaveforms::nearPlayhead (juce::Point<int> p) const
 {
-    return std::abs ((float) p.x - playheadX (getLocalBounds())) <= 5.0f && dividerAt (p) < 0;
+    return std::abs ((float) p.x - playheadX (getLocalBounds())) <= (touchMode ? 18.0f : 5.0f) && dividerAt (p) < 0;
 }
 
 double ScrollingWaveforms::sourceTimeAt (int deck, float x) const
@@ -293,8 +293,18 @@ juce::Rectangle<int> ScrollingWaveforms::drawLabel (juce::Graphics& g, juce::Rec
     return r.toNearestInt();
 }
 
+std::vector<std::pair<int, juce::String>> ScrollingWaveforms::laneStyleChoices (int lane)
+{
+    std::vector<std::pair<int, juce::String>> v { { stems, "Stems (overlaid)" }, { stemsSplit, "Stems (a row each)" },
+                                                   { threeBand, "3-Band" }, { rgb, "RGB" }, { singleColour, "Single colour" } };
+    for (int s = 0; s < 4; ++s) v.push_back ({ stemDrums + s, juce::String (stemName (s)) + " only" });
+    if (lane == 1) v.push_back ({ laneOff, "Off (one lane)" });
+    return v;
+}
+
 void ScrollingWaveforms::showLaneStyleMenu (int slot, int lane)
 {
+    if (onLaneLabelTapped) { onLaneLabelTapped (slot, lane, labelRects[(size_t) slot][(size_t) lane]); return; }
     const int cur = lanes[(size_t) slot][(size_t) lane].style;
     juce::PopupMenu m;
     m.addSectionHeader (lane == 0 ? "Top lane" : "Second lane");
@@ -519,25 +529,25 @@ void ScrollingWaveforms::paintLane (juce::Graphics& g, int d, int lane, juce::Re
                 g.drawImageAt (img, area.getX(), area.getY());
                 g.setOpacity (1.0f);
             };
-            if (gain <= 0.001f)
+            if (gain > 0.001f)
             {
-                auto so = o;
-                so.outline = true;
-                direct (so, op);
-                continue;
+                juce::Graphics::ScopedSaveState ss (g);
+                if (highPass)
+                {
+                    auto so = o;
+                    so.hollow = 1.0f - gain;
+                    direct (so, 0.85f * op);
+                }
+                else
+                {
+                    g.addTransform (juce::AffineTransform::scale (1.0f, gain, 0.0f, cy));
+                    tc.draw (g, area, t, px, (0.45f + 0.5f * gain) * op);
+                }
             }
-            juce::Graphics::ScopedSaveState ss (g);
-            if (highPass)
-            {
-                auto so = o;
-                so.hollow = 1.0f - gain;
-                direct (so, 0.85f * op);
-            }
-            else
-            {
-                g.addTransform (juce::AffineTransform::scale (1.0f, gain, 0.0f, cy));
-                tc.draw (g, area, t, px, (0.45f + 0.5f * gain) * op);
-            }
+            // whenever it's turned down / filtered at all, the whole stem's outline stays, in its edge colour
+            auto so = o;
+            so.outline = true;
+            direct (so, op);
         }
     }
     else
@@ -1011,6 +1021,7 @@ void ScrollingWaveforms::mouseDown (const juce::MouseEvent& e)
     dragDivider = dividerAt (e.getPosition());
     if (dragDivider >= 0) return;
     if (nearPlayhead (e.getPosition())) { dragPlayhead = true; return; }
+    if (touchMode) return;   // the jog wheels scrub; a finger on the screen never moves the track
     dragDeck = d;
     dragStartPos = decks[(size_t) dragDeck].shownPos;
     // While playing, grabbing the waveform holds it like a hand on the platter; dragging scrubs it (you hear it)

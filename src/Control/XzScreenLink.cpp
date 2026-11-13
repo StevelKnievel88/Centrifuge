@@ -1,3 +1,10 @@
+#if defined (_WIN32)
+ #include <winsock2.h>
+#else
+ #include <sys/socket.h>
+ #include <netinet/in.h>
+ #include <netinet/tcp.h>
+#endif
 #include "XzScreenLink.h"
 #include <juce_events/juce_events.h>
 #include <cstring>
@@ -90,12 +97,29 @@ void XzScreenLink::submitFrame (const juce::Image& frameIn)
     std::vector<juce::uint16> px ((size_t) (width * height));
     {
         const juce::Image::BitmapData bd (frame, juce::Image::BitmapData::readOnly);
+        const bool rgb = frame.getFormat() == juce::Image::RGB, argb = frame.getFormat() == juce::Image::ARGB;
         for (int y = 0; y < height; ++y)
+        {
+            auto* out = &px[(size_t) (y * width)];
+            if (rgb || argb)
+            {
+                // straight from the pixels (much quicker than a colour per pixel: less delay before it's sent)
+                const auto* line = bd.getLinePointer (y);
+                for (int x = 0; x < width; ++x)
+                {
+                    juce::uint8 r, gr, b;
+                    if (rgb) { const auto* p = reinterpret_cast<const juce::PixelRGB*> (line + x * bd.pixelStride); r = p->getRed(); gr = p->getGreen(); b = p->getBlue(); }
+                    else     { const auto* p = reinterpret_cast<const juce::PixelARGB*> (line + x * bd.pixelStride); r = p->getRed(); gr = p->getGreen(); b = p->getBlue(); }
+                    out[x] = (juce::uint16) (((r >> 3) << 11) | ((gr >> 2) << 5) | (b >> 3));
+                }
+                continue;
+            }
             for (int x = 0; x < width; ++x)
             {
                 const auto c = bd.getPixelColour (x, y);
-                px[(size_t) (y * width + x)] = (juce::uint16) (((c.getRed() >> 3) << 11) | ((c.getGreen() >> 2) << 5) | (c.getBlue() >> 3));
+                out[x] = (juce::uint16) (((c.getRed() >> 3) << 11) | ((c.getGreen() >> 2) << 5) | (c.getBlue() >> 3));
             }
+        }
     }
     {
         std::lock_guard<std::mutex> l (frameLock);
@@ -154,6 +178,14 @@ void XzScreenLink::serve (const juce::String& ip)
 {
     juce::StreamingSocket s;
     if (! s.connect (ip, framePort, 2000)) return;
+    {
+        // Pictures go out as soon as they're ready, and only a little waits in the socket: the screen shows the newest
+        // picture rather than a queue of older ones (less delay behind the audio)
+        const auto fd = s.getRawSocketHandle();
+        int one = 1, buf = 96 * 1024;
+        setsockopt (fd, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*> (&one), sizeof (one));
+        setsockopt (fd, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<const char*> (&buf), sizeof (buf));
+    }
     connected = true;
     setStatus ("CONNECTED " + ip);
 

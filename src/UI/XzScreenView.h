@@ -3,6 +3,7 @@
 #include "PhaseMeter.h"
 #include "BrowserView.h"
 #include "../Control/ActionRouter.h"
+#include "../App/TrackEditor.h"
 
 namespace orbit
 {
@@ -23,6 +24,10 @@ public:
     void setOverviewStyle (int style, bool half, juce::Colour single, bool singleFollowsDeck);
     void setOverviewGrid (bool on) { overviewGrid = on; }
     std::function<void()> onGridToggled;
+    /** For the EDITED button and the edit version menu, and the deck number's colours. */
+    void setEditor (TrackEditor* e) { editor = e; }
+    std::function<void (int deck)> onEditViewToggled;
+    std::function<void (int deck, juce::Colour)> onDeckColour;
 
     /** The browser instead of the deck panels (mappable: XDJ-XZ screen > browser on / off). */
     void setBrowserShown (bool b) { browserShown = b; }
@@ -36,12 +41,34 @@ public:
 
     void resized() override;
     void paint (juce::Graphics&) override;
+    void paintOverChildren (juce::Graphics&) override;
 
 private:
     void paintInfo (juce::Graphics& g, int deck, juce::Rectangle<float> r);
     void paintBrowser (juce::Graphics& g, juce::Rectangle<int> r);
     void seekOverview (int deck, float x);
     void sendToWaves (int type, juce::Point<float> p);
+
+    /** A menu drawn on the screen itself (a pop-up window can't be shown there): a list, or colour swatches. */
+    struct Popup
+    {
+        struct Item { int id; juce::String text; juce::Colour colour; bool ticked = false; bool enabled = true; };
+        bool open = false, swatches = false;
+        juce::String title;
+        juce::Rectangle<float> anchor;
+        std::vector<Item> items;
+        std::vector<juce::Rectangle<float>> rects;
+        std::function<void (int id)> chosen;
+    };
+    void openPopup (juce::String title, juce::Rectangle<float> anchor, std::vector<Popup::Item> items, bool swatches,
+                    std::function<void (int)> chosen);
+    void paintPopup (juce::Graphics& g);
+    void showLaneMenu (int slot, int lane, juce::Rectangle<int> label);
+    void showDeckColourMenu (int deck, juce::Rectangle<float> badge);
+    void showEditVersionMenu (int deck, juce::Rectangle<float> area);
+    Popup popup;
+    TrackEditor* editor = nullptr;
+    std::array<juce::Rectangle<float>, 2> badgeRects, editViewRects, editVerRects;
 
     AudioEngine& engine;
     ActionRouter& router;

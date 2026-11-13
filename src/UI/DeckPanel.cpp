@@ -290,7 +290,7 @@ void DeckPanel::paint (juce::Graphics& g)
         const auto rangeText = range >= 100 ? juce::String ("WIDE") : "\xc2\xb1" + juce::String (range) + "%";
         g.drawText (rangeText, tempo, juce::Justification::centredRight);
         const float rw = psyched::Fonts::label().getStringWidthFloat (rangeText) + 12.0f;
-        regions.push_back ({ tempo.withLeft (tempo.getRight() - rw), "d" + juce::String (deck + 1) + ".pitchrange", 0 });   // click: 6 / 10 / 25 / 50 % / wide
+        regions.push_back ({ tempo.withLeft (tempo.getRight() - rw), "d" + juce::String (deck + 1) + ".pitchrange", 0 });   // click: 6 / 10 / 16 % / wide
 
         right.removeFromRight (8.0f);
         const auto p = juce::String ("d") + juce::String (deck + 1) + ".";

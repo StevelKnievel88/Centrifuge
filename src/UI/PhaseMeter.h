@@ -35,66 +35,22 @@ public:
     static int bracketLevels (int bars) { int n = 0; for (int L : { 4, 16, 32, 64 }) if (L <= bars) ++n; return n; }
     static constexpr float bracketStep = 4.0f;
 
-    void mouseDown (const juce::MouseEvent& e) override
-    {
-        if (! e.mods.isPopupMenu()) return;
-        juce::PopupMenu m;
-        m.addSectionHeader ("Phrase meter");
-        for (int b : { 4, 8, 16, 32, 64 })
-            m.addItem (b, juce::String (b) + " bars", true, ! followPhrases && phraseBars == b);
-        m.addItem (100, "Follow the track's phrases (length and start from the phrase playing)", true, followPhrases);
-        juce::Component::SafePointer<PhaseMeter> safe (this);
-        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [safe] (int r)
-        {
-            if (safe == nullptr || r == 0) return;
-            int bars = safe->phraseBars;
-            bool follow = safe->followPhrases, br = safe->brackets;
-            if (r == 100) follow = ! follow;
-            else if (r == 200) br = ! br;
-            else { bars = r; follow = false; }
-            safe->setOptions (bars, follow, br);
-            if (safe->onOptionsChanged) safe->onOptionsChanged (bars, follow, br);
-        });
-    }
-
     void paint (juce::Graphics& g) override
     {
+        // Always 32 bars of grey blocks (a block per bar); the phrase playing is outlined in the deck's colour over
+        // as many bars as it lasts (an 8-bar phrase outlines the first quarter). No phrases: 16-bar phrases.
         auto r = getLocalBounds().toFloat();
-        const float band = brackets ? (float) bracketLevels (maxBarsShown()) * bracketStep + 2.0f : 0.0f;
-        // the same row height on both pages (PREP's single row isn't stretched)
-        const float rowH = juce::jmax (4.0f, (r.getHeight() - 4.0f - band) / 2.0f);
+        const float rowH = juce::jmax (4.0f, (r.getHeight() - 4.0f) / 2.0f);
+        layoutBars = 32;
         if (prepOnly)
         {
-            layoutBars = phraseBars;
-            if (followPhrases)
-            {
-                int b = 0;
-                layoutBars = 16;
-                if (beatPosition (AudioEngine::prepDeck, b) >= 0.0) while (layoutBars < 64 && layoutBars < b) layoutBars *= 2;
-            }
-            auto rr = r.withSizeKeepingCentre (r.getWidth(), juce::jmin (r.getHeight(), band + rowH));
-            const auto lay = paintRow (g, AudioEngine::prepDeck, rr.removeFromBottom (rowH));
-            if (band > 0.0f) paintBrackets (g, lay, rr.getBottom() - 2.0f, false);
+            auto rr = r.withSizeKeepingCentre (r.getWidth(), juce::jmin (r.getHeight(), rowH));
+            paintRow (g, AudioEngine::prepDeck, rr);
             return;
         }
-        // Following the phrases: both meters use the same layout (16 bars, or 32 / 64 when a phrase is longer) so the
-        // beats line up between the decks; a shorter phrase fills the start of it, outlined in the deck's colour
-        layoutBars = phraseBars;
-        if (followPhrases)
-        {
-            int mx = 0;
-            for (int d = 0; d < 2; ++d) { int b = 0; if (beatPosition (d, b) >= 0.0) mx = juce::jmax (mx, b); }
-            layoutBars = 16;
-            while (layoutBars < 64 && layoutBars < mx) layoutBars *= 2;
-        }
-        // deck 1, one set of brackets between the two meters (pointing both ways), deck 2
-        const auto lay1 = paintRow (g, 0, r.removeFromTop (rowH));
-        r.removeFromTop (2.0f);
-        auto mid = r.removeFromTop (band);
-        r.removeFromTop (2.0f);
-        const auto lay2 = paintRow (g, 1, r.removeFromTop (rowH));
-        if (band > 0.0f)
-            paintBrackets (g, lay1.cur >= 0 || lay2.cur < 0 ? lay1 : lay2, mid.getY() + 1.0f, true);
+        paintRow (g, 0, r.removeFromTop (rowH));
+        r.removeFromTop (4.0f);
+        paintRow (g, 1, r.removeFromTop (rowH));
     }
 
 private:
@@ -120,7 +76,7 @@ private:
     /** Beat number within the phrase (fractional), or -1 when there's nothing to show; `bars` = the phrase's length. */
     double beatPosition (int d, int& bars) const
     {
-        bars = phraseBars;
+        bars = 16;
         auto t = engine.deck (d).getLoadedTrack();
         if (t == nullptr || ! t->grid.isValid()) return -1.0;
         const auto& st = engine.deck (d).state();
@@ -128,7 +84,7 @@ private:
         const auto& beats = t->grid.getBeats();
 
         // Following the track's phrases: count from the start of the phrase playing, over its length
-        if (followPhrases && ! t->phrases.empty())
+        if (! t->phrases.empty())
         {
             const auto& ph = t->phrases;
             for (size_t i = 0; i < ph.size(); ++i)
@@ -201,29 +157,26 @@ private:
         g.drawText (prep ? juce::String ("PREP") : juce::String (d + 1), badge.toNearestInt(), juce::Justification::centred);
         r.removeFromLeft (4.0f);
 
-        int phrase = phraseBars;
+        int phrase = 16;
         const double b = beatPosition (d, phrase);
-        const int bars = followPhrases ? layoutBars : phrase;    // blocks laid out for this many bars
-        // up to 16 bars: a block per beat; longer: a block per bar (so they still fit)
-        const bool perBeat = bars <= 16;
-        const int upb = perBeat ? 4 : 1;                 // blocks per bar
-        const int n = bars * upb;
-        const int inPhrase = juce::jlimit (1, n, (followPhrases ? phrase : bars) * upb);   // blocks the phrase covers
-        const float gapUnit = perBeat ? 2.0f : 2.5f, gapBar = 5.0f, gap4 = 8.0f, gap16 = 11.0f;
+        const int bars = layoutBars;
+        const int upb = 1;                               // a block per bar
+        const int n = bars;
+        const int inPhrase = juce::jlimit (1, n, phrase); // blocks the phrase covers
+        const float gapUnit = 2.5f, gap4 = 7.0f, gap16 = 11.0f;
         auto gapAfter = [&] (int i)   // gap after block i
         {
-            const int barEnd = (i + 1) % upb == 0 ? (i + 1) / upb : -1;
-            if (barEnd > 0 && barEnd % 16 == 0) return gap16;
-            if (barEnd > 0 && barEnd % 4 == 0) return gap4;
-            if (barEnd > 0 && perBeat) return gapBar;
+            const int barEnd = i + 1;
+            if (barEnd % 16 == 0) return gap16;
+            if (barEnd % 4 == 0) return gap4;
             return gapUnit;
         };
         float gaps = 0.0f;
         for (int i = 0; i < n - 1; ++i) gaps += gapAfter (i);
         const float bw = juce::jmax (1.0f, (r.getWidth() - gaps) / (float) n);
-        const double unitPos = b < 0.0 ? -1.0 : b / (double) (4 / upb);
-        const int cur = unitPos < 0.0 ? -1 : (int) std::floor (unitPos) % inPhrase;
-        const double frac = unitPos < 0.0 ? 0.0 : unitPos - std::floor (unitPos);
+        const double unitPos = b < 0.0 ? -1.0 : b / 4.0;
+        const int cur = unitPos < 0.0 ? -1 : (int) std::floor (unitPos) % juce::jmax (1, phrase) % n;
+        const double frac = b < 0.0 ? 0.0 : b - std::floor (b);   // flashes on every beat
 
         std::vector<float> xs ((size_t) n);
         float x = r.getX();
@@ -234,7 +187,7 @@ private:
             juce::Colour c = juce::Colour (0xff1d1a2e);
             const int bar = i / upb;
             if (cur >= 0 && i < cur)
-                c = (perBeat ? bar % 2 == 1 : (bar / 4) % 2 == 1) ? col.darker (0.9f) : col;   // alternate bars (or 4-bar groups) darker
+                c = (bar / 4) % 2 == 1 ? col.darker (0.9f) : col;   // alternate 4-bar groups darker
             if (i == cur)
             {
                 const float flash = (float) std::exp (-frac * 6.0);
@@ -249,7 +202,7 @@ private:
             // (alternating light / darker with the bars, like the infill)
             if (i < inPhrase && i != cur)
             {
-                g.setColour ((perBeat ? bar % 2 == 1 : (bar / 4) % 2 == 1) ? col.darker (0.9f) : col);
+                g.setColour ((bar / 4) % 2 == 1 ? col.darker (0.9f) : col);
                 g.drawRect (blk, 1.0f);
             }
             x += bw;

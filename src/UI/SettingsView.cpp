@@ -310,6 +310,11 @@ public:
         xzScreenOn.setToggleState (settings.xzScreen, juce::dontSendNotification);
         xzScreenOn.onClick = [this] { settings.xzScreen = xzScreenOn.getToggleState(); onChanged(); };
         add (&xzScreenStatus, 22, "Status");
+        add (&xzLead, 28, "Screen catch-up (ms)");
+        setupSlider (xzLead, 0.0, 400.0, 5.0, settings.xzScreenLeadMs);
+        xzLead.setTooltip ("The picture takes a moment to reach the XZ: its waveforms are drawn this far ahead so they line up with what you hear. "
+                           "Raise it if the screen is behind the audio, lower it if it's ahead.");
+        xzLead.onValueChange = [this] { settings.xzScreenLeadMs = xzLead.getValue(); onChanged(); };
         add (&xzScreenNote, 44, {});
         xzScreenNote.setText ("The deck's STREAM / STEMS / MODS buttons are hidden while it streams. Map them to the XZ's buttons in Mapping > "
                               "XDJ-XZ screen (streaming on / off, stem controls, mods panel), along with the browser on the XZ screen.",
@@ -798,7 +803,7 @@ private:
     struct VinylRow { juce::ToggleButton brakeOn, startOn; juce::Slider brake, start, release; };
     std::array<VinylRow, 2> vinyl;
     juce::ToggleButton throwOn, autoGain;
-    juce::Slider throwSpeed, markerSize, longPress;
+    juce::Slider throwSpeed, markerSize, longPress, xzLead;
     juce::ComboBox stemFormat;
     juce::ToggleButton padColoursOn, jogScreens, xzScreenOn;
     juce::Label xzScreenNote;

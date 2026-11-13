@@ -79,6 +79,16 @@ public:
     void forceRedraw() { needsRedraw = true; }
     /** For a copy that is never on screen (the XDJ-XZ screen): advance it by hand before painting it. */
     void tick (double timestampSec) { onVBlank (timestampSec); }
+    /** The XDJ-XZ screen: touches never scrub or move the track (the jog wheels do that), the split and the playhead
+        are easier to grab, and the lane names ask onLaneLabelTapped instead of opening a menu. */
+    bool touchMode = false;
+    /** Seconds the waveform is drawn ahead, to make up for the time the picture takes to reach a screen (XDJ-XZ). */
+    double extraLead = 0.0;
+    std::function<void (int slot, int lane, juce::Rectangle<int> label)> onLaneLabelTapped;
+    /** The lane styles to choose from (id, name) and the one in use. */
+    static std::vector<std::pair<int, juce::String>> laneStyleChoices (int lane);
+    int laneStyle (int slot, int lane) const { return lanes[(size_t) slot][(size_t) lane].style; }
+    int slotDeck (int slot) const { return ids[(size_t) slot]; }
     juce::Rectangle<float> labelAvoid;   // while painting: the deck badge and lanes button (lane names keep clear of them)
 
     std::function<void (double newVisibleSeconds)> onZoomChanged;

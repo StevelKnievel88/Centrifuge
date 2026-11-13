@@ -6,7 +6,7 @@ namespace orbit
 
 namespace
 {
-    constexpr double pitchRanges[] = { 0.06, 0.10, 0.25, 0.50, 1.00 };   // click the range to step through them
+    constexpr double pitchRanges[] = { 0.06, 0.10, 0.16, 1.00 };   // click the range to step through them
 
     double parseBeats (const juce::String& s)
     {

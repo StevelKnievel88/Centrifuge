@@ -565,7 +565,14 @@ void MidiManager::handleIncomingMidiMessage (juce::MidiInput* source, const juce
                 const bool lsb = b.mode == MidiBinding::Mode::absolute14 && b.type == MidiBinding::Type::cc && number == b.number + 32;
                 if (b.channel == ch && b.type == type && (b.number == number || lsb || type == MidiBinding::Type::pitchBend)
                     && (b.device.isEmpty() || b.device == device))
-                    if (auto* def = findAction (b.actionId)) { actionLabel = def->group + ": " + def->label; break; }
+                    if (auto* def = findAction (b.actionId))
+                    {
+                        actionLabel = def->group + ": " + def->label;
+                        if (def->deck >= 0 && def->deck < 2 && deckDevice[(size_t) (1 - def->deck)] == device
+                            && deckDevice[(size_t) def->deck] != device && device.isNotEmpty())
+                            actionLabel << "  (ignored: this controller is set to drive Deck " << (2 - def->deck) << ")";
+                        break;
+                    }
             }
         }
 
@@ -693,8 +700,10 @@ void MidiManager::handleIncomingMidiMessage (juce::MidiInput* source, const juce
 
             const auto* def = findAction (b.actionId);
             if (def == nullptr) continue;
-            if (def->deck >= 0 && def->deck < 2 && deckDevice[(size_t) def->deck].isNotEmpty() && deckDevice[(size_t) def->deck] != device)
-                continue;   // this deck is driven by another controller
+            if (def->deck >= 0 && def->deck < 2 && deckDevice[(size_t) (1 - def->deck)].isNotEmpty()
+                && deckDevice[(size_t) (1 - def->deck)] == device && deckDevice[(size_t) def->deck] != device)
+                continue;   // this controller drives the other deck (two of the same controller, one per deck). A controller
+                            // that isn't assigned to a deck (a box of knobs for the stems, say) can drive either deck.
             if (! releaseTo.empty())
             {
                 if (std::find (releaseTo.begin(), releaseTo.end(), b.actionId) == releaseTo.end()) continue;

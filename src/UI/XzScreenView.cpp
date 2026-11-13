@@ -3,6 +3,7 @@
 #include "Theme.h"
 #include "../Audio/MusicalKey.h"
 #include "ButtonStyles.h"
+#include "ColourPicker.h"
 
 namespace orbit
 {
@@ -19,7 +20,7 @@ namespace
         return neg ? "-" + str : str;
     }
 
-    constexpr int meterH = 20, infoH = 140;
+    constexpr int meterH = 20, infoH = 142;
 }
 
 XzScreenView::XzScreenView (AudioEngine& e, ActionRouter& r, BrowserView& b)
@@ -29,6 +30,9 @@ XzScreenView::XzScreenView (AudioEngine& e, ActionRouter& r, BrowserView& b)
     addAndMakeVisible (waves);
     addAndMakeVisible (meter);
     meter.setInterceptsMouseClicks (false, false);
+    // a finger on the screen never scrubs (the jog wheels do); the lane names open a menu drawn on the screen
+    waves.touchMode = true;
+    waves.onLaneLabelTapped = [this] (int slot, int lane, juce::Rectangle<int> label) { showLaneMenu (slot, lane, label); };
     setSize (800, 480);
     setVisible (true);
 }
@@ -71,6 +75,20 @@ void XzScreenView::sendToWaves (int type, juce::Point<float> p)
 void XzScreenView::touch (int type, int x, int y)
 {
     const juce::Point<float> p ((float) x, (float) y);
+    if (popup.open)
+    {
+        // a menu is up: a tap picks from it, anywhere else closes it (the rest of that touch does nothing)
+        if (type != 1) return;
+        drag = Drag::none;
+        popup.open = false;
+        for (size_t i = 0; i < popup.rects.size() && i < popup.items.size(); ++i)
+            if (popup.rects[i].contains (p) && popup.items[i].enabled)
+            {
+                if (popup.chosen) popup.chosen (popup.items[i].id);
+                break;
+            }
+        return;
+    }
     if (type == 1)
     {
         downPos = p;
@@ -90,6 +108,9 @@ void XzScreenView::touch (int type, int x, int y)
         for (int d = 0; d < 2; ++d)
         {
             if (gridRects[(size_t) d].contains (p)) { if (onGridToggled) onGridToggled(); return; }
+            if (badgeRects[(size_t) d].contains (p)) { showDeckColourMenu (d, badgeRects[(size_t) d]); return; }
+            if (editViewRects[(size_t) d].contains (p)) { if (onEditViewToggled) onEditViewToggled (d); return; }
+            if (editVerRects[(size_t) d].contains (p)) { showEditVersionMenu (d, editVerRects[(size_t) d]); return; }
             if (qRects[(size_t) d].contains (p))
             {
                 ActionValue av;
@@ -117,6 +138,150 @@ void XzScreenView::touch (int type, int x, int y)
         }
     }
     if (type == 2) { drag = Drag::none; dragDeck = -1; }
+}
+
+void XzScreenView::openPopup (juce::String title, juce::Rectangle<float> anchor, std::vector<Popup::Item> items, bool swatches,
+                              std::function<void (int)> chosen)
+{
+    popup.open = true;
+    popup.title = std::move (title);
+    popup.anchor = anchor;
+    popup.items = std::move (items);
+    popup.swatches = swatches;
+    popup.chosen = std::move (chosen);
+    popup.rects.clear();
+}
+
+void XzScreenView::showLaneMenu (int slot, int lane, juce::Rectangle<int> label)
+{
+    std::vector<Popup::Item> items;
+    const int cur = waves.laneStyle (slot, lane);
+    for (auto& [id, name] : ScrollingWaveforms::laneStyleChoices (lane))
+        items.push_back ({ id, name, {}, id == cur });
+    openPopup (lane == 0 ? "Top lane" : "Second lane", (label + waves.getPosition()).toFloat(), std::move (items), false,
+               [this, slot, lane] (int id) { if (waves.onLaneStyleChosen) waves.onLaneStyleChosen (waves.slotDeck (slot), lane, id); });
+}
+
+void XzScreenView::showDeckColourMenu (int deck, juce::Rectangle<float> badge)
+{
+    // the preset colours (the hot cue colours), and the deck's usual colour
+    std::vector<Popup::Item> items;
+    const auto current = Theme::deckColour (deck);
+    const auto usual = deck == 0 ? psyched::Colours::cyan : psyched::Colours::pink;
+    items.push_back ({ 1000, "DEFAULT", usual, current == usual });
+    const auto& cols = rekordboxCueColours();
+    for (int i = 0; i < (int) cols.size(); ++i)
+        items.push_back ({ i, cols[(size_t) i].name, juce::Colour (cols[(size_t) i].argb), current == juce::Colour (cols[(size_t) i].argb) });
+    openPopup ("Deck " + juce::String (deck + 1) + " colour", badge, std::move (items), true, [this, deck] (int id)
+    {
+        if (! onDeckColour) return;
+        if (id == 1000) onDeckColour (deck, deck == 0 ? psyched::Colours::cyan : psyched::Colours::pink);
+        else if (id >= 0 && id < (int) rekordboxCueColours().size()) onDeckColour (deck, juce::Colour (rekordboxCueColours()[(size_t) id].argb));
+    });
+}
+
+void XzScreenView::showEditVersionMenu (int deck, juce::Rectangle<float> area)
+{
+    if (editor == nullptr || ! editor->hasTrack (deck)) return;
+    const auto names = editor->editVersionNames (deck);
+    const auto active = editor->activeEdit (deck);
+    std::vector<Popup::Item> items;
+    for (int i = 0; i < (int) names.size(); ++i)
+        items.push_back ({ 10 + i, names[(size_t) i], {}, names[(size_t) i] == active });
+    if (names.empty()) items.push_back ({ -1, "(none saved yet - make them on PREP)", {}, false, false });
+    items.push_back ({ 1, "Original (as recorded)", {}, active.isEmpty() && ! editor->hasEdits (deck) });
+    openPopup ("Edit version - what plays", area, std::move (items), false, [this, deck] (int id)
+    {
+        if (editor == nullptr) return;
+        if (id == 1) editor->applyNoEdits (deck);
+        else if (id >= 10) editor->applyEditVersion (deck, id - 10);
+    });
+}
+
+void XzScreenView::paintOverChildren (juce::Graphics& g)
+{
+    if (popup.open) paintPopup (g);
+}
+
+void XzScreenView::paintPopup (juce::Graphics& g)
+{
+    // dim what's behind, then the menu next to what was tapped (kept on the screen)
+    const auto screen = getLocalBounds().toFloat();
+    g.setColour (juce::Colours::black.withAlpha (0.45f));
+    g.fillRect (screen);
+    const float titleH = 26.0f, pad = 6.0f;
+    juce::Rectangle<float> box;
+    popup.rects.clear();
+    if (popup.swatches)
+    {
+        const int cols = 6;
+        const float cw = 62.0f, chh = 40.0f;
+        const int rows = ((int) popup.items.size() + cols - 1) / cols;
+        box = { 0.0f, 0.0f, cols * cw + pad * 2.0f, titleH + rows * chh + pad * 2.0f };
+    }
+    else
+    {
+        const float rowH = 34.0f;
+        float w = 220.0f;
+        for (auto& it : popup.items) w = juce::jmax (w, Theme::font (16.0f).getStringWidthFloat (it.text) + 50.0f);
+        box = { 0.0f, 0.0f, juce::jmin (w, screen.getWidth() - 20.0f), juce::jmin (screen.getHeight() - 12.0f, titleH + popup.items.size() * rowH + pad * 2.0f) };
+    }
+    // below what was tapped if it fits, otherwise above it; then kept inside the screen
+    float x = popup.anchor.getX(), y = popup.anchor.getBottom() + 4.0f;
+    if (y + box.getHeight() > screen.getBottom() - 4.0f) y = popup.anchor.getY() - 4.0f - box.getHeight();
+    x = juce::jlimit (6.0f, screen.getRight() - 6.0f - box.getWidth(), x);
+    y = juce::jlimit (6.0f, juce::jmax (6.0f, screen.getBottom() - 6.0f - box.getHeight()), y);
+    box.setPosition (x, y);
+
+    g.setColour (psyched::Colours::panel);
+    g.fillRect (box);
+    g.setColour (Theme::accent);
+    g.drawRect (box, 1.5f);
+    auto r = box.reduced (pad);
+    g.setColour (Theme::textDim);
+    g.setFont (Theme::font (13.0f, true));
+    g.drawText (popup.title.toUpperCase(), r.removeFromTop (titleH), juce::Justification::centredLeft, true);
+
+    if (popup.swatches)
+    {
+        const int cols = 6;
+        const float cw = r.getWidth() / cols, chh = 40.0f;
+        for (size_t i = 0; i < popup.items.size(); ++i)
+        {
+            auto c = juce::Rectangle<float> (r.getX() + (float) (i % cols) * cw, r.getY() + (float) (i / cols) * chh, cw, chh);
+            popup.rects.push_back (c);
+            auto sw = c.reduced (4.0f);
+            const auto& it = popup.items[i];
+            g.setColour (it.colour);
+            g.fillRect (sw);
+            if (it.ticked) { g.setColour (juce::Colours::white); g.drawRect (sw.expanded (2.0f), 2.0f); }
+            if (it.id == 1000)
+            {
+                g.setColour (psyched::Colours::onSolid);
+                g.setFont (Theme::font (10.0f, true));
+                g.drawText ("DEFAULT", sw, juce::Justification::centred);
+            }
+        }
+        return;
+    }
+    const float rowH = juce::jmin (34.0f, r.getHeight() / (float) juce::jmax<size_t> (1, popup.items.size()));
+    for (auto& it : popup.items)
+    {
+        auto row = r.removeFromTop (rowH);
+        popup.rects.push_back (row);
+        if (it.ticked)
+        {
+            g.setColour (Theme::accent.withAlpha (0.2f));
+            g.fillRect (row);
+            g.setColour (Theme::accent);
+            g.fillRect (row.withWidth (3.0f));
+        }
+        g.setColour (! it.enabled ? Theme::textFaint : it.ticked ? Theme::accent : Theme::text);
+        g.setFont (Theme::font (16.0f, it.ticked));
+        g.drawText (it.text, row.withTrimmedLeft (12.0f), juce::Justification::centredLeft, true);
+        g.setColour (Theme::line.withAlpha (0.4f));
+        g.fillRect (row.removeFromBottom (1.0f));
+    }
 }
 
 void XzScreenView::resized()
@@ -226,45 +391,61 @@ void XzScreenView::paintInfo (juce::Graphics& g, int deck, juce::Rectangle<float
     const auto col = Theme::deckColour (deck);
 
     psyched::paintPanel (g, panel, col, 10.0f);
-    auto r = panel.reduced (8.0f, 0.0f).withTrimmedTop (5.0f).withTrimmedBottom (4.0f);
+    // the number square sits the same distance from the top and the left (clear of the slanted corner)
+    const float edge = 8.0f;
+    auto r = panel.reduced (edge, 0.0f).withTrimmedTop (edge).withTrimmedBottom (4.0f);
+    const auto p = "d" + juce::String (deck + 1) + ".";
+    auto chipStyle = [&] (const juce::String& action) { return ButtonStyles::get().find (action); };
 
-    // Title row: deck badge, title, BPM
-    auto top = r.removeFromTop (22.0f);
-    auto badge = top.removeFromLeft (22.0f);
+    // Title row: deck number (tap: its colour), title, BPM
+    auto top = r.removeFromTop (24.0f);
+    auto badge = top.removeFromLeft (24.0f);
     g.setColour (col);
     g.fillRect (badge);
     g.setColour (psyched::Colours::onSolid);
-    g.setFont (Theme::display (13.0f, true));
+    g.setFont (Theme::display (15.0f, true));
     g.drawText (juce::String (deck + 1), badge, juce::Justification::centred);
+    badgeRects[(size_t) deck] = badge.expanded (6.0f);
     top.removeFromLeft (8.0f);
-    auto bpmArea = top.removeFromRight (84.0f);
+    auto bpmArea = top.removeFromRight (96.0f);
     const double bpm = st.bpm.load();
     g.setColour (st.master.load() ? Theme::accent : Theme::text);
-    g.setFont (Theme::mono (20.0f, true));
+    g.setFont (Theme::mono (24.0f, true));
     g.drawText (loaded && bpm > 0 ? juce::String (bpm, 2) : "--.--", bpmArea, juce::Justification::centredRight);
+    // SYNC / SLIP / LOOP, only while they're on
+    auto lit = [&] (const juce::String& text, bool on, juce::Colour c)
+    {
+        if (! on) return;
+        auto b = top.removeFromRight (juce::jmax (36.0f, psyched::Fonts::label().getStringWidthFloat (text) + 12.0f)).reduced (0.0f, 3.0f);
+        psyched::paintChip (g, b, text, c, psyched::ChipState::on);
+        top.removeFromRight (4.0f);
+    };
+    lit ("LOOP", st.loopActive.load(), Theme::accent);
+    lit ("SLIP", st.slip.load(), Theme::warn);
+    lit ("SYNC", st.sync.load(), Theme::sync);
     g.setColour (loaded ? Theme::text : Theme::textFaint);
-    g.setFont (Theme::font (15.0f, true));
+    g.setFont (Theme::font (18.0f, true));
     g.drawText (loaded ? track->info.title : juce::String ("No track loaded"), top, juce::Justification::centredLeft, true);
     r.removeFromTop (2.0f);
 
     // Artist, key, tempo and its range
-    auto second = r.removeFromTop (17.0f);
-    auto range = second.removeFromRight (44.0f);
+    auto second = r.removeFromTop (20.0f);
+    auto range = second.removeFromRight (54.0f);
     {
         const double rr = st.pitchRange.load();
         g.setColour (Theme::textDim);
-        g.setFont (Theme::mono (11.0f));
+        g.setFont (Theme::mono (14.0f));
         g.drawText (rr >= 0.99 ? juce::String ("WIDE") : juce::String::charToString (0xb1) + juce::String ((int) std::lround (rr * 100.0)) + "%",
                     range, juce::Justification::centredRight);
     }
-    auto tempo = second.removeFromRight (66.0f);
+    auto tempo = second.removeFromRight (80.0f);
     const double pct = (st.tempoRatio.load() - 1.0) * 100.0;
     g.setColour (std::abs (pct) < 0.005 ? Theme::textDim : Theme::text);
-    g.setFont (Theme::mono (13.0f));
+    g.setFont (Theme::mono (16.0f, true));
     g.drawText ((pct >= 0 ? "+" : "") + juce::String (pct, 2) + "%", tempo, juce::Justification::centredRight);
     if (loaded && track->info.key.isNotEmpty())
     {
-        auto keyBox = second.removeFromRight (62.0f).reduced (2.0f, 0.0f);
+        auto keyBox = second.removeFromRight (64.0f).reduced (3.0f, 0.0f);
         const int shift = st.keyShift.load();
         auto keyText = MusicalKey::display (router.effectiveKeyText (deck));
         if (shift != 0) keyText << " " << (shift > 0 ? "+" : "") << shift;
@@ -273,48 +454,61 @@ void XzScreenView::paintInfo (juce::Graphics& g, int deck, juce::Rectangle<float
         g.fillRect (keyBox);
         g.setColour (kc);
         g.drawRect (keyBox, 1.0f);
-        g.setFont (Theme::font (12.0f, true));
+        g.setFont (Theme::font (13.0f, true));
         g.drawText (keyText, keyBox, juce::Justification::centred);
     }
     g.setColour (Theme::textDim);
-    g.setFont (Theme::font (12.5f));
-    if (loaded) g.drawText (track->info.artist, second.withTrimmedLeft (30.0f), juce::Justification::centredLeft, true);
-    r.removeFromTop (2.0f);
+    g.setFont (Theme::font (16.0f));
+    if (loaded) g.drawText (track->info.artist, second.withTrimmedLeft (32.0f), juce::Justification::centredLeft, true);
+    r.removeFromTop (1.0f);
 
-    // Times and status chips (Q = quantize, the same on both decks)
+    // Times (the same size, sitting clear of the overview), MASTER, EDITED and the edit version, Q
     TimeFold fold = waves.foldFor (deck);
     fold.reference = fold.toDisplay (st.positionSec.load(), st.playSegment.load());
     const double len = st.lengthSec.load();
     const double dlen = juce::jmax (0.001, fold.displayLength (len));
     auto times = r.removeFromTop (24.0f);
-    g.setColour (Theme::text);
-    g.setFont (Theme::mono (21.0f, true));
-    g.drawText (loaded ? formatTime (fold.reference) : "0:00.0", times.removeFromLeft (92.0f), juce::Justification::centredLeft);
-    const bool warn = st.endWarning.load() && (juce::Time::getMillisecondCounter() / 400) % 2 == 0;
-    g.setColour (warn ? Theme::bad : Theme::textDim);
-    g.setFont (Theme::mono (15.0f));
-    g.drawText (loaded ? formatTime (-(dlen - fold.reference)) : "-0:00.0", times.removeFromLeft (80.0f), juce::Justification::centredLeft);
-    auto chips = times.reduced (0.0f, 2.0f);
     {
-        auto q = chips.removeFromRight (22.0f);
-        psyched::paintChip (g, q, "Q", Theme::bad.withSaturation (0.6f), st.quantize.load() ? psyched::ChipState::on : psyched::ChipState::off);
+        auto t = times.translated (0.0f, -2.0f);
+        g.setColour (Theme::text);
+        g.setFont (Theme::mono (20.0f, true));
+        g.drawText (loaded ? formatTime (fold.reference) : "0:00.0", t.removeFromLeft (76.0f), juce::Justification::centredLeft);
+        const bool warn = st.endWarning.load() && (juce::Time::getMillisecondCounter() / 400) % 2 == 0;
+        g.setColour (warn ? Theme::bad : Theme::textDim);
+        g.drawText (loaded ? formatTime (-(dlen - fold.reference)) : "-0:00.0", t.removeFromLeft (88.0f), juce::Justification::centredLeft);
+        times.removeFromLeft (166.0f);
+    }
+    auto chips = times.reduced (0.0f, 2.0f).translated (0.0f, -1.0f);
+    {
+        auto q = chips.removeFromRight (24.0f);
+        paintStyledChip (g, q, "Q", Theme::bad.withSaturation (0.6f), st.quantize.load(), false, chipStyle (p + "quantize"));
         qRects[(size_t) deck] = q.expanded (4.0f);
         chips.removeFromRight (4.0f);
     }
-    auto addChip = [&] (const juce::String& text, bool lit, juce::Colour c)
     {
-        if (! lit) return;
-        auto b = chips.removeFromRight (juce::jmax (38.0f, psyched::Fonts::label().getStringWidthFloat (text) + 12.0f));
-        psyched::paintChip (g, b, text, c, psyched::ChipState::on);
-        chips.removeFromRight (4.0f);
-    };
-    addChip ("MASTER", st.master.load(), Theme::accent);
-    addChip ("SYNC", st.sync.load(), Theme::sync);
-    addChip ("SLIP", st.slip.load(), Theme::warn);
-    addChip ("LOOP", st.loopActive.load(), Theme::accent);
+        auto m = chips.removeFromLeft (54.0f);
+        paintStyledChip (g, m, "MASTER", Theme::accent, st.master.load(), false, chipStyle (p + "master"));
+        chips.removeFromLeft (4.0f);
+        const bool ev = waves.getEditView (deck);
+        auto e = chips.removeFromLeft (54.0f);
+        paintStyledChip (g, e, "EDITED", Theme::sync, ev, false, chipStyle (p + "editview"));
+        editViewRects[(size_t) deck] = e.expanded (2.0f, 4.0f);
+        chips.removeFromLeft (4.0f);
+        editVerRects[(size_t) deck] = {};
+        if (loaded && editor != nullptr && chips.getWidth() > 30.0f)
+        {
+            auto name = editor->activeEdit (deck);
+            const bool any = editor->hasEdits (deck);
+            juce::String text = name.isNotEmpty() ? name : (any ? juce::String ("UNSAVED") : juce::String ("ORIGINAL"));
+            if (name.isNotEmpty() && editor->activeEditModified (deck)) text << " *";
+            paintStyledChip (g, chips, text + " " + juce::String::charToString (0x25be), Theme::sync.brighter (0.3f), name.isNotEmpty() || any, false,
+                             chipStyle (p + "editver"));
+            editVerRects[(size_t) deck] = chips.expanded (2.0f, 4.0f);
+        }
+    }
 
     // Overview, with the grid button on its left
-    r.removeFromTop (3.0f);
+    r.removeFromTop (2.0f);
     auto gridBtn = r.removeFromLeft (16.0f);
     paintGridToggle (g, gridBtn, overviewGrid, styledColour ("overviewgrid", Theme::sync));
     gridRects[(size_t) deck] = gridBtn.expanded (4.0f, 0.0f);
@@ -325,8 +519,12 @@ void XzScreenView::paintInfo (juce::Graphics& g, int deck, juce::Rectangle<float
     g.fillRect (ov);
     if (! loaded || track->waveform == nullptr) return;
 
+    // the waveform fits between the bar strip along the top (grid on) and the phrase strip along the bottom
+    const float barStrip = overviewGrid ? overviewStripHeight (ov.getHeight()) : 0.0f;
+    const float phraseStrip = track->phrases.empty() ? 0.0f : overviewStripHeight (ov.getHeight(), true);
+    auto waveArea = ov.withTrimmedTop (barStrip > 0.0f ? barStrip + 1.0f : 0.0f).withTrimmedBottom (phraseStrip > 0.0f ? phraseStrip + 1.0f : 0.0f);
     auto& o = overviews[(size_t) deck];
-    const int pw = (int) ov.getWidth(), ph = (int) ov.getHeight();
+    const int pw = (int) waveArea.getWidth(), ph = (int) waveArea.getHeight();
     if (o.serial != st.trackSerial.load() || o.version != st.trackDataVersion.load() || o.fold != fold.version
         || o.style != overviewStyle || o.image.getWidth() != pw || o.image.getHeight() != ph)
     {
@@ -347,7 +545,7 @@ void XzScreenView::paintInfo (juce::Graphics& g, int deck, juce::Rectangle<float
         const double entries = fold.isEmpty() ? (double) wd->size() : fold.displayLength (wd->lengthSeconds()) * wd->entriesPerSecond;
         o.image = renderWaveformStrip (*wd, 0.0, entries / juce::jmax (1, pw), pw, ph, so);
     }
-    g.drawImage (o.image, ov);
+    g.drawImage (o.image, waveArea);
     if (len <= 0.0) return;
 
     const float px = ov.getX() + (float) juce::jlimit (0.0, 1.0, fold.reference / dlen) * ov.getWidth();

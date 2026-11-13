@@ -336,6 +336,9 @@ MainComponent::MainComponent()
         settings.save();
         applySettings();
     };
+    xzView.setEditor (&editor);
+    xzView.onDeckColour = deck1.onDeckColour;
+    xzView.onEditViewToggled = deck1.onEditViewToggled;
     xzTimer.f = [this] { if (xzLink.isEnabled() && xzLink.isConnected()) xzLink.submitFrame (xzView.render()); };
     xzTimer.startTimerHz (25);
 
@@ -461,6 +464,7 @@ void MainComponent::applySettings()
         xw.setSingleColour (juce::Colour (settings.singleColour), settings.singleFollowsDeck);
         xw.setStemLayers (settings.stemLayerOrder, settings.stemOpacity);
         xw.setPlayheadPosition (settings.playheadPosition);
+        xw.extraLead = settings.xzScreenLeadMs / 1000.0;
         xw.forceRedraw();
         xzView.setOverviewStyle (settings.overviewStyle, settings.overviewShape == 1, juce::Colour (settings.singleColour), settings.singleFollowsDeck);
         xzView.setOverviewGrid (settings.overviewGrid);

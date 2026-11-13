@@ -235,7 +235,7 @@ juce::Image renderStemStrip (const StemWaveform& w, int stem, juce::Colour colou
         {
             const float d = geo.dist (y);
             if (d >= hh || d < inner) continue;
-            *reinterpret_cast<juce::PixelARGB*> (bd.getPixelPointer (x, y)) = o.outline || (o.hollow <= 0.0f && d < hh * 0.3f) ? core : body;
+            *reinterpret_cast<juce::PixelARGB*> (bd.getPixelPointer (x, y)) = ! o.outline && o.hollow <= 0.0f && d < hh * 0.3f ? core : body;   // the outline: the edge colour
         }
     }
     return img;

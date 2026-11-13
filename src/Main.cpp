@@ -965,6 +965,30 @@ private:
                     juce::Thread::sleep (100);
                     std::printf ("midi: short->quantize %d, long->keylock %d, combo->slip %d (each 1 = changed)\n",
                                  (int) (s2.quantize.load() != q0), (int) (s2.keyLock.load() != k0), (int) (s2.slip.load() != sl0));
+                    // stem controls by MIDI on both decks (a knob turned fully down mutes the matrix's stem)
+                    auto cc = [] (const char* id, int ch, int n)
+                    {
+                        MidiBinding b; b.actionId = id; b.channel = ch; b.type = MidiBinding::Type::cc; b.number = n;
+                        b.mode = MidiBinding::Mode::absolute7;
+                        return b;
+                    };
+                    midi.setBindings ({ cc ("d1.stemctl.A.knob", 1, 20), cc ("d2.stemctl.A.knob", 2, 20),
+                                        cc ("d1.stemctl.B.volume", 1, 21), cc ("d2.stemctl.B.volume", 2, 21) });
+                    for (int ch = 1; ch <= 2; ++ch)
+                    {
+                        midi.injectForTest (juce::MidiMessage::controllerEvent (ch, 20, 40));
+                        midi.injectForTest (juce::MidiMessage::controllerEvent (ch, 20, 0));
+                        midi.injectForTest (juce::MidiMessage::controllerEvent (ch, 21, 40));
+                        midi.injectForTest (juce::MidiMessage::controllerEvent (ch, 21, 0));
+                    }
+                    settle(); juce::Thread::sleep (100);
+                    for (int d = 0; d < 2; ++d)
+                    {
+                        const auto& st = main.getEngine().deck (d).state();
+                        std::printf ("stems midi deck %d: gains %.2f %.2f %.2f %.2f\n", d + 1, st.stemGain[0].load(), st.stemGain[1].load(),
+                                     st.stemGain[2].load(), st.stemGain[3].load());
+                    }
+                    { ActionValue r; r.down = true; main.getRouter().perform ("d1.stem.reset", r); main.getRouter().perform ("d2.stem.reset", r); }
                     midi.setBindings (saved);
                 }
                 std::printf ("edit test done\n"); std::fflush (stdout); stage = 40;
