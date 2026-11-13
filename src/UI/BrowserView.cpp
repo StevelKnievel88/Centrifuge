@@ -176,10 +176,26 @@ public:
         menu.addItem (9001, "Save this order as the list's # order (renumbers 1, 2, 3 ... as shown now)");
         menu.addItem (9002, "Reset the # order (back to the list's own order)");
         menu.addSeparator();
+        // two lists: the columns here (below) and the columns on the XDJ-XZ screen's browser
+        juce::PopupMenu xz;
+        for (int i = 0; i < getNumColumns (false); ++i)
+        {
+            const int id = getColumnIdOfIndex (i, false);
+            xz.addItem (9100 + id, getColumnName (id), true, owner.xzColumns.count (id) > 0);
+        }
+        menu.addSubMenu ("Columns on the XDJ-XZ screen", xz);
+        menu.addSectionHeader ("Columns here");
         juce::TableHeaderComponent::addMenuItems (menu, columnIdClicked);
     }
     void reactToMenuItem (int menuReturnId, int columnIdClicked) override
     {
+        if (menuReturnId > 9100 && menuReturnId < 9200)
+        {
+            const int id = menuReturnId - 9100;
+            if (owner.xzColumns.count (id) > 0) owner.xzColumns.erase (id); else owner.xzColumns.insert (id);
+            if (owner.onXzColumnsChanged) owner.onXzColumnsChanged();
+            return;
+        }
         if (menuReturnId == 9001) owner.saveOrderAsDefault();
         else if (menuReturnId == 9002) owner.resetSavedOrder();
         else juce::TableHeaderComponent::reactToMenuItem (menuReturnId, columnIdClicked);
@@ -1193,6 +1209,50 @@ void BrowserView::enter()
         const auto sel = getSelectedTracks();
         if (! sel.empty()) onPreview (sel.front(), currentSource->kind == LibrarySource::Kind::pcCollection, 0.0);
     }
+    tree.repaint();
+    table.repaint();
+}
+
+int BrowserView::getTreeRowDepth (int row) const
+{
+    int depth = 0;
+    if (auto* it = tree.getItemOnRow (row))
+        for (auto* p = it->getParentItem(); p != nullptr && p != rootItem.get(); p = p->getParentItem()) ++depth;
+    return depth;
+}
+
+bool BrowserView::treeRowIsFolder (int row) const
+{
+    auto* it = tree.getItemOnRow (row);
+    return it != nullptr && it->mightContainSubItems();
+}
+
+bool BrowserView::treeRowIsOpen (int row) const
+{
+    auto* it = tree.getItemOnRow (row);
+    return it != nullptr && it->isOpen();
+}
+
+bool BrowserView::treeRowIsSelected (int row) const
+{
+    auto* it = tree.getItemOnRow (row);
+    return it != nullptr && it->isSelected();
+}
+
+void BrowserView::paintTreeRow (juce::Graphics& g, int row, int w, int h)
+{
+    if (auto* it = dynamic_cast<Item*> (tree.getItemOnRow (row))) it->paintItem (g, w, h);
+}
+
+void BrowserView::tapTreeRow (int row)
+{
+    auto* it = dynamic_cast<Item*> (tree.getItemOnRow (row));
+    if (it == nullptr) return;
+    treeFocused = true;
+    it->setSelected (true, true);
+    tree.scrollToKeepItemVisible (it);
+    if (it->mightContainSubItems() && (! it->isList() || (it->node != nullptr && it->node->isFolder) || it->isSourceRoot))
+        it->setOpen (! it->isOpen());
     tree.repaint();
     table.repaint();
 }

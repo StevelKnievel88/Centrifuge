@@ -364,8 +364,14 @@ void DeckPanel::paint (juce::Graphics& g)
         {
             const float scale = g.getInternalContext().getPhysicalPixelScaleFactor();
             const int pw = (int) std::lround (r.getWidth() * scale);
+            // the waveform sits between the bar strip along the top (grid on) and the phrase strip along the bottom
+            const float barStrip = overviewGrid ? overviewStripHeight (r.getHeight()) : 0.0f;
+            const float phraseStrip = track->phrases.empty() ? 0.0f : overviewStripHeight (r.getHeight());
+            const auto waveArea = r.withTrimmedTop (barStrip > 0.0f ? barStrip + 1.0f : 0.0f)
+                                   .withTrimmedBottom (phraseStrip > 0.0f ? phraseStrip + 1.0f : 0.0f);
+            const int phh = (int) std::lround (waveArea.getHeight() * scale);
             updateFold();
-            if (overviewWidth != pw || overview.isNull() || renderedFold != fold.version)
+            if (overviewWidth != pw || overview.isNull() || renderedFold != fold.version || overview.getHeight() != juce::jmax (1, phh))
             {
                 overviewWidth = pw;
                 renderedFold = fold.version;
@@ -379,10 +385,9 @@ void DeckPanel::paint (juce::Graphics& g)
                 o.fold = &fold;
                 o.entriesPerSecond = wd->entriesPerSecond;
                 const double entries = fold.isEmpty() ? (double) wd->size() : fold.displayLength (wd->lengthSeconds()) * wd->entriesPerSecond;
-                overview = renderWaveformStrip (*wd, 0.0, entries / juce::jmax (1, pw), pw,
-                                                (int) std::lround (r.getHeight() * scale), o);
+                overview = renderWaveformStrip (*wd, 0.0, entries / juce::jmax (1, pw), pw, juce::jmax (1, phh), o);
             }
-            g.drawImage (overview, r);
+            g.drawImage (overview, waveArea);
 
             const double len = st.lengthSec.load();
             if (len > 0.0)
@@ -417,7 +422,7 @@ void DeckPanel::paint (juce::Graphics& g)
                     // the part the scrolling waveform shows
                     const auto [vis, ph] = viewWindow();
                     auto xOfD = [&] (double d) { return r.getX() + (float) (d / dlen) * r.getWidth(); };
-                    paintOverviewViewBox (g, r, xOfD (fold.reference - vis * ph), xOfD (fold.reference + vis * (1.0 - ph)), col, ! track->phrases.empty());
+                    paintOverviewViewBox (g, r, xOfD (fold.reference - vis * ph), xOfD (fold.reference + vis * (1.0 - ph)), col, ! track->phrases.empty(), overviewGrid ? overviewStripHeight (r.getHeight()) : 0.0f);
                 }
                 paintOverviewMarks (g, r, TrackMarks::fromDeck (st, track->phrases, track.get()), false, &fold);
                 if (st.stemsReady.load() && st.stemsProgress.load() < 0.999f)

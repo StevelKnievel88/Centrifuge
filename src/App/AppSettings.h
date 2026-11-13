@@ -53,6 +53,7 @@ struct AppSettings
     double noteLeadSeconds = 2.0;      // ... and shows this long before
     juce::StringArray collapsedSections;   // Settings sections folded away
     juce::String browserColumns;
+    juce::String browserXzColumns = "2,11,3,4,5,6";   // the XDJ-XZ screen browser's columns (ids)
     bool browserInfoOpen = false;
     juce::String windowState;          // the main window's position, size and maximised state      // the browser's track info panel
     int phraseBars = 16;               // phrase meter length (bars)

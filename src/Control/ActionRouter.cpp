@@ -46,6 +46,8 @@ ActionRouter::ActionRouter (AudioEngine& e) : engine (e)
             controlFilter[(size_t) d][(size_t) s] = 0.5f;
             stemMute[(size_t) d][(size_t) s] = false;
             controlMute[(size_t) d][(size_t) s] = false;
+            knobPos[(size_t) d][(size_t) s] = 0.5f;
+            hpHeld[(size_t) d][(size_t) s] = false;
         }
         keySyncLit[(size_t) d] = false;
     }
@@ -66,6 +68,30 @@ std::array<int, 8> ActionRouter::getStemMatrix() const
     std::array<int, 8> m {};
     for (int c = 0; c < 8; ++c) m[(size_t) c] = matrix[(size_t) c].load();
     return m;
+}
+
+void ActionRouter::applyStemKnob (int d, int c)
+{
+    // One knob, both controls in step: left of centre turns the volume down and closes the low-pass together (in
+    // either mode, so switching there changes nothing); right of centre is full volume, and in FILTER mode the
+    // high-pass. A high-pass left on by switching stays put until the knob comes back to the centre.
+    const float k = knobPos[(size_t) d][(size_t) c].load();
+    const bool filterMode = stemCtlFilterMode[(size_t) d].load();
+    auto& held = hpHeld[(size_t) d][(size_t) c];
+    if (held.load() && k <= 0.5f) held = false;
+    controlVolume[(size_t) d][(size_t) c] = juce::jmin (0.5f, k);
+    if (k <= 0.5f) controlFilter[(size_t) d][(size_t) c] = k;
+    else if (! held.load()) controlFilter[(size_t) d][(size_t) c] = filterMode ? k : 0.5f;
+}
+
+void ActionRouter::toggleStemCtlFilterMode (int d)
+{
+    if (d < 0 || d > 1) return;
+    stemCtlFilterMode[(size_t) d] = ! stemCtlFilterMode[(size_t) d].load();
+    // knobs right of centre: nothing jumps - the high-pass stays as it was (on or off) until the knob is back at the centre
+    for (int c = 0; c < 4; ++c)
+        if (knobPos[(size_t) d][(size_t) c].load() > 0.5f) hpHeld[(size_t) d][(size_t) c] = true;
+    updateStems (d);
 }
 
 void ActionRouter::updateStems (int d)
@@ -324,15 +350,15 @@ void ActionRouter::perform (const ActionDef& a, const ActionValue& v)
     }
     else if (name == "stemctl.mode" && d < 2)
     {
-        // the switch: knobs mapped to "Stem control X (volume / filter)" work the filters instead of the volumes
-        if (v.down) stemCtlFilterMode[(size_t) d] = ! stemCtlFilterMode[(size_t) d].load();
+        // the switch: what the right half of the knobs mapped to "Stem control X (volume / filter)" does
+        if (v.down) toggleStemCtlFilterMode (d);
     }
     else if (name.startsWith ("stemctl.") && name.endsWith (".knob") && d < 2)
     {
         const auto letter = name.fromFirstOccurrenceOf (".", false, false).substring (0, 1);
         const int c = juce::jlimit (0, 3, (int) (letter[0] - 'A'));
-        if (stemCtlFilterMode[(size_t) d].load()) controlFilter[(size_t) d][(size_t) c] = (float) v.value;
-        else controlVolume[(size_t) d][(size_t) c] = (float) v.value;
+        knobPos[(size_t) d][(size_t) c] = (float) v.value;
+        applyStemKnob (d, c);
         updateStems (d);
     }
     else if (name.startsWith ("stemctl.") && d < 2)

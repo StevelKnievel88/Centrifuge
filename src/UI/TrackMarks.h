@@ -89,9 +89,12 @@ struct TrackMarks
     skipped parts not at all. */
 /** The part of the track the scrolling waveform shows, as a box on the overview (x0..x1): it stops above the phrase
     strip and is drawn before the marks so they stay bright; a 1-pixel outline in the deck's colour. */
-inline void paintOverviewViewBox (juce::Graphics& g, juce::Rectangle<float> r, float x0, float x1, juce::Colour col, bool hasPhrases)
+inline void paintOverviewViewBox (juce::Graphics& g, juce::Rectangle<float> r, float x0, float x1, juce::Colour col, bool hasPhrases,
+                                  float topStrip = 0.0f)
 {
-    if (hasPhrases) r.removeFromBottom (overviewStripHeight (r.getHeight()) + 1.0f);
+    const float h = r.getHeight();
+    if (hasPhrases) r.removeFromBottom (overviewStripHeight (h) + 1.0f);
+    if (topStrip > 0.0f) r.removeFromTop (topStrip + 1.0f);   // the bar grid's strip stays clear
     x0 = juce::jlimit (r.getX(), r.getRight(), x0);
     x1 = juce::jlimit (r.getX(), r.getRight(), x1);
     if (x1 - x0 < 2.0f) return;
@@ -395,7 +398,7 @@ inline void paintOverviewGrid (juce::Graphics& g, juce::Rectangle<float> r, cons
             const int b = bar++;
             if (b % finest != 0) return;
             const float full = topStrip > 0.0f ? topStrip : 10.0f;
-            const float len = b % 64 == 0 ? full : b % 16 == 0 ? full * 0.7f : b % 4 == 0 ? full * 0.45f : full * 0.25f;
+            const float len = b % 16 == 0 ? full : b % 4 == 0 ? full * 0.65f : full * 0.42f;   // 16 bars / 4 bars / a bar
             const bool line = b % lineEvery == 0;
             auto draw = [&] (float x)
             {

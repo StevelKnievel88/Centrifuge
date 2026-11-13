@@ -139,6 +139,9 @@ private:
     std::array<std::array<juce::Rectangle<int>, 2>, 2> labelRects;   // lane name boxes (click: change the lane's type)
     std::array<juce::Rectangle<int>, 2> laneToggleRects;             // second lane on / off
     std::array<int, 2> lastBottomStyle { 1, 1 };
+    /** The lanes button's cycle for an engine deck (2 lanes / top only / bottom only) and the styles it brings back. */
+    struct LaneCycle { int mode = 1, top = threeBand, bottom = threeBand; };
+    static LaneCycle& laneCycle (int engineDeckId) { static std::array<LaneCycle, 4> c; return c[(size_t) juce::jlimit (0, 3, engineDeckId)]; }
     void showLaneStyleMenu (int slot, int lane);
     juce::Rectangle<int> deckBounds (int deck) const;
     juce::Rectangle<int> dividerBounds (int deck) const;

@@ -394,7 +394,7 @@ void ScrollingWaveforms::paintDeck (juce::Graphics& g, int d, juce::Rectangle<in
             g.drawRect (tr, 1);
             g.setFont (psyched::Fonts::label (10.0f));
             g.setColour (two ? Theme::deckColour (engineDeck (d)) : psyched::Colours::ink2);
-            g.drawText (two ? "2 LANES" : "1 LANE", tr, juce::Justification::centred);
+            g.drawText (two ? "2 LANES" : laneCycle (engineDeck (d)).mode == 2 ? "BOTTOM" : "TOP", tr, juce::Justification::centred);
             laneToggleRects[(size_t) d] = tr;
         }
     }
@@ -1000,9 +1000,28 @@ void ScrollingWaveforms::mouseDown (const juce::MouseEvent& e)
             if (labelRects[(size_t) s][(size_t) l].contains (e.getPosition())) { showLaneStyleMenu (s, l); return; }
         if (laneToggleRects[(size_t) s].contains (e.getPosition()))
         {
-            const bool two = hasBottomLane (s);
-            if (two) lastBottomStyle[(size_t) s] = lanes[(size_t) s][1].style;
-            if (onLaneStyleChosen) onLaneStyleChosen (engineDeck (s), 1, two ? (int) laneOff : lastBottomStyle[(size_t) s]);
+            // cycles 2 lanes > the top lane on its own > the bottom lane on its own > 2 lanes
+            // (shared by every waveform showing that deck: the play page and the XZ screen)
+            auto& c = laneCycle (engineDeck (s));
+            const int deckId = engineDeck (s);
+            if (hasBottomLane (s))
+            {
+                c.top = lanes[(size_t) s][0].style;
+                c.bottom = lanes[(size_t) s][1].style;
+                c.mode = 1;
+                if (onLaneStyleChosen) onLaneStyleChosen (deckId, 1, (int) laneOff);
+            }
+            else if (c.mode == 1)
+            {
+                c.top = lanes[(size_t) s][0].style;
+                c.mode = 2;
+                if (onLaneStyleChosen) onLaneStyleChosen (deckId, 0, c.bottom);
+            }
+            else
+            {
+                c.mode = 0;
+                if (onLaneStyleChosen) { onLaneStyleChosen (deckId, 0, c.top); onLaneStyleChosen (deckId, 1, c.bottom); }
+            }
             return;
         }
     }

@@ -120,6 +120,7 @@ void AppSettings::load()
     if (auto* arr = v["collapsedSections"].getArray())
         for (auto& c : *arr) collapsedSections.addIfNotAlreadyThere (c.toString());
     str ("browserColumns", browserColumns);
+    str ("browserXzColumns", browserXzColumns);
     boolean ("browserInfoOpen", browserInfoOpen);
     str ("windowState", windowState);
     num ("phraseBars", phraseBars);
@@ -283,6 +284,7 @@ void AppSettings::save() const
     o->setProperty ("noteShowSeconds", noteShowSeconds);
     o->setProperty ("noteLeadSeconds", noteLeadSeconds);
     o->setProperty ("browserColumns", browserColumns);
+    o->setProperty ("browserXzColumns", browserXzColumns);
     o->setProperty ("browserInfoOpen", browserInfoOpen);
     o->setProperty ("windowState", windowState);
     o->setProperty ("phraseBars", phraseBars);

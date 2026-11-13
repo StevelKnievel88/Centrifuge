@@ -28,6 +28,11 @@ public:
     void setEditor (TrackEditor* e) { editor = e; }
     std::function<void (int deck)> onEditViewToggled;
     std::function<void (int deck, juce::Colour)> onDeckColour;
+    /** The browser's SET LIST button: is one running; 0 = stop it, 1 = start + record, 2 = start without recording. */
+    std::function<bool()> setListRunning;
+    std::function<void (int choice)> onSetList;
+    /** The search box was tapped: the computer's keyboard types into the browser's search. */
+    std::function<void()> onSearchTapped;
 
     /** The browser instead of the deck panels (mappable: XDJ-XZ screen > browser on / off). */
     void setBrowserShown (bool b) { browserShown = b; }
@@ -91,10 +96,15 @@ private:
     juce::Point<float> downPos;
     juce::Time downTime;
     // browser page
-    std::vector<juce::Rectangle<float>> browserRows;
-    std::vector<int> browserRowIndex;
-    juce::Rectangle<float> load1Rect, load2Rect, closeRect;
-    float listDragY = 0.0f;
+    std::vector<juce::Rectangle<float>> browserRows, treeRows;
+    std::vector<int> browserRowIndex, treeRowIndex;
+    juce::Rectangle<float> load1Rect, load2Rect, closeRect, searchRect, filterRect, setListRect, infoRect, listArea, treeArea;
+    float listDragY = 0.0f, listDragX = 0.0f, colScroll = 0.0f, colMaxScroll = 0.0f;
+    int dragAxis = 0;              // browser drags: 0 not decided yet, 1 up / down (the selection), 2 sideways (the columns)
+    bool dragInTree = false, infoShown = false;
+    void paintBrowserInfo (juce::Graphics& g, juce::Rectangle<float> r);
+    void showFilterMenu();
+    void showSetListMenu();
 };
 
 } // namespace orbit

@@ -680,6 +680,19 @@ private:
                 os.setPosition (0);
                 os.truncate();
                 juce::PNGImageFormat().writeImageToStream (img, os);
+                // and its browser: the tree (focus on it), the columns, the info
+                main.getXzView().setBrowserShown (true);
+                main.renderXzScreen();
+                main.getXzView().touch (1, 570, 40); main.getXzView().touch (2, 570, 40);   // INFO
+                main.getBrowser().back();
+                auto bimg = main.renderXzScreen();
+                juce::FileOutputStream bos (shots.getChildFile ("02c_xz_browser.png"));
+                bos.setPosition (0);
+                bos.truncate();
+                juce::PNGImageFormat().writeImageToStream (bimg, bos);
+                main.getXzView().touch (1, 570, 40); main.getXzView().touch (2, 570, 40);
+                main.getBrowser().focusTracks();
+                main.getXzView().setBrowserShown (false);
             }
             main.showPage (1);
             stage = 4;

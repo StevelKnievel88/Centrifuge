@@ -225,8 +225,14 @@ void PrepView::paint (juce::Graphics& g)
         {
             const float scale = g.getInternalContext().getPhysicalPixelScaleFactor();
             const int pw = (int) std::lround (r.getWidth() * scale);
+            // the waveform sits between the bar strip along the top (grid on) and the phrase strip along the bottom
+            const float barStrip = overviewGrid ? overviewStripHeight (r.getHeight()) : 0.0f;
+            const float phraseStrip = track->phrases.empty() ? 0.0f : overviewStripHeight (r.getHeight());
+            const auto waveArea = r.withTrimmedTop (barStrip > 0.0f ? barStrip + 1.0f : 0.0f)
+                                   .withTrimmedBottom (phraseStrip > 0.0f ? phraseStrip + 1.0f : 0.0f);
+            const int phh = (int) std::lround (waveArea.getHeight() * scale);
             updateFold();
-            if (overviewWidth != pw || overview.isNull() || renderedFold != fold.version)
+            if (overviewWidth != pw || overview.isNull() || renderedFold != fold.version || overview.getHeight() != juce::jmax (1, phh))
             {
                 overviewWidth = pw;
                 renderedFold = fold.version;
@@ -240,9 +246,9 @@ void PrepView::paint (juce::Graphics& g)
                 o.fold = &fold;
                 o.entriesPerSecond = wd->entriesPerSecond;
                 const double entries = fold.isEmpty() ? (double) wd->size() : fold.displayLength (wd->lengthSeconds()) * wd->entriesPerSecond;
-                overview = renderWaveformStrip (*wd, 0.0, entries / juce::jmax (1, pw), pw, (int) std::lround (r.getHeight() * scale), o);
+                overview = renderWaveformStrip (*wd, 0.0, entries / juce::jmax (1, pw), pw, juce::jmax (1, phh), o);
             }
-            g.drawImage (overview, r);
+            g.drawImage (overview, waveArea);
             const double len = fold.displayLength (st.lengthSec.load());
             if (len > 0.0)
             {
@@ -256,7 +262,7 @@ void PrepView::paint (juce::Graphics& g)
                     // the part the zoomed waveform shows (under the marks, above the phrases)
                     const double vis = waves.getVisibleSeconds();
                     const double ph = waves.getPlayheadPosition();
-                    paintOverviewViewBox (g, r, xOfD (t - vis * ph), xOfD (t + vis * (1.0 - ph)), Theme::deckColour (deckIndex), ! track->phrases.empty());
+                    paintOverviewViewBox (g, r, xOfD (t - vis * ph), xOfD (t + vis * (1.0 - ph)), Theme::deckColour (deckIndex), ! track->phrases.empty(), overviewGrid ? overviewStripHeight (r.getHeight()) : 0.0f);
                 }
                 paintOverviewMarks (g, r, TrackMarks::fromDeck (st, track->phrases, track.get()), false, &fold);
                 if (st.stemsReady.load() && st.stemsProgress.load() < 0.999f)

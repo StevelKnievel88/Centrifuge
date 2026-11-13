@@ -149,6 +149,8 @@ MainComponent::MainComponent()
     };
     prepView.getWaves().onEditViewChanged = [this] (int, bool on) { settings.editView[2] = on; settings.save(); applySettings(); };
     browser.setColumnState (settings.browserColumns);
+    browser.setXzColumnState (settings.browserXzColumns);
+    browser.onXzColumnsChanged = [this] { settings.browserXzColumns = browser.getXzColumnState(); settings.save(); };
     browser.setInfoPanelOpen (settings.browserInfoOpen);
     browser.onInfoPanelToggled = [this] (bool open) { settings.browserInfoOpen = open; settings.save(); };
     browser.onEditInfo = [this] (const std::vector<TrackInfo>& tracks, const juce::String& field, const juce::String& value)
@@ -337,6 +339,19 @@ MainComponent::MainComponent()
         applySettings();
     };
     xzView.setEditor (&editor);
+    xzView.setListRunning = [] { return UserLists::get().setListRunning(); };
+    xzView.onSetList = [this] (int choice)
+    {
+        // from the XZ screen: 0 = stop the set list, 1 = start it and record, 2 = start it without recording
+        if (choice == 0) { if (UserLists::get().setListRunning()) toggleSetList(); }
+        else startSetList (choice == 1);
+    };
+    xzView.onSearchTapped = [this]
+    {
+        // typing on the computer's keyboard goes straight into the browser's search
+        if (auto* top = getTopLevelComponent()) top->toFront (true);
+        browser.focusSearch();
+    };
     xzView.onDeckColour = deck1.onDeckColour;
     xzView.onEditViewToggled = deck1.onEditViewToggled;
     xzTimer.f = [this] { if (xzLink.isEnabled() && xzLink.isConnected()) xzLink.submitFrame (xzView.render()); };
@@ -1722,15 +1737,17 @@ void MainComponent::toggleSetList()
     juce::AlertWindow::showAsync (juce::MessageBoxOptions().withTitle ("Start a set list")
                                     .withMessage ("The tracks you play go into a new set list.\n\nRecord the audio too?")
                                     .withButton ("Set list + record").withButton ("Set list only").withButton ("Cancel"),
-                                  [this] (int r)
-    {
-        if (r == 0) return;
-        UserLists::get().startSetList();
-        browser.setSetListRunning (true);
-        browser.refreshSources();
-        recordWithSetList = r == 1 && ! recorder.isRecording();
-        if (r == 1 && ! recorder.isRecording()) startRecording (false);
-    });
+                                  [this] (int r) { if (r != 0) startSetList (r == 1); });
+}
+
+void MainComponent::startSetList (bool record)
+{
+    if (UserLists::get().setListRunning()) return;
+    UserLists::get().startSetList();
+    browser.setSetListRunning (true);
+    browser.refreshSources();
+    recordWithSetList = record && ! recorder.isRecording();
+    if (record && ! recorder.isRecording()) startRecording (false);
 }
 
 bool MainComponent::keyPressed (const juce::KeyPress& k)

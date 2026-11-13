@@ -135,6 +135,7 @@ private:
     XzScreenView xzView { engine, router, browser };
 public:
     juce::Image renderXzScreen() { return xzView.render(); }
+    XzScreenView& getXzView() { return xzView; }
 private:   // (after the browser: it shows it)
     MappingView mapping;
     StemsView stemsView;
@@ -167,6 +168,7 @@ private:   // (after the browser: it shows it)
     void treeAction (const juce::String& node, const juce::String& action, const std::vector<TrackInfo>& tracks);
     void askText (const juce::String& title, const juce::String& current, std::function<void (juce::String)> done);
     void toggleSetList();
+    void startSetList (bool record);
     bool recordWithSetList = false;
     void startRecording (bool askSource);
     void stopRecording();

@@ -198,14 +198,15 @@ void paintChip (juce::Graphics& g, juce::Rectangle<float> r, const juce::String&
         g.fillPath (shape);
         if (st == ChipState::on)
         {
-            // inset 0 0 10px colour@30%
-            juce::Graphics::ScopedSaveState s (g);
-            g.reduceClipRegion (shape);
-            juce::Path ring;
-            ring.addRectangle (r.expanded (20.0f));
-            ring.addPath (shape);
-            ring.setUsingNonZeroWinding (false);
-            juce::DropShadow (c.withAlpha (0.3f * a), 10, {}).drawForPath (g, ring);
+            // a glow fading in from the outline towards the middle (the middle stays clear)
+            const float depth = juce::jlimit (2.0f, 7.0f, juce::jmin (r.getWidth(), r.getHeight()) * 0.28f);
+            const int steps = (int) std::ceil (depth);
+            for (int i = 0; i < steps; ++i)
+            {
+                const float t = 1.0f - (float) i / (float) steps;
+                g.setColour (c.withAlpha (0.25f * t * t * a));
+                g.strokePath (chamferPath (r.reduced (1.0f + (float) i), juce::jmax (0.0f, cut - (float) i)), juce::PathStrokeType (1.0f));
+            }
         }
         g.setColour ((st == ChipState::on ? c : (st == ChipState::hover ? Colours::edgeHot : Colours::edge2)).withMultipliedAlpha (a));
         g.strokePath (inner, juce::PathStrokeType (1.0f));

@@ -99,10 +99,30 @@ void XzScreenView::touch (int type, int x, int y)
             if (load1Rect.contains (p)) { browser.loadSelected (0); return; }
             if (load2Rect.contains (p)) { browser.loadSelected (1); return; }
             if (closeRect.contains (p)) { browserShown = false; return; }
-            for (size_t i = 0; i < browserRows.size(); ++i)
-                if (browserRows[i].contains (p)) { browser.selectRowFromOutside (browserRowIndex[i]); break; }
+            if (searchRect.contains (p)) { if (onSearchTapped) onSearchTapped(); return; }
+            if (filterRect.contains (p)) { showFilterMenu(); return; }
+            if (setListRect.contains (p)) { showSetListMenu(); return; }
+            if (infoRect.contains (p)) { infoShown = ! infoShown; return; }
+            dragInTree = treeArea.contains (p);
+            if (dragInTree)
+            {
+                for (size_t i = 0; i < treeRows.size(); ++i)
+                    if (treeRows[i].contains (p)) { browser.tapTreeRow (treeRowIndex[i]); break; }
+            }
+            else
+            {
+                for (size_t i = 0; i < browserRows.size(); ++i)
+                    if (browserRows[i].contains (p))
+                    {
+                        browser.treeFocused = false;
+                        browser.selectRowFromOutside (browserRowIndex[i]);
+                        break;
+                    }
+            }
             drag = Drag::browserList;
+            dragAxis = 0;
             listDragY = p.y;
+            listDragX = p.x;
             return;
         }
         for (int d = 0; d < 2; ++d)
@@ -128,13 +148,30 @@ void XzScreenView::touch (int type, int x, int y)
     else if (drag == Drag::waves) sendToWaves (type, p);
     else if (drag == Drag::browserList && type == 3)
     {
-        // drag the list up / down: the selection moves a row at a time
-        const float rowH = 26.0f;
-        const int steps = (int) ((listDragY - p.y) / rowH);
-        if (steps != 0)
+        // up / down moves the selection a row at a time; sideways (the track list) shows the other columns
+        if (dragAxis == 0 && (std::abs (p.x - listDragX) > 8.0f || std::abs (p.y - listDragY) > 8.0f))
+            dragAxis = (! dragInTree && std::abs (p.x - listDragX) > std::abs (p.y - listDragY)) ? 2 : 1;
+        if (dragAxis == 2)
         {
-            browser.selectRowFromOutside (juce::jlimit (0, juce::jmax (0, browser.getRowCount() - 1), browser.getSelectedRowIndex() + steps));
-            listDragY -= (float) steps * rowH;
+            colScroll = juce::jlimit (0.0f, colMaxScroll, colScroll - (p.x - listDragX));
+            listDragX = p.x;
+        }
+        else if (dragAxis == 1)
+        {
+            const float rowH = dragInTree ? 26.0f : 28.0f;
+            const int steps = (int) ((listDragY - p.y) / rowH);
+            if (steps != 0)
+            {
+                if (dragInTree)
+                {
+                    const int next = juce::jlimit (0, juce::jmax (0, browser.getTreeRowCount() - 1), browser.getSelectedTreeRow() + steps);
+                    browser.treeFocused = true;
+                    if (auto* it = browser.tree.getItemOnRow (next)) { it->setSelected (true, true); browser.tree.scrollToKeepItemVisible (it); }
+                }
+                else
+                    browser.selectRowFromOutside (juce::jlimit (0, juce::jmax (0, browser.getRowCount() - 1), browser.getSelectedRowIndex() + steps));
+                listDragY -= (float) steps * rowH;
+            }
         }
     }
     if (type == 2) { drag = Drag::none; dragDeck = -1; }
@@ -323,63 +360,253 @@ void XzScreenView::paintBrowser (juce::Graphics& g, juce::Rectangle<int> area)
     auto r = area.toFloat();
     psyched::paintPanel (g, r, Theme::accent, 12.0f);
     r.removeFromTop (4.0f);
+
+    // Top bar: the list, the search box (tap: type on the computer's keyboard), FILTER, SET LIST, INFO, LOAD 1 / 2, CLOSE
     auto head = r.removeFromTop (34.0f).reduced (10.0f, 4.0f);
-    closeRect = head.removeFromRight (70.0f);
-    head.removeFromRight (6.0f);
-    load2Rect = head.removeFromRight (80.0f);
-    head.removeFromRight (6.0f);
-    load1Rect = head.removeFromRight (80.0f);
-    psyched::paintChip (g, closeRect, "CLOSE", Theme::text, psyched::ChipState::off);
-    psyched::paintChip (g, load2Rect, "LOAD 2", Theme::deckColour (1), psyched::ChipState::on);
-    psyched::paintChip (g, load1Rect, "LOAD 1", Theme::deckColour (0), psyched::ChipState::on);
+    auto button = [&] (juce::Rectangle<float>& rect, float w, const juce::String& text, juce::Colour c, bool on, const juce::String& key)
+    {
+        rect = head.removeFromRight (w);
+        head.removeFromRight (5.0f);
+        paintStyledChip (g, rect, text, c, on, false, ButtonStyles::get().find (key));
+        rect = rect.expanded (2.0f, 4.0f);
+    };
+    const bool setOn = setListRunning && setListRunning();
+    button (closeRect, 56.0f, "CLOSE", Theme::text, false, "xz.close");
+    button (load2Rect, 62.0f, "LOAD 2", Theme::deckColour (1), true, "browser.load2");
+    button (load1Rect, 62.0f, "LOAD 1", Theme::deckColour (0), true, "browser.load1");
+    button (infoRect, 46.0f, "INFO", Theme::accent, infoShown, "browser.info");
+    button (setListRect, setOn ? 92.0f : 70.0f, setOn ? "SET LIST ON" : "SET LIST", Theme::bad, setOn, "browser.setlist");
+    button (filterRect, 58.0f, "FILTER", Theme::sync, browser.filter.any(), "browser.filter");
+    {
+        // search
+        auto sr = head.removeFromRight (juce::jmin (190.0f, head.getWidth() * 0.55f));
+        head.removeFromRight (8.0f);
+        const bool typing = browser.search.hasKeyboardFocus (true);
+        g.setColour (psyched::Colours::field);
+        g.fillRect (sr);
+        g.setColour (typing ? Theme::accent : psyched::Colours::edge2);
+        g.drawRect (sr, 1.0f);
+        const auto text = browser.getSearchText();
+        g.setFont (Theme::font (14.0f));
+        g.setColour (text.isEmpty() ? Theme::textFaint : Theme::text);
+        g.drawText (text.isEmpty() ? juce::String ("Search (tap, then type)") : text + (typing ? "|" : ""), sr.reduced (8.0f, 0.0f),
+                    juce::Justification::centredLeft, true);
+        searchRect = sr.expanded (2.0f, 4.0f);
+    }
     g.setColour (Theme::text);
     g.setFont (Theme::font (16.0f, true));
     g.drawText (browser.getCurrentListName().isNotEmpty() ? browser.getCurrentListName() : juce::String ("Browser"), head, juce::Justification::centredLeft, true);
 
-    r = r.reduced (8.0f, 2.0f);
-    const float rowH = 26.0f;
+    r = r.reduced (6.0f, 2.0f);
+    // the track's info down the right (INFO)
+    if (infoShown)
+    {
+        auto info = r.removeFromRight (230.0f);
+        r.removeFromRight (6.0f);
+        paintBrowserInfo (g, info);
+    }
+    // the library tree on the left while the browser's focus is on it (the BACK button)
+    treeRows.clear();
+    treeRowIndex.clear();
+    treeArea = {};
+    if (browser.isTreeFocused())
+    {
+        treeArea = r.removeFromLeft (juce::jmin (260.0f, r.getWidth() * 0.4f));
+        r.removeFromLeft (6.0f);
+        g.setColour (psyched::Colours::field);
+        g.fillRect (treeArea);
+        g.setColour (Theme::accent.withAlpha (0.6f));
+        g.drawRect (treeArea, 1.0f);
+        const float th = 26.0f;
+        auto tr = treeArea.reduced (2.0f);
+        const int n = browser.getTreeRowCount(), visible = juce::jmax (1, (int) (tr.getHeight() / th));
+        const int sel = browser.getSelectedTreeRow();
+        const int first = juce::jlimit (0, juce::jmax (0, n - visible), (sel < 0 ? 0 : sel) - visible / 2);
+        for (int i = first; i < juce::jmin (n, first + visible); ++i)
+        {
+            auto row = tr.removeFromTop (th);
+            treeRows.push_back (row);
+            treeRowIndex.push_back (i);
+            const float indent = 6.0f + 14.0f * (float) browser.getTreeRowDepth (i);
+            auto arrow = juce::Rectangle<float> (row.getX() + indent, row.getY(), 12.0f, th);
+            if (browser.treeRowIsFolder (i))
+            {
+                juce::Path p;
+                const auto c = arrow.getCentre();
+                if (browser.treeRowIsOpen (i)) p.addTriangle (c.x - 4.0f, c.y - 2.0f, c.x + 4.0f, c.y - 2.0f, c.x, c.y + 3.0f);
+                else                           p.addTriangle (c.x - 2.0f, c.y - 4.0f, c.x - 2.0f, c.y + 4.0f, c.x + 3.0f, c.y);
+                g.setColour (Theme::textDim);
+                g.fillPath (p);
+            }
+            juce::Graphics::ScopedSaveState ss (g);
+            const auto cell = row.withTrimmedLeft (indent + 14.0f);
+            g.reduceClipRegion (cell.toNearestInt());
+            g.setOrigin (cell.getTopLeft().toInt());
+            browser.paintTreeRow (g, i, (int) cell.getWidth(), (int) th);
+        }
+    }
+
+    // The track list: the columns chosen for the XZ (Mapping-style right-click on the browser's column header),
+    // in the browser's order; drag sideways to see the ones that don't fit
+    listArea = r;
+    auto& hdr = browser.table.getHeader();
+    std::vector<std::pair<int, float>> cols;
+    float total = 0.0f;
+    for (int i = 0; i < hdr.getNumColumns (false); ++i)
+    {
+        const int id = hdr.getColumnIdOfIndex (i, false);
+        if (browser.xzColumns.count (id) == 0) continue;
+        const float w = (float) juce::jlimit (40, 360, hdr.getColumnWidth (id));
+        cols.push_back ({ id, w });
+        total += w;
+    }
+    if (cols.empty()) { cols.push_back ({ 2, 300.0f }); total = 300.0f; }
+    // a single column wider than the list is shrunk to fit; otherwise the list scrolls sideways
+    colMaxScroll = juce::jmax (0.0f, total - r.getWidth());
+    colScroll = juce::jlimit (0.0f, colMaxScroll, colScroll);
+
+    auto headRow = r.removeFromTop (20.0f);
+    {
+        juce::Graphics::ScopedSaveState ss (g);
+        g.reduceClipRegion (headRow.toNearestInt());
+        float x = headRow.getX() - colScroll;
+        g.setFont (Theme::font (11.0f, true));
+        for (auto& [id, w] : cols)
+        {
+            g.setColour (Theme::textDim);
+            g.drawText (hdr.getColumnName (id).toUpperCase(), juce::Rectangle<float> (x + 4.0f, headRow.getY(), w - 8.0f, headRow.getHeight()),
+                        juce::Justification::centredLeft, true);
+            g.setColour (Theme::line);
+            g.fillRect (x + w - 1.0f, headRow.getY() + 4.0f, 1.0f, headRow.getHeight() - 8.0f);
+            x += w;
+        }
+        g.setColour (Theme::line);
+        g.fillRect (headRow.removeFromBottom (1.0f));
+    }
+    if (colMaxScroll > 0.0f)
+    {
+        // where the columns are scrolled to
+        auto bar = r.removeFromBottom (4.0f);
+        g.setColour (Theme::line.withAlpha (0.5f));
+        g.fillRect (bar);
+        g.setColour (Theme::accent.withAlpha (0.8f));
+        const float vis = r.getWidth() / total;
+        g.fillRect (bar.getX() + bar.getWidth() * (colScroll / total), bar.getY(), bar.getWidth() * vis, bar.getHeight());
+    }
+
+    const float rowH = 28.0f;
     const int n = browser.getRowCount(), visible = juce::jmax (1, (int) (r.getHeight() / rowH));
     const int sel = browser.getSelectedRowIndex();
     const int first = juce::jlimit (0, juce::jmax (0, n - visible), (sel < 0 ? 0 : sel) - visible / 2);
     browserRows.clear();
     browserRowIndex.clear();
+    juce::Graphics::ScopedSaveState listClip (g);
+    g.reduceClipRegion (r.toNearestInt());
     for (int i = first; i < juce::jmin (n, first + visible); ++i)
     {
         auto row = r.removeFromTop (rowH);
-        const auto* t = browser.trackAtRow (i);
-        if (t == nullptr) continue;
         browserRows.push_back (row);
         browserRowIndex.push_back (i);
         if (i == sel)
         {
-            g.setColour (Theme::accent.withAlpha (0.18f));
+            g.setColour (Theme::accent.withAlpha (browser.isTreeFocused() ? 0.09f : 0.18f));
             g.fillRect (row);
             g.setColour (Theme::accent);
             g.fillRect (row.withWidth (3.0f));
         }
-        auto c = row.reduced (8.0f, 0.0f);
-        if (! t->colour.isTransparent()) { g.setColour (t->colour); g.fillRect (c.removeFromLeft (3.0f).reduced (0.0f, 5.0f)); c.removeFromLeft (6.0f); }
-        auto time = c.removeFromRight (52.0f);
-        auto key = c.removeFromRight (56.0f);
-        auto bpm = c.removeFromRight (64.0f);
-        auto title = c.removeFromLeft (c.getWidth() * 0.6f);
-        g.setFont (Theme::font (15.0f, i == sel));
-        g.setColour (Theme::text);
-        g.drawText (t->title, title, juce::Justification::centredLeft, true);
-        g.setColour (Theme::textDim);
-        g.drawText (t->artist, c.withTrimmedLeft (8.0f), juce::Justification::centredLeft, true);
-        g.setFont (Theme::mono (14.0f));
-        g.setColour (Theme::text);
-        g.drawText (t->bpm > 0 ? juce::String (t->bpm, 2) : juce::String(), bpm, juce::Justification::centredRight);
-        const auto kc = MusicalKey::wheelColour (t->key);
-        g.setColour (kc.isTransparent() ? Theme::good : kc);
-        g.drawText (MusicalKey::display (t->key), key, juce::Justification::centredRight);
-        g.setColour (Theme::textDim);
-        const int sec = (int) t->durationSec;
-        g.drawText (juce::String (sec / 60) + ":" + juce::String (sec % 60).paddedLeft ('0', 2), time, juce::Justification::centredRight);
+        float x = row.getX() - colScroll;
+        for (auto& [id, w] : cols)
+        {
+            if (x + w > row.getX() && x < row.getRight())
+            {
+                juce::Graphics::ScopedSaveState ss (g);
+                g.setOrigin (juce::Point<float> (x, row.getY()).toInt());
+                g.reduceClipRegion (0, 0, (int) w, (int) rowH);
+                browser.paintCell (g, i, id, (int) w, (int) rowH, i == sel);
+            }
+            x += w;
+        }
         g.setColour (Theme::line.withAlpha (0.5f));
         g.fillRect (row.removeFromBottom (1.0f));
     }
+}
+
+void XzScreenView::paintBrowserInfo (juce::Graphics& g, juce::Rectangle<float> r)
+{
+    g.setColour (psyched::Colours::field);
+    g.fillRect (r);
+    g.setColour (Theme::accent.withAlpha (0.6f));
+    g.drawRect (r, 1.0f);
+    r = r.reduced (8.0f, 6.0f);
+    const auto sel = browser.getSelectedTracks();
+    g.setFont (Theme::font (12.0f, true));
+    g.setColour (Theme::accent);
+    g.drawText ("TRACK INFO", r.removeFromTop (18.0f), juce::Justification::centredLeft);
+    if (sel.empty())
+    {
+        g.setColour (Theme::textFaint);
+        g.drawText ("No track selected", r.removeFromTop (20.0f), juce::Justification::centredLeft);
+        return;
+    }
+    const auto& t = sel.front();
+    auto field = [&] (const juce::String& label, const juce::String& value, juce::Colour c)
+    {
+        if (r.getHeight() < 30.0f) return;
+        g.setFont (Theme::font (10.0f, true));
+        g.setColour (Theme::textFaint);
+        g.drawText (label, r.removeFromTop (13.0f), juce::Justification::centredLeft);
+        g.setFont (Theme::font (14.0f));
+        g.setColour (c);
+        g.drawText (value.isNotEmpty() ? value : juce::String ("-"), r.removeFromTop (18.0f), juce::Justification::centredLeft, true);
+        r.removeFromTop (3.0f);
+    };
+    field ("TITLE", t.title, Theme::text);
+    field ("ARTIST", t.artist, Theme::text);
+    field ("ALBUM", t.album, Theme::textDim);
+    field ("GENRE", t.genre, Theme::textDim);
+    field ("LABEL", t.label, Theme::textDim);
+    const auto kc = MusicalKey::wheelColour (t.key);
+    field ("KEY / BPM", MusicalKey::display (t.key) + (t.bpm > 0 ? "   " + juce::String (t.bpm, 2) + " BPM" : juce::String()),
+           kc.isTransparent() ? Theme::good : kc);
+    field ("RATING", t.rating > 0 ? juce::String::repeatedString (juce::String::charToString (0x2605), t.rating) : juce::String(), Theme::warn);
+    field ("COMMENT", t.comment, Theme::textDim);
+}
+
+void XzScreenView::showFilterMenu()
+{
+    // the browser's filter, a tap per choice (each tap steps that one on; the menu stays up)
+    auto& f = browser.filter;
+    const char* colours[] = { "any", "pink", "red", "orange", "yellow", "green", "aqua", "blue", "purple" };
+    std::vector<Popup::Item> items;
+    items.push_back ({ 1, juce::String ("Key: ") + (f.keyMode == 1 ? "goes with the master deck" : "any"), {}, f.keyMode == 1 });
+    items.push_back ({ 2, "Rating: " + (f.ratingMin > 0 ? juce::String (f.ratingMin) + (f.ratingMin < 5 ? " stars +" : " stars") : juce::String ("any")), {}, f.ratingMin > 0 });
+    items.push_back ({ 3, juce::String ("Colour: ") + colours[juce::jlimit (0, 8, f.colour)], f.colour > 0 ? rekordboxTrackColour (f.colour) : juce::Colour(), f.colour > 0 });
+    items.push_back ({ 4, juce::String ("Stems: ") + (f.stems == 1 ? "with stems" : f.stems == 2 ? "without stems" : "with or without"), {}, f.stems > 0 });
+    items.push_back ({ 5, "Clear the filter", {}, false, f.any() });
+    openPopup ("Filter (tap to step through)", filterRect, std::move (items), false, [this] (int id)
+    {
+        auto& ff = browser.filter;
+        if (id == 1) ff.keyMode = ff.keyMode == 1 ? 0 : 1;
+        else if (id == 2) ff.ratingMin = (ff.ratingMin + 1) % 6;
+        else if (id == 3) ff.colour = (ff.colour + 1) % 9;
+        else if (id == 4) ff.stems = (ff.stems + 1) % 3;
+        else if (id == 5) { ff = {}; browser.refilter(); return; }
+        browser.refilter();
+        showFilterMenu();
+    });
+}
+
+void XzScreenView::showSetListMenu()
+{
+    if (setListRunning && setListRunning())
+    {
+        openPopup ("Set list", setListRect, { { 0, "Stop the set list" }, { -1, "Keep it going" } }, false,
+                   [this] (int id) { if (id == 0 && onSetList) onSetList (0); });
+        return;
+    }
+    openPopup ("Start a set list (the tracks you play go into it)", setListRect,
+               { { 1, "Set list + record" }, { 2, "Set list only" }, { -1, "Cancel" } }, false,
+               [this] (int id) { if (id > 0 && onSetList) onSetList (id); });
 }
 
 void XzScreenView::paintInfo (juce::Graphics& g, int deck, juce::Rectangle<float> panel)

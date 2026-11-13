@@ -1,6 +1,7 @@
 #pragma once
 #include "Theme.h"
 #include "ColourPicker.h"
+#include "../Control/Actions.h"
 
 namespace orbit
 {
@@ -118,13 +119,15 @@ inline void paintChipState (juce::Graphics& g, juce::Rectangle<float> r, const j
         const float gl = s != nullptr ? s->glowAmount() : 0.5f;
         if (gl > 0.0f)
         {
-            juce::Graphics::ScopedSaveState ss (g);
-            g.reduceClipRegion (r.toNearestInt());
-            juce::Path ring;
-            ring.addRectangle (r.expanded (20.0f));
-            ring.addRectangle (r);
-            ring.setUsingNonZeroWinding (false);
-            juce::DropShadow (outline.withAlpha (juce::jmin (1.0f, 0.6f * gl) * a), 10, {}).drawForPath (g, ring);
+            // fading in from the outline towards the middle (the middle of the button stays clear)
+            const float depth = juce::jlimit (2.0f, 7.0f, juce::jmin (r.getWidth(), r.getHeight()) * 0.28f);
+            const int steps = (int) std::ceil (depth);
+            for (int i = 0; i < steps; ++i)
+            {
+                const float t = 1.0f - (float) i / (float) steps;
+                g.setColour (outline.withAlpha (juce::jmin (1.0f, 0.5f * gl) * t * t * a));
+                g.drawRect (r.reduced (1.0f + (float) i), 1.0f);
+            }
         }
         if (gl > 0.5f)
         {
@@ -160,15 +163,40 @@ inline juce::Colour styledColour (const juce::String& key, juce::Colour usual, i
 
 /** Right-click a button: its outline, infill and text colours for off / on / pressed. Colours come from the
     presets and the button palette (the picker's + saves to the button palette). */
+/** The states a button really has, for its colour editor: buttons that stay on (SYNC, MASTER, page buttons ...)
+    have OFF / ON / PRESSED; buttons that only act when pressed (key shift, beat jumps, LOAD ...) have IDLE /
+    PRESSED. An empty name = a state the button doesn't have (no row for it). */
+inline juce::StringArray buttonStatesFor (const juce::String& action)
+{
+    const juce::StringArray toggle { "OFF", "ON", "PRESSED" }, momentary { "IDLE", "", "PRESSED" };
+    const auto key = ButtonStyles::keyFor (action);
+    if (key.startsWith ("tab.")) return { "NOT SHOWING", "SHOWING", "PRESSED" };
+    static const juce::StringArray toggles { "browser.expand", "browser.filter", "browser.info", "browser.hide", "browser.setlist",
+                                            "statusfold", "editview", "editver", "overviewgrid", "vinylspeed", "jog.vinyl", "browser.viewr",
+                                            "browser.viewc", "stemctl.mode" };
+    static const juce::StringArray momentaries { "browser.load1", "browser.load2", "browser.rows", "browser.import", "browser.export",
+                                                "browser.preview", "jumpsize", "tempo.drag" };
+    if (toggles.contains (key)) return toggle;
+    if (momentaries.contains (key)) return momentary;
+    const ActionDef* def = findAction (action);
+    if (def == nullptr) def = findAction ("d1." + key);
+    if (def == nullptr) def = findAction (key);
+    if (def != nullptr && def->kind == ActionKind::button)
+        return def->hasLed && ! def->label.contains ("while held") ? toggle : momentary;
+    return toggle;
+}
+
 class ButtonStyleEditor : public juce::Component
 {
 public:
     ButtonStyleEditor (juce::String actionId, juce::String label, juce::Colour litColour, juce::StringArray stateNames = {})
         : action (std::move (actionId)), name (std::move (label)), lit (litColour),
-          states (stateNames.isEmpty() ? juce::StringArray { "OFF", "ON", "PRESSED" } : stateNames)
+          states (stateNames.isEmpty() ? buttonStatesFor (action) : stateNames)
     {
         style = ButtonStyles::get().styleFor (action);
-        rows = juce::jmin (ButtonStyle::numStates, states.size());
+        for (int i = 0; i < juce::jmin (ButtonStyle::numStates, states.size()); ++i)
+            if (states[i].isNotEmpty()) rowState.push_back (i);
+        rows = (int) rowState.size();
         glowSlider.setRange (0.0, 100.0, 1.0);
         glowSlider.setTextValueSuffix ("%");
         glowSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 50, 20);
@@ -180,7 +208,7 @@ public:
         for (int i = 0; i < rows * 3; ++i)
         {
             auto* b = swatches.add (new juce::TextButton());
-            b->onClick = [this, i] { pick (i / 3, i % 3); };
+            b->onClick = [this, i] { pick (rowState[(size_t) (i / 3)], i % 3); };
             addAndMakeVisible (b);
         }
         resetButton.onClick = [this] { style = {}; commit(); };
@@ -213,8 +241,9 @@ public:
         psyched::paintLabel (g, "PREVIEW", cell (0, 3).withY (44.0f).withHeight (14.0f), juce::Justification::centred, Theme::textDim, 9.0f);
         for (int s = 0; s < rows; ++s)
         {
-            psyched::paintLabel (g, states[s], juce::Rectangle<float> (12.0f, cell (s, 0).getY(), 64.0f, 24.0f), juce::Justification::centredLeft, Theme::text, 10.0f);
-            paintChipState (g, cell (s, 3), name.length() > 8 ? name.substring (0, 8) : name, lit, s, &style);
+            const int st = rowState[(size_t) s];
+            psyched::paintLabel (g, states[st], juce::Rectangle<float> (12.0f, cell (s, 0).getY(), 64.0f, 24.0f), juce::Justification::centredLeft, Theme::text, 10.0f);
+            paintChipState (g, cell (s, 3), name.length() > 8 ? name.substring (0, 8) : name, lit, st, &style);
         }
         psyched::paintLabel (g, "GLOW", juce::Rectangle<float> (12.0f, 62.0f + rows * 34.0f, 64.0f, 24.0f), juce::Justification::centredLeft, Theme::text, 10.0f);
     }
@@ -243,10 +272,13 @@ private:
         glowSlider.setValue (style.glowAmount() * 100.0, juce::dontSendNotification);
         for (int i = 0; i < rows * 3; ++i)
         {
-            const auto c = style.get (i / 3, i % 3);
+            const auto c = style.get (rowState[(size_t) (i / 3)], i % 3);
             auto* b = swatches[i];
             b->setButtonText (c.getAlpha() == 0 ? "DEFAULT" : juce::String());
+            // a chosen colour fills the box (drawn as a swatch), "DEFAULT" otherwise
+            b->getProperties().set ("psyched.swatch", c.getAlpha() != 0);
             b->setColour (juce::TextButton::buttonColourId, c.getAlpha() == 0 ? psyched::Colours::field : c);
+            b->repaint();
             b->setTooltip (c.getAlpha() == 0 ? "Default - click to choose" : c.toDisplayString (false));
         }
         repaint();
@@ -310,6 +342,7 @@ private:
     juce::Colour lit;
     juce::StringArray states;
     int rows = 3;
+    std::vector<int> rowState;   // the ButtonStyle state each row edits
     juce::Slider glowSlider;
     ButtonStyle style;
     juce::OwnedArray<juce::TextButton> swatches;

@@ -66,9 +66,14 @@ private:
     std::array<std::atomic<bool>, 2> keySyncLit;
 public:
     bool isStemCtlFilterMode (int d) const { return d >= 0 && d < 2 && stemCtlFilterMode[(size_t) d].load(); }
-    void toggleStemCtlFilterMode (int d) { if (d >= 0 && d < 2) stemCtlFilterMode[(size_t) d] = ! stemCtlFilterMode[(size_t) d].load(); }
+    void toggleStemCtlFilterMode (int d);
 private:
-    std::array<std::atomic<bool>, 2> stemCtlFilterMode {};   // per deck: the stem control knobs work the filters
+    std::array<std::atomic<bool>, 2> stemCtlFilterMode {};
+    // the switched knobs (stemctl.X.knob): where each knob is, and a high-pass left where it was after switching
+    // until the knob comes back to the centre (so switching never jumps)
+    std::array<std::array<std::atomic<float>, 4>, 2> knobPos {};
+    std::array<std::array<std::atomic<bool>, 4>, 2> hpHeld {};
+    void applyStemKnob (int d, int c);   // per deck: the stem control knobs work the filters
     std::array<std::atomic<double>, 8> jumpSlotBeats { 1.0, 4.0, 8.0, 16.0, 1.0, 4.0, 8.0, 16.0 };
     std::array<std::atomic<juce::uint32>, 8> jumpSlotColour {};
 };

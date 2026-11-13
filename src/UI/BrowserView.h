@@ -8,6 +8,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <unordered_map>
 #include <map>
+#include <set>
 
 namespace orbit
 {
@@ -209,7 +210,30 @@ private:
     int stemQualityOf (const TrackInfo& t) const;
     class Header;
     friend class Header;
+    friend class XzScreenView;   // the XZ screen's browser draws the same lists, columns and tree
   public:
+    /** Columns shown on the XDJ-XZ screen's browser (its own list, chosen from the column header's right-click menu). */
+    std::set<int> xzColumns { 2, 11, 3, 4, 5, 6 };
+    std::function<void()> onXzColumnsChanged;
+    juce::String getXzColumnState() const { juce::StringArray a; for (int c : xzColumns) a.add (juce::String (c)); return a.joinIntoString (","); }
+    void setXzColumnState (const juce::String& s)
+    {
+        if (s.isEmpty()) return;
+        xzColumns.clear();
+        for (auto& t : juce::StringArray::fromTokens (s, ",", {})) if (t.getIntValue() > 0) xzColumns.insert (t.getIntValue());
+    }
+    /** The library tree for the XZ screen: rows as shown (open folders included). */
+    int getTreeRowCount() const { return tree.getNumRowsInTree(); }
+    int getTreeRowDepth (int row) const;
+    bool treeRowIsFolder (int row) const;
+    bool treeRowIsOpen (int row) const;
+    bool treeRowIsSelected (int row) const;
+    int getSelectedTreeRow() const { auto* s = tree.getSelectedItem (0); return s != nullptr ? s->getRowNumberInTree() : -1; }
+    void paintTreeRow (juce::Graphics& g, int row, int w, int h);
+    /** A tap on a tree row: selects it (a list shows its tracks), opens / closes a folder. */
+    void tapTreeRow (int row);
+    bool isTreeFocused() const { return treeFocused; }
+    juce::String getSearchText() const { return search.getText(); }
     /** A tree list's menu action (new / rename / delete / duplicate / rules / analyse / stems / export / clear ...)
         on the list `nodeId` ("pl", "u12", "toplay", "hs.now", "loc", a location playlist's id ...), with its tracks. */
     std::function<void (const juce::String& nodeId, const juce::String& action, const std::vector<TrackInfo>& tracks)> onTreeAction;
