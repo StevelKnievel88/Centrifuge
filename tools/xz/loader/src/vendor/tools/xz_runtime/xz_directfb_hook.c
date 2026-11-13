@@ -113,6 +113,7 @@ static pthread_mutex_t primary_present_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_once_t mods_bridge_once = PTHREAD_ONCE_INIT;
 static xz_mods_visible_fn_v1 mods_visible;
 static xz_mods_native_touch_fn_v1 mods_native_touch;
+static void (*mods_command)(int);   /* Centrifuge's VJCM commands (streaming / stems / mods panel) */
 static xz_mods_render_fn_v1 mods_render;
 static xz_mods_takeover_fn_v1 mods_takeover;
 static xz_mods_native_color_fn_v1 mods_native_color;
@@ -294,6 +295,7 @@ static void resolve_mods_bridge(void) {
     mods_native_color = (xz_mods_native_color_fn_v1)dlsym(RTLD_DEFAULT, "xz_mods_native_color_v1");
     mods_native_surface_color = (xz_mods_native_surface_color_fn_v1)dlsym(RTLD_DEFAULT, "xz_mods_native_surface_color_v1");
     mods_native_style = (xz_mods_native_style_fn_v1)dlsym(RTLD_DEFAULT, "xz_mods_native_style_v1");
+    mods_command = (void (*)(int))dlsym(RTLD_DEFAULT, "xz_mods_command_v1");
 }
 
 static int mods_panel_visible(void) {
@@ -445,6 +447,7 @@ ssize_t read(int fd, void *buffer, size_t count) {
         }
         if (pressed && !touch_down) send_touch_event(1, x, y, 1);
         else if (!pressed && touch_down) send_touch_event(2, x, y, 0);
+        else if (pressed && touch_down) send_touch_event(3, x, y, 1);   /* moving while down */
         touch_down = pressed;
     }
     return result;
@@ -1245,6 +1248,11 @@ static void handle_vjfs_client(int client) {
     struct vjfs_header header;
     while (read_full(client, &header, sizeof(header))) {
         uint32_t expected;
+        if (memcmp(header.magic, "VJCM", 4) == 0) {
+            /* a command from Centrifuge: the header's version byte is the command */
+            if (mods_command) mods_command((int)header.version);
+            continue;
+        }
         if (memcmp(header.magic, "VJVP", 4) == 0) {
             struct timeval now;
             long interval_ms;
@@ -1601,9 +1609,18 @@ void xz_vj_touch_v1(int down, int x, int y) {
     static int native_x, native_y;
     int pressed = down != 0;
     int valid_point = x >= 0 && x < 800 && y >= 0 && y < 480;
+    if (pressed && native_client >= 0) {
+        /* the finger moved while down: tell Centrifuge (type 3), so it can drag */
+        if (valid_point && (x != native_x || y != native_y)) {
+            native_x = x;
+            native_y = y;
+            (void)send_touch_event_checked(native_client, 3, x, y, 1, 0);
+        }
+        return;
+    }
     if (pressed) {
         int client = vjfs_client_fd;
-        if (native_client >= 0 || mods_panel_visible() || !valid_point) return;
+        if (mods_panel_visible() || !valid_point) return;
         if (send_touch_event_checked(client, 1, x, y, 1, 0)) {
             native_client = client;
             native_x = x;

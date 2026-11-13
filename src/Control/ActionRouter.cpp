@@ -229,7 +229,16 @@ void ActionRouter::perform (const ActionDef& a, const ActionValue& v)
     else if (name == "keylock")     { if (v.down) button (C::keyLockToggle); }
     else if (name == "sync")        { if (v.down) button (C::syncToggle); }
     else if (name == "master")      { if (v.down) button (C::masterSet); }
-    else if (name == "quantize")    { if (v.down) button (C::quantizeToggle); }
+    else if (name == "quantize")
+    {
+        // one QUANTIZE for both decks (and PREP): on or off together
+        if (v.down)
+        {
+            const bool on = ! deck.state().quantize.load();
+            for (int k = 0; k < AudioEngine::maxDecks; ++k) engine.deck (k).post (C::quantizeSet, on ? 1.0 : 0.0);
+            engine.deck (AudioEngine::prepDeck).post (C::quantizeSet, on ? 1.0 : 0.0);
+        }
+    }
     else if (name.startsWith ("hotcue."))
     {
         const int idx = name.fromFirstOccurrenceOf (".", false, false).getIntValue() - 1;

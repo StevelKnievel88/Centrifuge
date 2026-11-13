@@ -35,8 +35,11 @@ public:
     /** The latest picture (any format; scaled to 800 x 480 if it isn't). Only the newest one is ever sent. */
     void submitFrame (const juce::Image& frame);
 
-    /** A touch on the XZ screen: down (true) / up (false), in screen pixels. Called on the message thread. */
-    std::function<void (bool down, int x, int y)> onTouch;
+    /** A touch on the XZ screen: 1 = down, 3 = moved while down, 2 = up; in screen pixels. Called on the message thread. */
+    std::function<void (int type, int x, int y)> onTouch;
+
+    /** Tells the loader on the deck: 1 = streaming on / off, 2 = its stem controls overlay, 3 = its mods panel. */
+    void sendCommand (int command) { std::lock_guard<std::mutex> l (frameLock); commands.push_back (command); frameArrived.signal(); }
 
 private:
     void run() override;
@@ -51,6 +54,7 @@ private:
     std::mutex frameLock;
     std::vector<juce::uint16> pending;       // RGB565, newest frame not sent yet
     bool havePending = false;
+    std::vector<int> commands;
     juce::WaitableEvent frameArrived;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (XzScreenLink)

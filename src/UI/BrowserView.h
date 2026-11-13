@@ -87,6 +87,15 @@ public:
     std::vector<TrackInfo> getVisibleTracks() const;
     std::vector<TrackInfo> getSelectedTracks() const;
     juce::String getCurrentListName() const { return currentListName; }
+    /** For the XDJ-XZ screen's browser: the list as shown, and its selection. */
+    int getRowCount() const { return (int) rows.size(); }
+    const TrackInfo* trackAtRow (int row) const
+    {
+        if (currentSource == nullptr || row < 0 || row >= (int) rows.size()) return nullptr;
+        return &currentSource->tracks[(size_t) rows[(size_t) row]];
+    }
+    int getSelectedRowIndex() const { return table.getSelectedRow(); }
+    void selectRowFromOutside (int row) { if (row >= 0 && row < (int) rows.size()) { table.selectRow (row); table.scrollToEnsureRowIsOnscreen (row); } }
 
     void resized() override;
     void paint (juce::Graphics&) override;

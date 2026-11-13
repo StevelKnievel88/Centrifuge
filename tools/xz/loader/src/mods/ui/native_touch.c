@@ -42,15 +42,17 @@ int xz_native_touch_dispatch(struct xz_native_touch*t,void*self,const struct xz_
  struct xz_touch_status previous;struct xz_ui_action out[XZ_UI_ACTIONS];size_t n;
  memcpy(&previous,(const char*)self+4,sizeof(previous));
  if(t->vj_contact){t->vj_contact=!!s->down;return 0;}
- if(!t->visible&&!t->capture&&s->down&&!previous.down&&s->x>=674&&s->x<742&&s->y<24) {
+ /* Centrifuge streaming: its screen has no corner buttons, so touches there are Centrifuge's */
+ const int streaming=t->model&&t->model->fb_takeover&&t->model->connection.enabled&&t->model->connection.connected;
+ if(!streaming&&!t->visible&&!t->capture&&s->down&&!previous.down&&s->x>=674&&s->x<742&&s->y<24) {
   t->capture=1;t->opening_contact=1;
   struct xz_ui_action act={.kind=XZ_UI_STEMS_OVERLAY};
   if(t->apply)t->apply(t->context,&act,1);
  }
- if(!t->visible&&!t->capture&&s->down&&!previous.down&&badge(t,s)) {
+ if(!streaming&&!t->visible&&!t->capture&&s->down&&!previous.down&&badge(t,s)) {
   t->visible=1;t->capture=1;t->opening_contact=1;
  }
- if(!t->visible&&!t->capture&&s->down&&!previous.down&&t->model&&vj_btn(t,s)) {
+ if(!streaming&&!t->visible&&!t->capture&&s->down&&!previous.down&&t->model&&vj_btn(t,s)) {
   t->capture=1;t->opening_contact=1;
   struct xz_ui_action act={.kind=XZ_UI_TAKEOVER_TOGGLE};
   if(t->apply)t->apply(t->context,&act,1);

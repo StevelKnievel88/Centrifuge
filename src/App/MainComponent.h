@@ -129,10 +129,13 @@ private:
     DeckPanel deck1 { 0, engine, router }, deck2 { 1, engine, router };
     ScrollingWaveforms waves { engine };
     // Laptop mode: the decks drawn for the XDJ-XZ's screen and sent to it over the network cable
-    XzScreenView xzView { engine, router };
     XzScreenLink xzLink;
     struct FnTimer : juce::Timer { std::function<void()> f; void timerCallback() override { if (f) f(); } } xzTimer;
     BrowserView browser { library, stems };
+    XzScreenView xzView { engine, router, browser };
+public:
+    juce::Image renderXzScreen() { return xzView.render(); }
+private:   // (after the browser: it shows it)
     MappingView mapping;
     StemsView stemsView;
     SettingsView settingsView;

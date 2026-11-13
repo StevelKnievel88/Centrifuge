@@ -228,11 +228,14 @@ juce::Image renderStemStrip (const StemWaveform& w, int stem, juce::Colour colou
         if (! c.valid) continue;
         const float hh = valueAt (data, c, n) * geo.maxH;
         const auto rr = geo.rows (hh);
-            for (int y = rr.getStart(); y < rr.getEnd(); ++y)
+        // high-passed: each column hollowed out in proportion to its own height, so the shape stays; turned fully
+        // down: only its edge
+        const float inner = o.outline ? hh - 1.6f : hh * o.hollow;
+        for (int y = rr.getStart(); y < rr.getEnd(); ++y)
         {
             const float d = geo.dist (y);
-            if (d >= hh) continue;
-            *reinterpret_cast<juce::PixelARGB*> (bd.getPixelPointer (x, y)) = d < hh * 0.3f ? core : body;
+            if (d >= hh || d < inner) continue;
+            *reinterpret_cast<juce::PixelARGB*> (bd.getPixelPointer (x, y)) = o.outline || (o.hollow <= 0.0f && d < hh * 0.3f) ? core : body;
         }
     }
     return img;

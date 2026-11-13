@@ -174,17 +174,35 @@ void XzScreenLink::serve (const juce::String& ip)
                 if (n <= 0) return;
                 got += n;
             }
-            if (std::memcmp (ev.magic, "VJTE", 4) == 0 && (ev.type == 1 || ev.type == 2))
+            if (std::memcmp (ev.magic, "VJTE", 4) == 0 && ev.type >= 1 && ev.type <= 3)
             {
-                const bool down = ev.type == 1;
-                if (down == touchDown) continue;
-                touchDown = down;
+                const int type = ev.type;
+                if (type != 3)
+                {
+                    const bool down = type == 1;
+                    if (down == touchDown) continue;
+                    touchDown = down;
+                }
+                else if (! touchDown) continue;
                 const int x = ev.x, y = ev.y;
-                juce::MessageManager::callAsync ([this, down, x, y] { if (onTouch) onTouch (down, x, y); });
+                juce::MessageManager::callAsync ([this, type, x, y] { if (onTouch) onTouch (type, x, y); });
             }
         }
 
         frameArrived.wait (100);
+        std::vector<int> cmds;
+        {
+            std::lock_guard<std::mutex> l (frameLock);
+            cmds.swap (commands);
+        }
+        for (int cmd : cmds)
+        {
+            // "VJCM": a command for the loader (its version byte carries the command)
+            FrameHeader ch {};
+            std::memcpy (ch.magic, "VJCM", 4);
+            ch.version = (juce::uint8) cmd;
+            if (! writeAll (s, &ch, (int) sizeof (ch))) return;
+        }
         {
             std::lock_guard<std::mutex> l (frameLock);
             if (! havePending) continue;

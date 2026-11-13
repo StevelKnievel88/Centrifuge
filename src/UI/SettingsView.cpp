@@ -300,14 +300,23 @@ public:
         jogScreens.setButtonText ("XDJ-XZ jog screens show the track turning and the cue point; LOAD lights on decks that aren't playing");
         jogScreens.setToggleState (settings.jogDisplay, juce::dontSendNotification);
         jogScreens.onClick = [this] { settings.jogDisplay = jogScreens.getToggleState(); onChanged(); };
+        add (&longPress, 28, "Long press time (s)");
+        setupSlider (longPress, 0.25, 1.0, 0.05, settings.longPressSec);
+        longPress.onValueChange = [this] { settings.longPressSec = longPress.getValue(); onChanged(); };
+
+        addSection ("STREAMING TO THE XDJ-XZ SCREEN");
         add (&xzScreenOn, 28, {});
         xzScreenOn.setButtonText ("Show Centrifuge's decks on the XDJ-XZ screen (network cable from the computer to LINK, deck started from the Centrifuge loader stick)");
         xzScreenOn.setToggleState (settings.xzScreen, juce::dontSendNotification);
         xzScreenOn.onClick = [this] { settings.xzScreen = xzScreenOn.getToggleState(); onChanged(); };
-        add (&xzScreenStatus, 22, "XDJ-XZ screen");
-        add (&longPress, 28, "Long press time (s)");
-        setupSlider (longPress, 0.25, 1.0, 0.05, settings.longPressSec);
-        longPress.onValueChange = [this] { settings.longPressSec = longPress.getValue(); onChanged(); };
+        add (&xzScreenStatus, 22, "Status");
+        add (&xzScreenNote, 44, {});
+        xzScreenNote.setText ("The deck's STREAM / STEMS / MODS buttons are hidden while it streams. Map them to the XZ's buttons in Mapping > "
+                              "XDJ-XZ screen (streaming on / off, stem controls, mods panel), along with the browser on the XZ screen.",
+                              juce::dontSendNotification);
+        xzScreenNote.setColour (juce::Label::textColourId, Theme::textDim);
+        xzScreenNote.setFont (Theme::font (12.5f));
+        xzScreenNote.setJustificationType (juce::Justification::topLeft);
 
         addSection ("VINYL");
         for (int d = 0; d < 2; ++d)
@@ -792,6 +801,7 @@ private:
     juce::Slider throwSpeed, markerSize, longPress;
     juce::ComboBox stemFormat;
     juce::ToggleButton padColoursOn, jogScreens, xzScreenOn;
+    juce::Label xzScreenNote;
     struct StatusLabel : juce::Label, juce::Timer
     {
         StatusLabel() { setColour (juce::Label::textColourId, Theme::textDim); setFont (Theme::mono (12.5f)); startTimerHz (2); }

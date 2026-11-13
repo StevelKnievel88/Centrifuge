@@ -1,45 +1,73 @@
 #pragma once
 #include "ScrollingWaveforms.h"
+#include "PhaseMeter.h"
+#include "BrowserView.h"
 #include "../Control/ActionRouter.h"
 
 namespace orbit
 {
 
-/** What laptop mode shows on the XDJ-XZ's 800 x 480 screen: both decks' scrolling waveforms across the top,
-    and under them an info panel per deck (title, artist, times, BPM, tempo, key, overview) - laid out like the
-    XZ's own screen. Never shown on the computer; it is painted into a picture for XzScreenLink. */
+/** What laptop mode shows on the XDJ-XZ's 800 x 480 screen: the phrase meter along the top, both decks' scrolling
+    waveforms, and under them a panel per deck (title, BPM, artist, key, tempo, range, Q, times, overview with its
+    grid button) - or the browser, when it's switched on. Never shown on the computer; it is painted into a
+    picture for XzScreenLink. Touches work like the mouse on the computer: tap or drag the overviews, drag the
+    waveforms (scrub), the playhead and the split between lanes, tap the lane buttons, the grid button and Q. */
 class XzScreenView : public juce::Component
 {
 public:
-    XzScreenView (AudioEngine& engine, ActionRouter& router);
+    XzScreenView (AudioEngine& engine, ActionRouter& router, BrowserView& browser);
 
     /** Same lanes, colours and zoom as the play page's waveforms. */
     ScrollingWaveforms& getWaves() { return waves; }
-    void setOverviewStyle (int style, bool half, juce::Colour single);
+    PhaseMeter& getPhaseMeter() { return meter; }
+    void setOverviewStyle (int style, bool half, juce::Colour single, bool singleFollowsDeck);
+    void setOverviewGrid (bool on) { overviewGrid = on; }
+    std::function<void()> onGridToggled;
+
+    /** The browser instead of the deck panels (mappable: XDJ-XZ screen > browser on / off). */
+    void setBrowserShown (bool b) { browserShown = b; }
+    bool isBrowserShown() const { return browserShown; }
 
     /** Advances the waveforms and paints the screen. */
     juce::Image render();
 
-    /** A touch on the XZ screen: tapping a deck's overview jumps there. */
-    void touch (bool down, int x, int y);
+    /** A touch on the XZ screen: type 1 down, 3 moved, 2 up. */
+    void touch (int type, int x, int y);
 
     void resized() override;
     void paint (juce::Graphics&) override;
 
 private:
     void paintInfo (juce::Graphics& g, int deck, juce::Rectangle<float> r);
+    void paintBrowser (juce::Graphics& g, juce::Rectangle<int> r);
+    void seekOverview (int deck, float x);
+    void sendToWaves (int type, juce::Point<float> p);
 
     AudioEngine& engine;
     ActionRouter& router;
+    BrowserView& browser;
     ScrollingWaveforms waves;
-    juce::Rectangle<int> infoArea;
+    PhaseMeter meter;
+    juce::Rectangle<int> infoArea, browserArea;
 
     struct Overview { juce::Image image; int serial = -1, version = -1, fold = -1, style = -1; };
     std::array<Overview, 2> overviews;
-    std::array<juce::Rectangle<float>, 2> overviewRects;
+    std::array<juce::Rectangle<float>, 2> overviewRects, gridRects, qRects;
     int overviewStyle = 1;
-    bool overviewHalf = false;
+    bool overviewHalf = false, followDeck = false, overviewGrid = false, browserShown = false;
     juce::Colour singleColour;
+
+    // the touch in progress: what it started on
+    enum class Drag { none, overview, waves, browserList };
+    Drag drag = Drag::none;
+    int dragDeck = -1;
+    juce::Point<float> downPos;
+    juce::Time downTime;
+    // browser page
+    std::vector<juce::Rectangle<float>> browserRows;
+    std::vector<int> browserRowIndex;
+    juce::Rectangle<float> load1Rect, load2Rect, closeRect;
+    float listDragY = 0.0f;
 };
 
 } // namespace orbit

@@ -504,17 +504,34 @@ void ScrollingWaveforms::paintLane (juce::Graphics& g, int d, int lane, juce::Re
             gain *= juce::jlimit (0.0f, 1.0f, st.stemAuto[(size_t) s].load());   // stem locators too
             const float op = (stemsSeparate || oneStem) ? 1.0f : stemOpacity[(size_t) juce::jlimit (0, 3, s)];
             if (gain >= 0.999f) { tc.draw (g, area, t, px, op); continue; }
-            // Turned down / low-passed: shrinks in towards the centre; high-passed: hollows out from the centre.
-            // Either way a faint outline of the whole stem stays.
+            // Turned down / low-passed: shrinks in towards the centre; high-passed: each column hollows out from the
+            // centre in proportion to its own height (the loud parts open up first, so the shape stays). A faint
+            // ghost of the whole stem stays, and fully off, its outline in the stem's colour.
             tc.draw (g, area, t, px, 0.16f * op);
             const float cy = (stemsSeparate || oneStem) ? (float) area.getCentreY() : baseY;
-            if (gain <= 0.001f) continue;
+            auto direct = [&] (StripOptions so, float alpha)
+            {
+                // drawn straight for this frame (it changes as the knob turns, so it isn't cached)
+                const double eps = sw->entriesPerSecond;
+                const double left = (t * pps - (double) px) / pps * eps;
+                auto img = renderStemStrip (*sw, s, col, valid, left, eps / pps, area.getWidth(), area.getHeight(), so);
+                g.setOpacity (alpha);
+                g.drawImageAt (img, area.getX(), area.getY());
+                g.setOpacity (1.0f);
+            };
+            if (gain <= 0.001f)
+            {
+                auto so = o;
+                so.outline = true;
+                direct (so, op);
+                continue;
+            }
             juce::Graphics::ScopedSaveState ss (g);
             if (highPass)
             {
-                const float band = (1.0f - gain) * (float) area.getHeight() * 0.5f;
-                g.excludeClipRegion (juce::Rectangle<float> ((float) area.getX(), cy - band, (float) area.getWidth(), band * 2.0f).toNearestInt());
-                tc.draw (g, area, t, px, 0.85f * op);
+                auto so = o;
+                so.hollow = 1.0f - gain;
+                direct (so, 0.85f * op);
             }
             else
             {

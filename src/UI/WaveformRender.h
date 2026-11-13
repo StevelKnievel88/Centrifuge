@@ -17,6 +17,8 @@ struct StripOptions
     const WaveformDetail* detail = nullptr;     // fine detail used when zoomed in
     const TimeFold* fold = nullptr;             // skipped sections folded out (entries are then display entries)
     double entriesPerSecond = 150.0;            // of the data being drawn (needed for the fold)
+    float hollow = 0.0f;                        // stems: this much of each column hidden from the centre out (high-pass)
+    bool outline = false;                       // stems: just the edge of the waveform (turned fully down)
 };
 
 /** Renders waveform columns straight into pixels (software image), rekordbox style. */

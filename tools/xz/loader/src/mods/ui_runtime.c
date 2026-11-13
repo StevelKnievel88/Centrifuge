@@ -404,7 +404,23 @@ static void touch_hook(void *self, const struct xz_touch_status *status, const v
     } else if (!owned && model.fb_takeover && model.connection.connected && forward_touch && !!status->down != forwarded_down) {
         forwarded_down = !!status->down;
         forward_touch(forwarded_down, (int)status->x, (int)status->y);
+    } else if (!owned && forwarded_down && status->down && forward_touch) {
+        /* Centrifuge: the finger moving while down (drags on the streamed screen) */
+        forward_touch(1, (int)status->x, (int)status->y);
     }
+    pthread_mutex_unlock(&ui_mutex);
+}
+
+/* Commands from Centrifuge over the screen link (mapped to the XZ's buttons there):
+   1 = streaming on / off, 2 = stem controls overlay, 3 = the mods panel. */
+__attribute__((visibility("default"))) void xz_mods_command_v1(int command) {
+    if (!__atomic_load_n(&started, __ATOMIC_ACQUIRE)) return;
+    pthread_mutex_lock(&ui_mutex);
+    refresh();
+    if (command == 1) { struct xz_ui_action act = { .kind = XZ_UI_TAKEOVER_TOGGLE }; apply(NULL, &act, 1); }
+    else if (command == 2) { struct xz_ui_action act = { .kind = XZ_UI_STEMS_OVERLAY }; apply(NULL, &act, 1); }
+    else if (command == 3) xz_native_touch_visible(&touch, !touch.visible);
+    __atomic_store_n(&visible, touch.visible, __ATOMIC_RELEASE);
     pthread_mutex_unlock(&ui_mutex);
 }
 
@@ -423,6 +439,8 @@ __attribute__((visibility("default"))) int xz_mods_takeover_v1(void) {
 }
 
 static void badge(uint16_t *pixels, uint32_t stride) {
+    /* Centrifuge streaming its screen: no MODS / STEMS / STREAM buttons on top (they're mapped to buttons instead) */
+    if (model.fb_takeover && model.connection.connected) return;
     xz_ui_render_native_buttons(pixels,stride,model.theme,model.stems_overlay,
         model.connection.enabled&&model.connection.connected,model.fb_takeover);
 }

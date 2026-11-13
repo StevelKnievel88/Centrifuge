@@ -238,7 +238,13 @@ MainComponent::MainComponent()
     };
 
     waves.onZoomChanged = [this] (double s) { settings.visibleSeconds = s; settings.save(); };
-    waves.onLaneSplitChanged = [this] (int d, float share) { settings.laneSplit[(size_t) d] = share; settings.save(); };
+    waves.onLaneSplitChanged = [this] (int d, float share)
+    {
+        settings.laneSplit[(size_t) d] = share;
+        settings.save();
+        waves.setLaneSplit (d, share);
+        xzView.getWaves().setLaneSplit (d, share);
+    };
     waves.onLaneStyleChosen = [this] (int d, int lane, int style)
     {
         if (d < 0 || d > 1) return;
@@ -247,7 +253,13 @@ MainComponent::MainComponent()
         applySettings();
         settingsView.refreshValues();
     };
-    waves.onPlayheadMoved = [this] (float f) { settings.playheadPosition = f; settings.save(); };
+    waves.onPlayheadMoved = [this] (float f)
+    {
+        settings.playheadPosition = f;
+        settings.save();
+        waves.setPlayheadPosition (f);
+        xzView.getWaves().setPlayheadPosition (f);
+    };
     waves.onEditViewChanged = [this] (int d, bool on) { settings.editView[(size_t) d] = on; settings.save(); applySettings(); };
     engine.onDeviceChanged = [this] { settingsView.refreshRouting(); };
 
@@ -311,7 +323,19 @@ MainComponent::MainComponent()
     addChildComponent (conflictsView);
 
     SettingsView::xzScreenStatus = [this] { return xzLink.getStatus(); };
-    xzLink.onTouch = [this] (bool down, int x, int y) { xzView.touch (down, x, y); };
+    xzLink.onTouch = [this] (int type, int x, int y) { xzView.touch (type, x, y); };
+    // the XZ screen works like the play page: lanes, split, zoom and grid stay the same in both places
+    xzView.getWaves().onLaneSplitChanged = waves.onLaneSplitChanged;
+    xzView.getWaves().onLaneStyleChosen = waves.onLaneStyleChosen;
+    xzView.getWaves().onPlayheadMoved = waves.onPlayheadMoved;
+    xzView.getWaves().onZoomChanged = [this] (double s) { settings.visibleSeconds = s; settings.save(); applySettings(); };
+    xzView.getPhaseMeter().foldFor = phaseMeter.foldFor;
+    xzView.onGridToggled = [this]
+    {
+        settings.overviewGrid = ! settings.overviewGrid;
+        settings.save();
+        applySettings();
+    };
     xzTimer.f = [this] { if (xzLink.isEnabled() && xzLink.isConnected()) xzLink.submitFrame (xzView.render()); };
     xzTimer.startTimerHz (25);
 
@@ -438,7 +462,9 @@ void MainComponent::applySettings()
         xw.setStemLayers (settings.stemLayerOrder, settings.stemOpacity);
         xw.setPlayheadPosition (settings.playheadPosition);
         xw.forceRedraw();
-        xzView.setOverviewStyle (settings.overviewStyle, settings.overviewShape == 1, juce::Colour (settings.singleColour));
+        xzView.setOverviewStyle (settings.overviewStyle, settings.overviewShape == 1, juce::Colour (settings.singleColour), settings.singleFollowsDeck);
+        xzView.setOverviewGrid (settings.overviewGrid);
+        xzView.getPhaseMeter().setOptions (settings.phraseBars, settings.phraseFollow, false);
         xzLink.setEnabled (settings.xzScreen);
     }
     for (auto* dp : { &deck1, &deck2 })
@@ -536,6 +562,10 @@ void MainComponent::handleAppAction (const juce::String& id, int deck, const Act
 
     if (id == "deck.load")           browser.loadSelected (deck);
     else if (id == "browse.scroll")  browser.scroll ((int) std::round (v.delta));
+    else if (id == "xz.stream")       { if (v.down) xzLink.sendCommand (1); }
+    else if (id == "xz.stems")        { if (v.down) xzLink.sendCommand (2); }
+    else if (id == "xz.mods")         { if (v.down) xzLink.sendCommand (3); }
+    else if (id == "xz.browser")      { if (v.down) xzView.setBrowserShown (! xzView.isBrowserShown()); }
     else if (id == "browse.preview")  { if (v.down) browser.previewPlayStop(); }
     else if (id == "browse.enter")   { if (v.down) { if (loadConfirm != nullptr) loadConfirm->exitModalState (1); else browser.enter(); } }
     else if (id == "browse.back")    { if (v.down) { if (loadConfirm != nullptr) loadConfirm->exitModalState (0); else browser.back(); } }
@@ -718,9 +748,10 @@ void MainComponent::paint (juce::Graphics& g)
     }
 
     // Status pills (right side)
-    auto pills = topBar.withSizeKeepingCentre (topBar.getWidth(), 34).reduced (10, 0).withLeft (statusFold.getRight() + 8)
+    auto pills = topBar.withSizeKeepingCentre (topBar.getWidth(), 34).reduced (10, 0).withLeft (phaseArea.getRight() + 14 + 30)
                        .withRight (recButton.getX() - 8).toFloat();
     if (settings.statusFolded) pills = {};
+    float leftmostPill = (float) recButton.getX() - 8.0f;
     {
         // master volume: label, and a peak meter under the slider
         auto mr = masterArea.toFloat();
@@ -737,6 +768,7 @@ void MainComponent::paint (juce::Graphics& g)
         if (pills.getWidth() < w) return;   // no room (narrow window): left out rather than squashed
         auto pr = pills.removeFromRight (w);
         drawPill (g, pr, text, dot);
+        leftmostPill = pr.getX();
         pills.removeFromRight (8.0f);
     };
     pill ("CPU " + juce::String (juce::roundToInt (cpu * 100.0)) + "%", cpu < 0.5 ? Theme::good : (cpu < 0.8 ? Theme::warn : Theme::bad), 84.0f);
@@ -759,6 +791,12 @@ void MainComponent::paint (juce::Graphics& g)
     }
     if ((page == 0 || extra != stemStatus) && pills.getWidth() > 80.0f)
         pill (extra, extraColour, juce::jmin (pills.getWidth(), psyched::Fonts::label().getStringWidthFloat (extra.toUpperCase()) + 34.0f));
+    // the fold button follows the leftmost box
+    if (const int fx = (int) leftmostPill - 30; fx != statusFold.getX())
+    {
+        juce::Component::SafePointer<MainComponent> safe (this);
+        juce::MessageManager::callAsync ([safe, fx] { if (safe != nullptr) safe->statusFold.setTopLeftPosition (fx, safe->statusFold.getY()); });
+    }
 }
 
 void MainComponent::resized()
@@ -786,12 +824,12 @@ void MainComponent::resized()
     // Phrase meter: both decks stacked, to the right of the tabs; the fold button after it (folded: the meter
     // takes the status boxes' room, up to REC)
     const int meterX = 262 + 5 * 92 + 18;
-    const int meterW = settings.statusFolded ? juce::jmax (220, recButton.getX() - 12 - 30 - meterX)
-                                             : juce::jlimit (220, 520, (getWidth() - 262 - 5 * 92 - 18) / 2);
+    const int meterW = juce::jlimit (220, 520, (getWidth() - 262 - 5 * 92 - 18) / 2);
     phaseArea = juce::Rectangle<int> (meterX, topBar.getY() + 10, meterW, topBar.getHeight() - 20);
     phaseMeter.setBounds (phaseArea);
     statusFold.setButtonText (settings.statusFolded ? "<" : ">");
-    statusFold.setBounds (phaseArea.getRight() + 8, topBar.getCentreY() - 14, 22, 28);
+    // the fold button sits just left of the status boxes (folded: just left of REC); paint() keeps it there
+    statusFold.setBounds (recButton.getX() - 30, topBar.getCentreY() - 14, 22, 28);
 
     deck1.setVisible (page == 0 && ! browserExpanded);
     deck2.setVisible (page == 0 && ! browserExpanded);

@@ -672,6 +672,15 @@ private:
         else if (stage == 3 && ticks - t0 > 8)
         {
             snap ("02_play_later.png");
+            if (shots != juce::File())
+            {
+                // what laptop mode streams to the XDJ-XZ screen
+                auto img = main.renderXzScreen();
+                juce::FileOutputStream os (shots.getChildFile ("02b_xz_screen.png"));
+                os.setPosition (0);
+                os.truncate();
+                juce::PNGImageFormat().writeImageToStream (img, os);
+            }
             main.showPage (1);
             stage = 4;
             t0 = ticks;

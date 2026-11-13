@@ -148,6 +148,11 @@ static std::vector<ActionDef> buildActions()
     add ("setlist.toggle",  "SET LIST start / stop", "Browser", B, -1);
     add ("record.toggle",   "Record start / stop", "View", B, -1);
     add ("view.browser",    "Show / hide browser",     "View", B, -1);
+    // laptop mode: the XDJ-XZ screen (the loader's own buttons are hidden while Centrifuge streams to it)
+    add ("xz.stream",       "Streaming on / off (the deck's STREAM / EXIT)", "XDJ-XZ screen", B, -1);
+    add ("xz.browser",      "Browser on the XZ screen on / off",            "XDJ-XZ screen", B, -1);
+    add ("xz.stems",        "The loader's stem controls (STEMS)",            "XDJ-XZ screen", B, -1);
+    add ("xz.mods",         "The loader's mods panel (MODS)",                "XDJ-XZ screen", B, -1);
     add ("view.zoom",       "Waveform zoom (encoder)", "View", E, -1);
     add ("view.zoomin",     "Waveform zoom in",        "View", B, -1);
     add ("view.zoomout",    "Waveform zoom out",       "View", B, -1);
