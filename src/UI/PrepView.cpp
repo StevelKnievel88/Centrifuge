@@ -1,5 +1,6 @@
 #include "GridMoreMenu.h"
 #include "PrepView.h"
+#include "ButtonStyles.h"
 #include "../App/EditExporter.h"
 #include "TrackMarks.h"
 #include "../App/Features.h"
@@ -88,7 +89,7 @@ void PrepView::timerCallback()
     mix (st.positionSec.load()); mix (st.playing.load()); mix (st.cueEdits.load()); mix (st.loopActive.load());
     mix (st.loopInSec.load()); mix (st.loopOutSec.load()); mix (st.skipPendingFrom.load()); mix (st.cyclesLeft.load());
     mix (editor.editsRekordbox (deckIndex)); mix (editor.editsCentrifuge (deckIndex)); mix (editor.versionsDiffer (deckIndex));
-    mix (editor.currentBpm (deckIndex)); mix (waves.getVisibleSeconds()); mix (loopBeats); mix (MusicalKey::camelotDisplay().load());
+    mix (editor.currentBpm (deckIndex)); mix (ButtonStyles::get().getVersion()); mix (heldAction.hashCode()); mix (waves.getVisibleSeconds()); mix (loopBeats); mix (MusicalKey::camelotDisplay().load());
     for (size_t i = 0; i < 4; ++i) { mix (st.stemGain[i].load()); mix (st.stemFilter[i].load()); }
     mix (st.stemResonance.load());
     mix (st.stemsReady.load()); mix (std::floor (st.stemsProgress.load() * 400.0f)); mix (Theme::deckColour (deckIndex).getARGB());
@@ -97,8 +98,13 @@ void PrepView::timerCallback()
 
 void PrepView::chip (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& text, bool lit, juce::Colour c, const juce::String& id)
 {
-    psyched::paintChip (g, r, text, c, lit ? psyched::ChipState::on : psyched::ChipState::off);
-    if (id.isNotEmpty()) regions.push_back ({ r, id, 0 });
+    const bool pressed = id.isNotEmpty() && id == heldAction;
+    paintStyledChip (g, r, text, c, lit, pressed, ButtonStyles::get().find (id));
+    if (id.isNotEmpty())
+    {
+        regions.push_back ({ r, id, 0 });
+        chipsDrawn.push_back ({ r, text, c });
+    }
 }
 
 //==============================================================================
@@ -106,6 +112,7 @@ void PrepView::paint (juce::Graphics& g)
 {
     g.fillAll (Theme::bg);
     regions.clear();
+    chipsDrawn.clear();
     const auto& st = deck().state();
     const bool loaded = track != nullptr;
 
@@ -1032,6 +1039,12 @@ void PrepView::mouseDown (const juce::MouseEvent& e)
         return;
     }
     if (r->kind == 5) { if (onSetBpm) onSetBpm (deckIndex); return; }
+    if (r->kind == 0 && e.mods.isPopupMenu())
+    {
+        // right-click a button: its own colours
+        for (auto& c : chipsDrawn)
+            if (c.r == r->r) { ButtonStyleEditor::show (localAreaToGlobal (r->r.toNearestInt()), r->action, c.text, c.colour); return; }
+    }
     if (r->kind == 3 && e.mods.isPopupMenu())
     {
         showPadMenu (r->action.fromFirstOccurrenceOf (".", false, false).getIntValue(), r->r);

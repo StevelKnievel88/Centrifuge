@@ -1,5 +1,6 @@
 #include "GridMoreMenu.h"
 #include "DeckPanel.h"
+#include "ButtonStyles.h"
 #include "TrackMarks.h"
 #include "../App/Features.h"
 #include "Theme.h"
@@ -22,9 +23,13 @@ namespace
         return neg ? "-" + str : str;
     }
 
+    // every chip painted this frame (so a button with your own colours can be painted again in them)
+    std::vector<DeckPanel::ChipDrawn>* chipLog = nullptr;
+
     void chip (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& text, bool lit, juce::Colour litColour)
     {
         psyched::paintChip (g, r, text, litColour, lit ? psyched::ChipState::on : psyched::ChipState::off);
+        if (chipLog != nullptr) chipLog->push_back ({ r, text, lit, litColour });
     }
 }
 
@@ -95,7 +100,7 @@ void DeckPanel::timerCallback()
     if (auto* n = noteShowing (st.positionSec.load())) mix (n->timeSec + 7.0 + std::floor (st.positionSec.load() * 10.0));
     for (size_t i = 0; i < 4; ++i) mix (st.stemFilter[i].load());
     mix (st.stemResonance.load());
-    mix (heldAction.hashCode()); mix (st.reversing.load()); mix (st.searchDir.load()); mix (scrubDrag);
+    mix (heldAction.hashCode()); mix (ButtonStyles::get().getVersion()); mix (st.reversing.load()); mix (st.searchDir.load()); mix (scrubDrag);
     mix (st.brakeSeconds.load()); mix (st.brakeBeats.load()); mix (st.brakeOn.load()); mix (st.startOn.load()); mix (juce::Time::getMillisecondCounterHiRes() < flashUntil);
     for (int k = 0; k < 4; ++k) { mix (router.getJumpSlotBeats (deck, k)); mix ((double) router.getJumpSlotColour (deck, k)); }
     mix (overviewGrid); mix (st.stemsReady.load() && st.stemsProgress.load() < 0.999f ? std::floor (st.stemsProgress.load() * 400.0f) : -1.0);
@@ -108,6 +113,8 @@ void DeckPanel::paint (juce::Graphics& g)
     g.fillAll (Theme::bg);
     psyched::paintPanel (g, getLocalBounds().toFloat(), col);
     regions.clear();
+    chipsDrawn.clear();
+    chipLog = &chipsDrawn;
 
     const auto& st = engine.deck (deck).state();
     const bool loaded = track != nullptr;
@@ -659,11 +666,25 @@ void DeckPanel::paint (juce::Graphics& g)
         }
     }
 
+    chipLog = nullptr;
+    const bool flashing = juce::Time::getMillisecondCounterHiRes() < flashUntil;
+    // buttons with your own colours (right-click a button)
+    for (auto& rg : regions)
+        if (rg.kind == 0 || rg.kind == 14)
+            if (auto* s = ButtonStyles::get().find (rg.action))
+                for (auto& c : chipsDrawn)
+                    if (c.r == rg.r)
+                    {
+                        const bool pressed = (flashing && rg.action == flashAction) || rg.action == heldAction;
+                        paintStyledChip (g, c.r, c.text, c.colour, c.lit, pressed, s);
+                        break;
+                    }
     // pressed buttons flash
-    if (const bool flashing = juce::Time::getMillisecondCounterHiRes() < flashUntil; flashing || heldAction.isNotEmpty())
+    if (flashing || heldAction.isNotEmpty())
         for (auto& rg : regions)
             if (rg.kind == 0 && ((flashing && rg.action == flashAction) || rg.action == heldAction))
             {
+                if (auto* s = ButtonStyles::get().find (rg.action); s != nullptr && s->anyIn (ButtonStyle::pressed)) continue;
                 g.setColour (juce::Colours::white.withAlpha (0.35f));
                 g.fillRect (rg.r);
             }
@@ -906,6 +927,16 @@ void DeckPanel::mouseDown (const juce::MouseEvent& e)
     auto* r = regionAt (e.position);
     if (r == nullptr) return;
     if ((r->kind == 2 || r->kind == 8 || r->kind == 9) && e.mods.isPopupMenu()) return;
+    if (e.mods.isPopupMenu() && (r->kind == 0 || r->kind == 14))
+    {
+        // right-click a button: its own colours
+        for (auto& c : chipsDrawn)
+            if (c.r == r->r)
+            {
+                ButtonStyleEditor::show (localAreaToGlobal (r->r.toNearestInt()), r->action, c.text, c.colour);
+                return;
+            }
+    }
     if (r->kind == 8)
     {
         // resonance knob: drag up / down, double-click back to the start value

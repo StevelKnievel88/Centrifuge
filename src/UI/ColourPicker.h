@@ -21,30 +21,35 @@ inline const std::array<NamedColour, 16>& rekordboxCueColours()
     return c;
 }
 
-/** Colours you've saved from the custom colour picker (with your own names), kept between sessions. */
+/** A library of colours you've saved from the custom colour picker (with your own names), kept between sessions.
+    There are two: the cue palette (hot cues, markers, phrases, decks...) and the button palette (button colours). */
 struct SavedColours
 {
     struct Entry { juce::String name; juce::Colour colour; };
 
-    static juce::File file()
+    SavedColours (const char* fileName, const char* title) : fileName (fileName), title (title) {}
+
+    static SavedColours& cues()    { static SavedColours c ("saved-colours.json", "Cue palette"); return c; }
+    static SavedColours& buttons() { static SavedColours c ("button-colours.json", "Button palette"); return c; }
+
+    juce::File file() const
     {
         return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-                   .getChildFile ("Centrifuge").getChildFile ("saved-colours.json");
+                   .getChildFile ("Centrifuge").getChildFile (fileName);
     }
-    static std::vector<Entry>& list()
+    std::vector<Entry>& list()
     {
-        static std::vector<Entry> entries = []
+        if (! loaded)
         {
-            std::vector<Entry> v;
+            loaded = true;
             const auto json = juce::JSON::parse (file());
             if (auto* a = json.getArray())
                 for (auto& e : *a)
-                    v.push_back ({ e["name"].toString(), juce::Colour ((juce::uint32) (juce::int64) e["argb"]) });
-            return v;
-        }();
+                    entries.push_back ({ e["name"].toString(), juce::Colour ((juce::uint32) (juce::int64) e["argb"]) });
+        }
         return entries;
     }
-    static void save()
+    void save()
     {
         juce::Array<juce::var> a;
         for (auto& e : list())
@@ -57,22 +62,61 @@ struct SavedColours
         file().getParentDirectory().createDirectory();
         file().replaceWithText (juce::JSON::toString (juce::var (a)));
     }
-    static void add (const juce::String& name, juce::Colour c)
+    void add (const juce::String& name, juce::Colour c)
     {
         list().push_back ({ name.isNotEmpty() ? name : c.toDisplayString (false), c.withAlpha (1.0f) });
         save();
     }
-    static void remove (int index)
+    void remove (int index)
     {
         if (index < 0 || index >= (int) list().size()) return;
         list().erase (list().begin() + index);
         save();
     }
     static constexpr int maxShown = 40;
+
+    const char* fileName;
+    juce::String title;
+private:
+    std::vector<Entry> entries;
+    bool loaded = false;
 };
 
-/** Adds the rekordbox colours to a menu (ids baseId .. baseId+15), "Custom colour..." (baseId+16), your saved
-    colours below a divider (baseId+20 ..) and a submenu to delete saved ones (baseId+60 ..).
+/** Your saved colours from a library (ids baseId+20 ..), "Custom colour..." (baseId+16) and a submenu to delete
+    saved ones (baseId+60 ..). */
+inline void addSavedColourItems (juce::PopupMenu& m, int baseId, juce::Colour current, SavedColours& lib)
+{
+    const auto& saved = lib.list();
+    if (! saved.empty())
+    {
+        m.addSeparator();
+        m.addSectionHeader (lib.title);
+        for (int i = 0; i < juce::jmin ((int) saved.size(), SavedColours::maxShown); ++i)
+        {
+            juce::PopupMenu::Item item (saved[(size_t) i].name);
+            item.itemID = baseId + 20 + i;
+            item.colour = saved[(size_t) i].colour;
+            item.isTicked = current.getARGB() == saved[(size_t) i].colour.getARGB();
+            m.addItem (item);
+        }
+    }
+    m.addSeparator();
+    m.addItem (baseId + 16, "Custom colour...  (+ in the picker saves it to the " + lib.title.toLowerCase() + ")");
+    if (! saved.empty())
+    {
+        juce::PopupMenu del;
+        for (int i = 0; i < juce::jmin ((int) saved.size(), SavedColours::maxShown); ++i)
+        {
+            juce::PopupMenu::Item item ("Delete \"" + saved[(size_t) i].name + "\"");
+            item.itemID = baseId + 60 + i;
+            item.colour = saved[(size_t) i].colour;
+            del.addItem (item);
+        }
+        m.addSubMenu ("Delete a colour from the " + lib.title.toLowerCase(), del);
+    }
+}
+
+/** Adds the rekordbox colours to a menu (ids baseId .. baseId+15), then the cue palette (see addSavedColourItems).
     Handle the result with handleCueColourMenu. */
 inline void addCueColourItems (juce::PopupMenu& m, int baseId, juce::Colour current)
 {
@@ -85,34 +129,7 @@ inline void addCueColourItems (juce::PopupMenu& m, int baseId, juce::Colour curr
         item.isTicked = current.getARGB() == cols[(size_t) i].argb;
         m.addItem (item);
     }
-    const auto& saved = SavedColours::list();
-    if (! saved.empty())
-    {
-        m.addSeparator();
-        m.addSectionHeader ("Saved colours");
-        for (int i = 0; i < juce::jmin ((int) saved.size(), SavedColours::maxShown); ++i)
-        {
-            juce::PopupMenu::Item item (saved[(size_t) i].name);
-            item.itemID = baseId + 20 + i;
-            item.colour = saved[(size_t) i].colour;
-            item.isTicked = current.getARGB() == saved[(size_t) i].colour.getARGB();
-            m.addItem (item);
-        }
-    }
-    m.addSeparator();
-    m.addItem (baseId + 16, "Custom colour...  (+ in the picker saves it here)");
-    if (! saved.empty())
-    {
-        juce::PopupMenu del;
-        for (int i = 0; i < juce::jmin ((int) saved.size(), SavedColours::maxShown); ++i)
-        {
-            juce::PopupMenu::Item item ("Delete \"" + saved[(size_t) i].name + "\"");
-            item.itemID = baseId + 60 + i;
-            item.colour = saved[(size_t) i].colour;
-            del.addItem (item);
-        }
-        m.addSubMenu ("Delete a saved colour", del);
-    }
+    addSavedColourItems (m, baseId, current, SavedColours::cues());
 }
 
 class ColourPickerBubble;
@@ -165,8 +182,8 @@ class ColourPickerBubble : public juce::Component, private juce::ChangeListener,
 public:
     ~ColourPickerBubble() override { flush(); }
 
-    ColourPickerBubble (juce::Colour initial, std::function<void (juce::Colour)> changed)
-        : onChange (std::move (changed))
+    ColourPickerBubble (juce::Colour initial, std::function<void (juce::Colour)> changed, SavedColours& library)
+        : onChange (std::move (changed)), lib (library)
     {
         selector.setCurrentColour (initial, juce::dontSendNotification);
         selector.addChangeListener (this);
@@ -176,7 +193,7 @@ public:
 
         // + saves the colour (with a name you type) to the saved colours under the presets
         addAndMakeVisible (saveButton);
-        saveButton.setTooltip ("Save this colour to your saved colours");
+        saveButton.setTooltip ("Save this colour to the " + lib.title.toLowerCase());
         saveButton.onClick = [this]
         {
             nameBox.setText ({}, false);
@@ -210,9 +227,10 @@ public:
         nameBox.setBounds (nb);
     }
 
-    static void show (juce::Rectangle<int> screenArea, juce::Colour initial, std::function<void (juce::Colour)> changed)
+    static void show (juce::Rectangle<int> screenArea, juce::Colour initial, std::function<void (juce::Colour)> changed,
+                      SavedColours& library = SavedColours::cues())
     {
-        auto bubble = std::make_unique<ColourPickerBubble> (initial, std::move (changed));
+        auto bubble = std::make_unique<ColourPickerBubble> (initial, std::move (changed), library);
         juce::CallOutBox::launchAsynchronously (std::move (bubble), screenArea, nullptr);
     }
 
@@ -238,8 +256,8 @@ private:
 
     void saveNamed()
     {
-        SavedColours::add (nameBox.getText().trim(), selector.getCurrentColour());
-        savedLabel.setText ("Saved \"" + SavedColours::list().back().name + "\"", juce::dontSendNotification);
+        lib.add (nameBox.getText().trim(), selector.getCurrentColour());
+        savedLabel.setText ("Saved \"" + lib.list().back().name + "\" to the " + lib.title.toLowerCase(), juce::dontSendNotification);
         endNaming();
     }
     void endNaming()
@@ -255,23 +273,34 @@ private:
     juce::ColourSelector selector { juce::ColourSelector::showColourAtTop | juce::ColourSelector::showSliders
                                     | juce::ColourSelector::showColourspace | juce::ColourSelector::editableColour };
     std::function<void (juce::Colour)> onChange;
+    SavedColours& lib;
 };
+
+/** Acts on a result from addSavedColourItems: returns true if it was one of its items. */
+inline bool handleSavedColourMenu (int result, int baseId, juce::Rectangle<int> screenArea, juce::Colour current,
+                                   std::function<void (juce::Colour)> set, SavedColours& lib)
+{
+    const auto& saved = lib.list();
+    if (result == baseId + 16)
+        ColourPickerBubble::show (screenArea, current, set, lib);
+    else if (result >= baseId + 20 && result < baseId + 20 + (int) saved.size() && result < baseId + 60)
+        set (saved[(size_t) (result - baseId - 20)].colour);
+    else if (result >= baseId + 60 && result < baseId + 100)
+        lib.remove (result - baseId - 60);
+    else
+        return false;
+    return true;
+}
 
 inline bool handleCueColourMenu (int result, int baseId, juce::Rectangle<int> screenArea, juce::Colour current,
                                  std::function<void (juce::Colour)> set)
 {
-    const auto& saved = SavedColours::list();
     if (result >= baseId && result < baseId + 16)
+    {
         set (juce::Colour (rekordboxCueColours()[(size_t) (result - baseId)].argb));
-    else if (result == baseId + 16)
-        ColourPickerBubble::show (screenArea, current, set);
-    else if (result >= baseId + 20 && result < baseId + 20 + (int) saved.size() && result < baseId + 60)
-        set (saved[(size_t) (result - baseId - 20)].colour);
-    else if (result >= baseId + 60 && result < baseId + 100)
-        SavedColours::remove (result - baseId - 60);
-    else
-        return false;
-    return true;
+        return true;
+    }
+    return handleSavedColourMenu (result, baseId, screenArea, current, set, SavedColours::cues());
 }
 
 } // namespace orbit

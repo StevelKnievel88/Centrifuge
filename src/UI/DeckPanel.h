@@ -91,6 +91,10 @@ private:
     juce::Rectangle<float> rowInfo, rowStatus, rowOverview, rowPads, rowJump, rowControls;
     void showDeckColourMenu (juce::Rectangle<float> area);
     juce::String heldAction, flashAction;
+public:
+    struct ChipDrawn { juce::Rectangle<float> r; juce::String text; bool lit; juce::Colour colour; };
+private:
+    std::vector<ChipDrawn> chipsDrawn;
     double flashUntil = 0.0;
     static juce::String jumpSizeText (double beats);
     void showJumpSlotMenu (int slot, juce::Rectangle<float> area, bool colour);

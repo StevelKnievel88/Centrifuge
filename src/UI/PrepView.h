@@ -110,6 +110,8 @@ private:
 
     juce::Rectangle<int> rowHeader, rowOverview, rowWave, rowTransport, rowPads, rowGrid, listArea;
     std::vector<Region> regions;
+    struct ChipDrawn { juce::Rectangle<float> r; juce::String text; juce::Colour colour; };
+    std::vector<ChipDrawn> chipsDrawn;
     juce::Image overview;
     int overviewWidth = 0;
     int overviewStyle = 1;

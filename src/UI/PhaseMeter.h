@@ -247,15 +247,14 @@ private:
             }
             g.setColour (c);
             g.fillRect (blk);
+            // the phrase's own blocks are outlined in the deck's colour; blocks past its end stay plain
+            if (i < inPhrase && i != cur)
+            {
+                g.setColour (col);
+                g.drawRect (blk, 1.0f);
+            }
             x += bw;
             if (i < n - 1) x += gapAfter (i);
-        }
-        if (followPhrases && b >= 0.0)   // (outlined even when the phrase fills the meter)
-        {
-            // the phrase playing: an outline round its beats (the rest of the meter stays blank)
-            const float x1 = xs[(size_t) inPhrase - 1] + bw;
-            g.setColour (col);
-            g.drawRect (juce::Rectangle<float>::leftTopRightBottom (std::floor (r.getX()) - 1.0f, r.getY() - 1.0f, std::ceil (x1) + 1.0f, r.getBottom() + 1.0f), 1.0f);
         }
 
         Layout lay;
