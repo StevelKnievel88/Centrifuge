@@ -241,7 +241,7 @@ void DeckPanel::paint (juce::Graphics& g)
         g.setColour (Theme::textDim);
         g.setFont (Theme::font (10.5f));
         const int range = router.getPitchRangePercent (deck);
-        const auto rangeText = range >= 100 ? juce::String ("WIDE") : "\xc2\xb1" + juce::String (range) + "%";
+        const auto rangeText = range >= 100 ? juce::String ("WIDE") : juce::String::charToString (0xb1) + juce::String (range) + "%";
         g.drawText (rangeText, tempo, juce::Justification::centredRight);
         const float rw = psyched::Fonts::label().getStringWidthFloat (rangeText) + 12.0f;
         regions.push_back ({ tempo.withLeft (tempo.getRight() - rw), "d" + juce::String (deck + 1) + ".pitchrange", 0 });   // click: 6 / 10 / 16 % / wide
@@ -266,8 +266,7 @@ void DeckPanel::paint (juce::Graphics& g)
             auto sync = r.removeFromRight (beats > 0.0 ? 50.0f : 40.0f).reduced (2.0f, 3.0f);
             chip (g, sync, beats > 0.0 ? jumpSizeText (beats) : juce::String ("BEAT"), beats > 0.0, vc);
             regions.push_back ({ sync, "brakesync", 14 });
-            auto knob = r.removeFromRight (24.0f).reduced (1.0f, 1.0f);
-            knob = knob.withSizeKeepingCentre (juce::jmin (knob.getWidth(), knob.getHeight()), juce::jmin (knob.getWidth(), knob.getHeight()));
+            auto knob = r.removeFromRight (42.0f);
             paintVinylSpeedKnob (g, knob, st, vc);
             regions.push_back ({ knob, "brakeknob", 13 });
             const bool b = st.brakeOn.load(), s2 = st.startOn.load();
@@ -789,33 +788,48 @@ void DeckPanel::showDeckColourMenu (juce::Rectangle<float> area)
     });
 }
 
-void DeckPanel::paintVinylSpeedKnob (juce::Graphics& g, juce::Rectangle<float> knob, const Deck::Published& st, juce::Colour c)
+void DeckPanel::paintVinylSpeedKnob (juce::Graphics& g, juce::Rectangle<float> area, const Deck::Published& st, juce::Colour c)
 {
+    // Like the XZ's VINYL SPEED ADJUST: a black knob with a pointer, tick lines round it (in beats mode, one for
+    // each step), and the two slope icons either side - a sheer drop (instant) on the left, a slope (slow) on the right
     const double beats = st.brakeBeats.load();
     const float v = beats > 0.0 ? (float) (std::log2 (beats / 0.25) / 4.0) : (float) juce::jlimit (0.0, 1.0, st.brakeSeconds.load() / 3.0);
+    auto iconL = area.removeFromLeft (8.0f), iconR = area.removeFromRight (8.0f);
+    const float d = juce::jmin (area.getWidth(), area.getHeight());
+    auto knob = area.withSizeKeepingCentre (d, d);
     const float a0 = -juce::MathConstants<float>::pi * 0.75f, a1 = juce::MathConstants<float>::pi * 0.75f;
     const auto kc = knob.getCentre();
-    const float kr = knob.getWidth() * 0.36f;
-    juce::Path arc, val;
-    arc.addCentredArc (kc.x, kc.y, kr, kr, 0.0f, a0, a1, true);
-    val.addCentredArc (kc.x, kc.y, kr, kr, 0.0f, a0, a0 + (a1 - a0) * juce::jlimit (0.0f, 1.0f, v), true);
+    const float outer = d * 0.5f, kr = outer - 3.0f;
+    const int ticks = beats > 0.0 ? 5 : 11;
+    for (int k = 0; k < ticks; ++k)
+    {
+        const float a = a0 + (a1 - a0) * (float) k / (float) (ticks - 1);
+        const bool reached = beats > 0.0 && k <= (int) std::lround (v * 4.0f);
+        g.setColour (reached ? c : Theme::textDim);
+        g.drawLine (kc.x + (kr + 0.5f) * std::sin (a), kc.y - (kr + 0.5f) * std::cos (a),
+                    kc.x + outer * std::sin (a), kc.y - outer * std::cos (a), 1.0f);
+    }
+    g.setColour (juce::Colours::black);
+    g.fillEllipse (knob.withSizeKeepingCentre (kr * 2.0f, kr * 2.0f));
     g.setColour (Theme::line);
-    g.strokePath (arc, juce::PathStrokeType (2.0f));
-    g.setColour (c);
-    g.strokePath (val, juce::PathStrokeType (2.2f));
-    if (beats > 0.0)
-        for (int k = 0; k <= 4; ++k)
-        {
-            // a notch per beat step, just outside the ring
-            const float a = a0 + (a1 - a0) * (float) k / 4.0f;
-            const float r0 = kr + 2.0f, r1 = kr + 4.0f;
-            g.setColour (k <= (int) std::lround (v * 4.0f) ? c : Theme::textDim);
-            g.drawLine (kc.x + r0 * std::sin (a), kc.y - r0 * std::cos (a), kc.x + r1 * std::sin (a), kc.y - r1 * std::cos (a), 1.2f);
-        }
-    // the pointer
+    g.drawEllipse (knob.withSizeKeepingCentre (kr * 2.0f, kr * 2.0f), 1.0f);
     const float a = a0 + (a1 - a0) * juce::jlimit (0.0f, 1.0f, v);
     g.setColour (c);
-    g.drawLine (kc.x, kc.y, kc.x + (kr - 1.0f) * std::sin (a), kc.y - (kr - 1.0f) * std::cos (a), 1.4f);
+    g.drawLine (kc.x, kc.y, kc.x + (kr - 0.5f) * std::sin (a), kc.y - (kr - 0.5f) * std::cos (a), 1.8f);
+
+    // the icons, low down either side
+    auto icon = [&] (juce::Rectangle<float> r, bool slope)
+    {
+        r = r.withSizeKeepingCentre (6.0f, 7.0f).withY (knob.getBottom() - 8.0f);
+        juce::Path p;
+        p.startNewSubPath (r.getX(), r.getY());
+        if (slope) { p.lineTo (r.getX() + 1.0f, r.getY()); p.lineTo (r.getRight() - 1.0f, r.getBottom()); p.lineTo (r.getRight(), r.getBottom()); }
+        else       { p.lineTo (r.getX() + 1.5f, r.getY()); p.lineTo (r.getX() + 1.5f, r.getBottom()); p.lineTo (r.getRight(), r.getBottom()); }
+        g.setColour (Theme::textDim);
+        g.strokePath (p, juce::PathStrokeType (1.0f));
+    };
+    icon (iconL, false);
+    icon (iconR, true);
 }
 
 const DeckPanel::Region* DeckPanel::regionAt (juce::Point<float> p) const
