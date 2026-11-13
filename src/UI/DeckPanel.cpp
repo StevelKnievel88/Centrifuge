@@ -28,8 +28,17 @@ namespace
 
     void chip (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& text, bool lit, juce::Colour litColour)
     {
-        psyched::paintChip (g, r, text, litColour, lit ? psyched::ChipState::on : psyched::ChipState::off);
-        if (chipLog != nullptr) chipLog->push_back ({ r, text, lit, litColour });
+        paintChipState (g, r, text, litColour, lit ? ButtonStyle::on : ButtonStyle::off, nullptr);
+        if (chipLog != nullptr) chipLog->push_back ({ r, text, lit, litColour, {} });
+    }
+
+    /** A button with an icon instead of text: the icon is drawn in what would be the text colour. */
+    void iconChip (juce::Graphics& g, juce::Rectangle<float> r, bool lit, juce::Colour litColour,
+                   std::function<void (juce::Graphics&, juce::Colour)> icon)
+    {
+        paintChipState (g, r, {}, litColour, lit ? ButtonStyle::on : ButtonStyle::off, nullptr);
+        icon (g, lit ? litColour : psyched::Colours::chipInk);
+        if (chipLog != nullptr) chipLog->push_back ({ r, {}, lit, litColour, std::move (icon) });
     }
 }
 
@@ -135,37 +144,38 @@ void DeckPanel::paint (juce::Graphics& g)
         g.setColour (st.master.load() ? Theme::accent : Theme::text);
         g.setFont (Theme::mono (26.0f, true));
         const double bpm = st.bpm.load();
-        g.drawText (loaded && bpm > 0 ? juce::String (bpm, 2) : "--.--", bpmArea.removeFromTop (28.0f), juce::Justification::centredRight);
+        auto bpmNumber = bpmArea.removeFromTop (28.0f);
+        g.drawText (loaded && bpm > 0 ? juce::String (bpm, 2) : "--.--", bpmNumber, juce::Justification::centredRight);
         g.setColour (Theme::textDim);
         g.setFont (psyched::Fonts::label());
         g.drawText ("BPM", bpmArea, juce::Justification::topRight);
+        // the key section sits level with the BPM figures
+        const float keyMid = bpmNumber.getCentreY();
+        auto level = [keyMid] (juce::Rectangle<float> b) { return b.withSizeKeepingCentre (b.getWidth(), 22.0f).withCentre ({ b.getCentreX(), keyMid }); };
 
         if (loaded && track->info.key.isNotEmpty())
         {
             // [-] [key +n] [+] [KEY SYNC]
             const auto p = "d" + juce::String (deck + 1) + ".";
             const int shift = st.keyShift.load();
-            auto syncChip = r.removeFromRight (40.0f).withSizeKeepingCentre (38.0f, 22.0f);
+            auto syncChip = level (r.removeFromRight (40.0f).withSizeKeepingCentre (38.0f, 22.0f));
             chip (g, syncChip, "K.SYNC", router.ledState (*findAction (p + "key.sync")), Theme::good.darker (0.2f));
             regions.push_back ({ syncChip, p + "key.sync", 0 });
             r.removeFromRight (4.0f);
 
-            auto plus = r.removeFromRight (18.0f).withSizeKeepingCentre (18.0f, 22.0f);
-            auto keyChip = r.removeFromRight (76.0f).withSizeKeepingCentre (74.0f, 22.0f);   // one size for every key, shifted or not
-            auto minus = r.removeFromRight (18.0f).withSizeKeepingCentre (18.0f, 22.0f);
+            auto plus = level (r.removeFromRight (18.0f).withSizeKeepingCentre (18.0f, 22.0f));
+            auto keyChip = level (r.removeFromRight (76.0f).withSizeKeepingCentre (74.0f, 22.0f));   // one size for every key, shifted or not
+            auto minus = level (r.removeFromRight (18.0f).withSizeKeepingCentre (18.0f, 22.0f));
             chip (g, minus, "-", false, Theme::good);
             chip (g, plus, "+", false, Theme::good);
             regions.push_back ({ minus, p + "key.down", 0 });
             regions.push_back ({ plus, p + "key.up", 0 });
-            regions.push_back ({ keyChip, p + "key.reset", 0 });
 
-            g.setColour (Theme::panelHi);
-            g.fillRect (keyChip);
-            g.setColour (shift != 0 ? Theme::warn : Theme::good);
-            g.setFont (Theme::font (13.0f, true));
+            // the key: a box like the other buttons (click = back to the track's own key)
             auto keyText = MusicalKey::display (router.effectiveKeyText (deck));
             if (shift != 0) keyText << "  " << (shift > 0 ? "+" : "") << shift;
-            g.drawText (keyText, keyChip, juce::Justification::centred);
+            chip (g, keyChip, juce::String::charToString (keepCase) + keyText, true, shift != 0 ? Theme::warn : Theme::good);
+            regions.push_back ({ keyChip, p + "key.reset", 0 });
             r.removeFromRight (6.0f);
         }
 
@@ -177,12 +187,20 @@ void DeckPanel::paint (juce::Graphics& g)
                 g.fillRect (r.removeFromLeft (3.0f).reduced (0.0f, 4.0f));
                 r.removeFromLeft (7.0f);
             }
-            g.setColour (Theme::text);
-            g.setFont (Theme::font (16.5f, true));
-            g.drawText (track->info.title, r.removeFromTop (21.0f), juce::Justification::bottomLeft, true);
-            g.setColour (Theme::textDim);
-            g.setFont (Theme::font (13.0f));
-            g.drawText (track->info.artist, r, juce::Justification::topLeft, true);
+            // title and artist side by side, each half of the room (swap them in Settings > DECKS)
+            auto left = r.removeFromLeft (r.getWidth() / 2.0f).withTrimmedRight (6.0f);
+            auto right = r;
+            auto paintName = [&g] (juce::Rectangle<float> b, const juce::String& t, bool main)
+            {
+                g.setColour (main ? Theme::text : Theme::textDim);
+                float h = main ? 19.0f : 16.0f;
+                g.setFont (Theme::font (h, main));
+                // shrink a little before cutting off long names
+                while (h > 12.0f && Theme::font (h, main).getStringWidthFloat (t) > b.getWidth()) { h -= 1.0f; g.setFont (Theme::font (h, main)); }
+                g.drawText (t, b, juce::Justification::centredLeft, true);
+            };
+            paintName (artistFirst ? right : left, track->info.title, true);
+            paintName (artistFirst ? left : right, track->info.artist, false);
         }
         else
         {
@@ -199,12 +217,13 @@ void DeckPanel::paint (juce::Graphics& g)
         // Times follow the edited view: how far into the track as it plays, and how long is really left
         fold.reference = fold.toDisplay (st.positionSec.load(), st.playSegment.load());
         const double pos = fold.reference, len = fold.displayLength (st.lengthSec.load());
-        g.setFont (Theme::mono (17.0f, true));
+        // (as tall as the buttons beside them)
+        g.setFont (Theme::mono (21.0f, true));
         g.setColour (Theme::text);
-        g.drawText (loaded ? formatTime (pos) : "0:00.0", r.removeFromLeft (78.0f), juce::Justification::centredLeft);
+        g.drawText (loaded ? formatTime (pos) : "0:00.0", r.removeFromLeft (88.0f), juce::Justification::centredLeft);
         const bool warn = st.endWarning.load() && (juce::Time::getMillisecondCounter() / 400) % 2 == 0;
         g.setColour (warn ? Theme::bad : Theme::textDim);
-        g.drawText (loaded ? formatTime (-(len - pos)) : "-0:00.0", r.removeFromLeft (86.0f), juce::Justification::centredLeft);
+        g.drawText (loaded ? formatTime (-(len - pos)) : "-0:00.0", r.removeFromLeft (98.0f), juce::Justification::centredLeft);
 
         // (The phase meter for both decks is in the top bar.)
 
@@ -226,7 +245,7 @@ void DeckPanel::paint (juce::Graphics& g)
                 juce::String text = name.isNotEmpty() ? name : (any ? juce::String ("UNSAVED EDITS") : juce::String ("ORIGINAL"));
                 if (name.isNotEmpty() && editor->activeEditModified (deck)) text << " *";
                 // The longest wording that fits the space left: "EDIT: name", "name", then "EDIT"
-                const float room = juce::jmax (36.0f, r.getWidth() - 450.0f);
+                const float room = juce::jmax (36.0f, r.getWidth() - 480.0f);
                 juce::String shown;
                 for (auto cand : { "EDIT: " + text, text, juce::String ("EDIT") })
                     if (psyched::Fonts::label().getStringWidthFloat (cand.toUpperCase()) + 22.0f <= juce::jmin (room, 190.0f)) { shown = cand; break; }
@@ -326,7 +345,7 @@ void DeckPanel::paint (juce::Graphics& g)
         // grid toggle on the left; stem separation progress in a strip underneath (against the track and playhead)
         auto toggle = r.removeFromLeft (20.0f);
         r.removeFromLeft (4.0f);
-        paintGridToggle (g, toggle, overviewGrid, Theme::sync);
+        paintGridToggle (g, toggle, overviewGrid, styledColour ("overviewgrid", Theme::sync));
         regions.push_back ({ toggle, "overviewgrid", 7 });
         auto progress = r.removeFromBottom (4.0f);
         r.removeFromBottom (1.0f);
@@ -509,10 +528,6 @@ void DeckPanel::paint (juce::Graphics& g)
             // track skip (previous / next track in the list), search (fast through the track while held), scrub dial
             auto icon = [&g] (juce::Rectangle<float> b, int dir, bool bar, bool lit, juce::Colour c)
             {
-                g.setColour (lit ? c.withAlpha (0.35f) : Theme::panelHi);
-                g.fillRect (b);
-                g.setColour (c);
-                g.drawRect (b, 1.0f);
                 auto t = b.reduced (b.getWidth() * 0.22f, b.getHeight() * 0.28f);
                 const float w = t.getWidth() / (bar ? 2.6f : 2.0f);
                 juce::Path p;
@@ -521,9 +536,9 @@ void DeckPanel::paint (juce::Graphics& g)
                     const float x0 = dir > 0 ? t.getX() + k * w : t.getRight() - k * w;
                     p.addTriangle (x0, t.getY(), x0, t.getBottom(), x0 + dir * w, t.getCentreY());
                 }
-                g.fillPath (p);
-                if (bar) g.fillRect (dir > 0 ? juce::Rectangle<float> (t.getRight() - 1.6f, t.getY(), 1.6f, t.getHeight())
-                                             : juce::Rectangle<float> (t.getX(), t.getY(), 1.6f, t.getHeight()));
+                if (bar) p.addRectangle (dir > 0 ? juce::Rectangle<float> (t.getRight() - 1.6f, t.getY(), 1.6f, t.getHeight())
+                                                 : juce::Rectangle<float> (t.getX(), t.getY(), 1.6f, t.getHeight()));
+                iconChip (g, b, lit, c, [p] (juce::Graphics& gg, juce::Colour ic) { gg.setColour (ic); gg.fillPath (p); });
             };
             auto tPrev = rest.removeFromLeft (24.0f); rest.removeFromLeft (2.0f);
             auto tNext = rest.removeFromLeft (24.0f); rest.removeFromLeft (6.0f);
@@ -538,17 +553,18 @@ void DeckPanel::paint (juce::Graphics& g)
             regions.push_back ({ sBack, pp + "search.back", 0 });
             regions.push_back ({ sFwd, pp + "search.fwd", 0 });
             {
-                // scrub dial: drag sideways to move through the track (you hear it, like the platter)
+                // scrub dial: drag sideways to move through the track (you hear it, like the platter); right-click: its colour
                 auto dial = rest.removeFromLeft (rest.getHeight()).reduced (1.0f);
                 rest.removeFromLeft (6.0f);
+                const auto dc = styledColour ("scrub", Theme::sync);
                 g.setColour (Theme::panelHi);
                 g.fillEllipse (dial);
-                g.setColour (scrubDrag ? Theme::sync : Theme::line);
+                g.setColour (scrubDrag ? dc : dc.withAlpha (0.45f));
                 g.drawEllipse (dial.reduced (0.5f), 1.2f);
                 const float a = (float) std::fmod (st.positionSec.load() / 1.8, 1.0) * juce::MathConstants<float>::twoPi;
                 const auto cc = dial.getCentre();
                 const float rr = dial.getWidth() * 0.36f;
-                g.setColour (Theme::sync);
+                g.setColour (dc);
                 g.drawLine (cc.x, cc.y, cc.x + rr * std::sin (a), cc.y - rr * std::cos (a), 1.6f);
                 regions.push_back ({ dial, pp + "scrub", 12 });
             }
@@ -573,12 +589,13 @@ void DeckPanel::paint (juce::Graphics& g)
                 g.setColour (slotCol);
                 g.strokePath (tri, juce::PathStrokeType (1.2f));
             }
-            // the size: click to change it, right-click for its colour
-            psyched::paintLabel (g, jumpSizeText (router.getJumpSlotBeats (deck, k)), grp, juce::Justification::centred,
-                                 router.getJumpSlotColour (deck, k) != 0 ? slotCol : Theme::textDim, 9.5f);
+            // the size in a box: click to change it, right-click for the box's colours (right-click an arrow: the
+            // arrows' colour, which the pads they're mapped to follow)
+            auto box = grp.reduced (3.0f, 0.0f);
+            chip (g, box, jumpSizeText (router.getJumpSlotBeats (deck, k)), router.getJumpSlotColour (deck, k) != 0, slotCol);
             regions.push_back ({ back, p + "back." + juce::String (slotIds[k]), 0 });
             regions.push_back ({ fwd, p + "fwd." + juce::String (slotIds[k]), 0 });
-            regions.push_back ({ grp, "jumpslot." + juce::String (k), 11 });
+            regions.push_back ({ box, "jumpslot." + juce::String (k), 11 });
         }
     }
 
@@ -588,34 +605,27 @@ void DeckPanel::paint (juce::Graphics& g)
         const auto p = juce::String ("d") + juce::String (deck + 1) + ".";
         auto vfit = [] (juce::Rectangle<float> b) { return b.withSizeKeepingCentre (b.getWidth(), juce::jmin (b.getHeight(), 24.0f)); };
 
+        // CUE and PLAY: rectangles like the other buttons
         auto cue = r.removeFromLeft (58.0f).reduced (0.0f, 2.0f);
         const bool atCue = loaded && ! st.playing.load();
-        g.setColour (atCue ? Theme::accent.withAlpha (0.18f) : Theme::panelHi);
-        g.fillEllipse (cue.withSizeKeepingCentre (cue.getHeight(), cue.getHeight()));
-        g.setColour (Theme::accent);
-        g.drawEllipse (cue.withSizeKeepingCentre (cue.getHeight(), cue.getHeight()).reduced (1.0f), 2.0f);
-        g.setFont (Theme::font (12.0f, true));
-        g.drawText ("CUE", cue, juce::Justification::centred);
+        chip (g, cue, "CUE", atCue, Theme::accent);
         regions.push_back ({ cue, p + "cue", 0 });
 
         r.removeFromLeft (6.0f);
         auto play = r.removeFromLeft (58.0f).reduced (0.0f, 2.0f);
         const bool playing = st.playing.load();
-        auto pc = play.withSizeKeepingCentre (play.getHeight(), play.getHeight());
-        g.setColour (playing ? Theme::good.withAlpha (0.2f) : Theme::panelHi);
-        g.fillEllipse (pc);
-        g.setColour (Theme::good);
-        g.drawEllipse (pc.reduced (1.0f), 2.0f);
-        juce::Path icon;
-        const auto c = pc.getCentre();
-        if (playing)
         {
-            icon.addRectangle (c.x - 6.0f, c.y - 7.0f, 4.0f, 14.0f);
-            icon.addRectangle (c.x + 2.0f, c.y - 7.0f, 4.0f, 14.0f);
+            juce::Path icon;
+            const auto c = play.getCentre();
+            if (playing)
+            {
+                icon.addRectangle (c.x - 6.0f, c.y - 7.0f, 4.0f, 14.0f);
+                icon.addRectangle (c.x + 2.0f, c.y - 7.0f, 4.0f, 14.0f);
+            }
+            else
+                icon.addTriangle (c.x - 5.0f, c.y - 8.0f, c.x - 5.0f, c.y + 8.0f, c.x + 8.0f, c.y);
+            iconChip (g, play, playing, Theme::good, [icon] (juce::Graphics& gg, juce::Colour ic) { gg.setColour (ic); gg.fillPath (icon); });
         }
-        else
-            icon.addTriangle (c.x - 5.0f, c.y - 8.0f, c.x - 5.0f, c.y + 8.0f, c.x + 8.0f, c.y);
-        g.fillPath (icon);
         regions.push_back ({ play, p + "play", 0 });
 
         // Loop: [<] halves the size (and a running loop), [size] sets / removes the loop, [>] doubles
@@ -651,7 +661,7 @@ void DeckPanel::paint (juce::Graphics& g)
         // Stems: the filters' resonance knob, then each stem's volume over its filter
         r.removeFromLeft (8.0f);
         resoArea = r.removeFromLeft (juce::jmin (34.0f, r.getHeight())).reduced (1.0f);
-        paintResonanceKnob (g, resoArea, st.stemResonance.load());
+        paintResonanceKnob (g, resoArea, st.stemResonance.load(), styledColour ("stemreso", Theme::sync));
         regions.push_back ({ resoArea, p + "stem.resonance", 8 });
         r.removeFromLeft (6.0f);
         const bool ready = st.stemsReady.load();
@@ -668,26 +678,24 @@ void DeckPanel::paint (juce::Graphics& g)
 
     chipLog = nullptr;
     const bool flashing = juce::Time::getMillisecondCounterHiRes() < flashUntil;
-    // buttons with your own colours (right-click a button)
+    // buttons with your own colours (right-click a button), and buttons being pressed (their PRESSED look)
     for (auto& rg : regions)
-        if (rg.kind == 0 || rg.kind == 14)
-            if (auto* s = ButtonStyles::get().find (rg.action))
-                for (auto& c : chipsDrawn)
-                    if (c.r == rg.r)
-                    {
-                        const bool pressed = (flashing && rg.action == flashAction) || rg.action == heldAction;
-                        paintStyledChip (g, c.r, c.text, c.colour, c.lit, pressed, s);
-                        break;
-                    }
-    // pressed buttons flash
-    if (flashing || heldAction.isNotEmpty())
-        for (auto& rg : regions)
-            if (rg.kind == 0 && ((flashing && rg.action == flashAction) || rg.action == heldAction))
-            {
-                if (auto* s = ButtonStyles::get().find (rg.action); s != nullptr && s->anyIn (ButtonStyle::pressed)) continue;
-                g.setColour (juce::Colours::white.withAlpha (0.35f));
-                g.fillRect (rg.r);
-            }
+        if (rg.kind == 0 || rg.kind == 14 || rg.kind == 11)
+        {
+            auto* s = ButtonStyles::get().find (rg.action);
+            const bool pressed = (flashing && rg.action == flashAction) || rg.action == heldAction;
+            if (s == nullptr && ! pressed) continue;
+            for (auto& c : chipsDrawn)
+                if (c.r == rg.r)
+                {
+                    const int stt = pressed ? ButtonStyle::pressed : c.lit ? ButtonStyle::on : ButtonStyle::off;
+                    paintChipState (g, c.r, c.text, c.colour, stt, s);
+                    if (c.icon)
+                        c.icon (g, s != nullptr && s->isSet (stt, ButtonStyle::text) ? s->get (stt, ButtonStyle::text)
+                                                                                     : stt != ButtonStyle::off ? c.colour : psyched::Colours::chipInk);
+                    break;
+                }
+        }
 }
 
 void DeckPanel::setBrake (double seconds, double beats)
@@ -926,16 +934,25 @@ void DeckPanel::mouseDown (const juce::MouseEvent& e)
 {
     auto* r = regionAt (e.position);
     if (r == nullptr) return;
-    if ((r->kind == 2 || r->kind == 8 || r->kind == 9) && e.mods.isPopupMenu()) return;
-    if (e.mods.isPopupMenu() && (r->kind == 0 || r->kind == 14))
+    if ((r->kind == 2 || r->kind == 9) && e.mods.isPopupMenu()) return;
+    if (e.mods.isPopupMenu())
     {
+        const auto screen = localAreaToGlobal (r->r.toNearestInt());
+        // a beat jump arrow: the arrows' colour (and the pads they're mapped to)
+        if (const int slot = ActionRouter::jumpSlotOf (r->action); slot >= 0 && r->kind == 0) { showJumpSlotMenu (slot, r->r, true); return; }
+        if (r->kind == 12) { showDialColourMenu (this, screen, "scrub", Theme::sync, "Scrub dial colour"); return; }
+        if (r->kind == 8)  { showDialColourMenu (this, screen, "stemreso", Theme::sync, "Resonance dial colour"); return; }
+        if (r->kind == 7)  { showDialColourMenu (this, screen, "overviewgrid", Theme::sync, "Grid button colour"); return; }
         // right-click a button: its own colours
-        for (auto& c : chipsDrawn)
-            if (c.r == r->r)
-            {
-                ButtonStyleEditor::show (localAreaToGlobal (r->r.toNearestInt()), r->action, c.text, c.colour);
-                return;
-            }
+        if (r->kind == 0 || r->kind == 14 || r->kind == 11)
+            for (auto& c : chipsDrawn)
+                if (c.r == r->r)
+                {
+                    juce::String name = c.text.removeCharacters (juce::String::charToString (keepCase));
+                    if (name.isEmpty()) if (auto* a = findAction (r->action)) name = a->label;
+                    ButtonStyleEditor::show (screen, r->action, name, c.colour);
+                    return;
+                }
     }
     if (r->kind == 8)
     {
@@ -1004,7 +1021,7 @@ void DeckPanel::mouseDown (const juce::MouseEvent& e)
     }
     if (r->kind == 11)
     {
-        showJumpSlotMenu (r->action.getTrailingIntValue(), r->r, e.mods.isPopupMenu());
+        showJumpSlotMenu (r->action.getTrailingIntValue(), r->r, false);
         return;
     }
     if (r->kind == 10)

@@ -124,7 +124,7 @@ void AppSettings::load()
     str ("windowState", windowState);
     num ("phraseBars", phraseBars);
     boolean ("phraseFollow", phraseFollow);
-    boolean ("phraseBrackets", phraseBrackets);
+    phraseBrackets = false;   // (the brackets option was taken out)
     num ("previewStyle", previewStyle);
     num ("previewShape", previewShape);
     num ("overviewStyle", overviewStyle);
@@ -220,6 +220,9 @@ void AppSettings::load()
     boolean ("stemsLossless", stemsLossless);
 
     boolean ("showBrowser", showBrowser);
+    boolean ("statusFolded", statusFolded);
+    boolean ("artistFirst", artistFirst);
+    boolean ("tagColourNames", tagColourNames);
     num ("browserHeight", browserHeight);
 
     visibleSeconds = juce::jlimit (1.0, 60.0, visibleSeconds);
@@ -357,6 +360,9 @@ void AppSettings::save() const
     o->setProperty ("stemThreads", stemThreads);
 
     o->setProperty ("showBrowser", showBrowser);
+    o->setProperty ("statusFolded", statusFolded);
+    o->setProperty ("artistFirst", artistFirst);
+    o->setProperty ("tagColourNames", tagColourNames);
     o->setProperty ("browserHeight", browserHeight);
 
     folder().createDirectory();

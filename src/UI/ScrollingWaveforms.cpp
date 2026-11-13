@@ -333,7 +333,7 @@ void ScrollingWaveforms::paintDeck (juce::Graphics& g, int d, juce::Rectangle<in
         const auto& dv = decks[(size_t) d];
         const double pps = (double) r.getWidth() / visibleSeconds;
         const float px0 = playheadX (r);
-        g.setColour (Theme::waveBg.darker (0.3f));
+        g.setColour (juce::Colours::black);
         g.fillRect (phraseStripArea (d));
         auto strip = phraseStripArea (d).toFloat().reduced (0.0f, 1.0f);
         paintPhraseStripFolded (g, strip, tr->phrases, tr->audio != nullptr ? tr->audio->lengthSeconds() : tr->info.durationSec,
@@ -393,7 +393,7 @@ void ScrollingWaveforms::paintDeck (juce::Graphics& g, int d, juce::Rectangle<in
 
 void ScrollingWaveforms::paintLane (juce::Graphics& g, int d, int lane, juce::Rectangle<int> r)
 {
-    g.setColour (Theme::waveBg);
+    g.setColour (juce::Colours::black);
     g.fillRect (r);
     if (r.getHeight() < 8) return;
 

@@ -890,6 +890,11 @@ void PrepView::mouseDown (const juce::MouseEvent& e)
     auto* r = regionAt (e.position);
     if (r == nullptr) return;
     const auto& st = deck().state();
+    if (r->kind == 13 && e.mods.isPopupMenu())
+    {
+        showDialColourMenu (this, localAreaToGlobal (r->r.toNearestInt()), "stemreso", Theme::sync, "Resonance dial colour");
+        return;
+    }
 
     if (r->kind == 1)   // overview: seek
     {
@@ -2286,7 +2291,7 @@ void PrepView::paintStems (juce::Graphics& g, juce::Rectangle<float> r)
     const auto& st = deck().state();
     const bool ready = st.stemsReady.load();
     auto reso = r.removeFromLeft (juce::jmin (34.0f, r.getHeight())).reduced (1.0f);
-    paintResonanceKnob (g, reso, st.stemResonance.load());
+    paintResonanceKnob (g, reso, st.stemResonance.load(), styledColour ("stemreso", Theme::sync));
     regions.push_back ({ reso, "stemreso", 13 });
     r.removeFromLeft (6.0f);
     const float sw = (r.getWidth() - 3 * 5.0f) / 4.0f;

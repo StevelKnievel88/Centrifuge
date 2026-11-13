@@ -31,6 +31,8 @@ struct SavedColours
 
     static SavedColours& cues()    { static SavedColours c ("saved-colours.json", "Cue palette"); return c; }
     static SavedColours& buttons() { static SavedColours c ("button-colours.json", "Button palette"); return c; }
+    static SavedColours& tags()    { static SavedColours c ("tag-colours.json", "Tag palette"); return c; }
+    static std::array<SavedColours*, 3> all() { return { &cues(), &buttons(), &tags() }; }
 
     juce::File file() const
     {
@@ -113,6 +115,42 @@ inline void addSavedColourItems (juce::PopupMenu& m, int baseId, juce::Colour cu
             del.addItem (item);
         }
         m.addSubMenu ("Delete a colour from the " + lib.title.toLowerCase(), del);
+        // copy a colour into another palette, so they can be used everywhere
+        juce::PopupMenu copy;
+        int li = 0;
+        for (auto* other : SavedColours::all())
+        {
+            if (other != &lib)
+            {
+                juce::PopupMenu sub;
+                for (int i = 0; i < juce::jmin ((int) saved.size(), SavedColours::maxShown); ++i)
+                {
+                    juce::PopupMenu::Item item (saved[(size_t) i].name);
+                    item.itemID = baseId + 5000 + li * 100 + i;
+                    item.colour = saved[(size_t) i].colour;
+                    sub.addItem (item);
+                }
+                sub.addSeparator();
+                sub.addItem (baseId + 5000 + li * 100 + 99, "All of them");
+                copy.addSubMenu ("To the " + other->title.toLowerCase(), sub);
+            }
+            ++li;
+        }
+        m.addSubMenu ("Copy to another palette", copy);
+    }
+}
+
+/** The rekordbox colours as menu items (ids baseId .. baseId+15). */
+inline void addCueColourPresets (juce::PopupMenu& m, int baseId, juce::Colour current)
+{
+    const auto& cols = rekordboxCueColours();
+    for (int i = 0; i < (int) cols.size(); ++i)
+    {
+        juce::PopupMenu::Item item (cols[(size_t) i].name);
+        item.itemID = baseId + i;
+        item.colour = juce::Colour (cols[(size_t) i].argb);
+        item.isTicked = current.getARGB() == cols[(size_t) i].argb;
+        m.addItem (item);
     }
 }
 
@@ -287,6 +325,13 @@ inline bool handleSavedColourMenu (int result, int baseId, juce::Rectangle<int> 
         set (saved[(size_t) (result - baseId - 20)].colour);
     else if (result >= baseId + 60 && result < baseId + 100)
         lib.remove (result - baseId - 60);
+    else if (result >= baseId + 5000 && result < baseId + 5300)
+    {
+        auto* to = SavedColours::all()[(size_t) ((result - baseId - 5000) / 100)];
+        const int i = (result - baseId - 5000) % 100;
+        if (i == 99) { for (auto& e : saved) to->add (e.name, e.colour); }
+        else if (i < (int) saved.size()) to->add (saved[(size_t) i].name, saved[(size_t) i].colour);
+    }
     else
         return false;
     return true;

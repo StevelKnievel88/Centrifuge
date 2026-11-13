@@ -27,6 +27,17 @@ struct MusicalKey
         return k.toString();
     }
 
+    /** The key's colour on the Camelot wheel (B = the outer, stronger ring; A = the inner, paler one). */
+    static juce::Colour wheelColour (const juce::String& text)
+    {
+        auto k = parse (text);
+        if (! k.isValid()) return {};
+        static const juce::uint32 outer[12] { 0xff5cf0b4, 0xff84f27e, 0xffb4f25a, 0xfff2de6c, 0xfff8a37c, 0xfff5838f,
+                                              0xfff07bb0, 0xffe07ad4, 0xffc27bea, 0xff9d8bf2, 0xff7ab3f2, 0xff4fe0e8 };   // 1B .. 12B
+        const auto c = juce::Colour (outer[(size_t) (k.camelotNumber() - 1)]);
+        return k.minor ? c.interpolatedWith (juce::Colours::white, 0.3f) : c;
+    }
+
     static MusicalKey parse (const juce::String& text)
     {
         MusicalKey k;

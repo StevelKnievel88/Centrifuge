@@ -1,5 +1,6 @@
 #pragma once
 #include "Theme.h"
+#include "ColourPicker.h"
 #include "../Library/TrackInfo.h"
 #include "../Audio/MusicalKey.h"
 
@@ -14,6 +15,9 @@ public:
     /** field: "title", "artist", "album", "genre", "label", "comment", "key", "rating", "colour" */
     std::function<void (const std::vector<TrackInfo>&, const juce::String& field, const juce::String& value)> onEdit;
     std::function<void (const std::vector<TrackInfo>&)> onWriteTags;
+    std::function<void (bool)> onTagColourNames;   // the tick box: titles and artists in their tag colour
+
+    void setTagColourNames (bool on) { colourNames.setToggleState (on, juce::dontSendNotification); }
 
     TrackInfoPanel()
     {
@@ -38,11 +42,12 @@ public:
         addAndMakeVisible (rating);
         rating.addItemList ({ "No rating", "1 star", "2 stars", "3 stars", "4 stars", "5 stars" }, 1);
         rating.onChange = [this] { if (! updating && rating.getSelectedId() > 0 && onEdit) onEdit (tracks, "rating", juce::String (rating.getSelectedId() - 1)); };
+        // the colour tag: rekordbox's 8, the cue colours, your Tag palette or a custom colour
         addAndMakeVisible (colour);
-        colour.addItem ("No colour", 1);
-        const char* names[] = { "Pink", "Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple" };
-        for (int i = 0; i < 8; ++i) colour.addItem (names[i], i + 2);
-        colour.onChange = [this] { if (! updating && colour.getSelectedId() > 0 && onEdit) onEdit (tracks, "colour", juce::String (colour.getSelectedId() - 1)); };
+        colour.onClick = [this] { showColourMenu(); };
+        addAndMakeVisible (colourNames);
+        colourNames.setButtonText ("Colour titles and artists by their tag colour");
+        colourNames.onClick = [this] { if (onTagColourNames) onTagColourNames (colourNames.getToggleState()); };
         addAndMakeVisible (writeTags);
         writeTags.setTooltip ("Write title, artist, album, genre, label, comment and key into the selected MP3 / FLAC files' own tags");
         writeTags.onClick = [this] { if (onWriteTags && ! tracks.empty()) onWriteTags (tracks); };
@@ -73,11 +78,11 @@ public:
         for (auto& x : tracks) { sameR = sameR && x.rating == tracks.front().rating; sameC = sameC && x.colour == tracks.front().colour; }
         rating.setSelectedId (! tracks.empty() && sameR ? tracks.front().rating + 1 : 0, juce::dontSendNotification);
         rating.setTextWhenNothingSelected (tracks.empty() ? juce::String() : "(several)");
-        int cid = 1;
-        if (! tracks.empty())
-            for (int i = 1; i <= 8; ++i) if (rekordboxTrackColour (i) == tracks.front().colour) cid = i + 1;
-        colour.setSelectedId (! tracks.empty() && sameC ? cid : 0, juce::dontSendNotification);
-        colour.setTextWhenNothingSelected (tracks.empty() ? juce::String() : "(several)");
+        shownColour = ! tracks.empty() && sameC ? tracks.front().colour : juce::Colour();
+        colour.setButtonText (tracks.empty() ? juce::String() : ! sameC ? juce::String ("(several)")
+                              : shownColour.isTransparent() ? juce::String ("No colour") : colourName (shownColour));
+        colour.setColour (juce::TextButton::buttonColourId, shownColour.isTransparent() ? Theme::panelHi : shownColour.darker (0.4f));
+        colour.setEnabled (! tracks.empty());
         repaint();
     }
 
@@ -106,11 +111,12 @@ public:
         auto head = r.removeFromTop (36);
         writeTags.setBounds (head.removeFromRight (150).withSizeKeepingCentre (150, 26));
         noteArea = {};
-        const int rowH = juce::jlimit (20, 24, (r.getHeight() - 9 * 3) / 9);
+        const int rowH = juce::jlimit (20, 24, (r.getHeight() - 10 * 3 - 22) / 9);
         auto row = [&] (juce::Rectangle<int>& label) { auto x = r.removeFromTop (rowH); label = x.removeFromLeft (64); r.removeFromTop (3); return x; };
         for (auto& f : fields) f.editor.setBounds (row (f.labelArea));
         rating.setBounds (row (ratingLabel));
         colour.setBounds (row (colourLabel));
+        colourNames.setBounds (r.removeFromTop (22));
         r.removeFromTop (4);
         noteArea = r.removeFromTop (30);
     }
@@ -128,6 +134,48 @@ private:
         return {};
     }
 
+    static juce::String colourName (juce::Colour c)
+    {
+        const char* names[] = { "Pink", "Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple" };
+        for (int i = 1; i <= 8; ++i) if (rekordboxTrackColour (i) == c) return names[i - 1];
+        for (auto& n : rekordboxCueColours()) if (n.argb == c.getARGB()) return n.name;
+        for (auto& e : SavedColours::tags().list()) if (e.colour == c) return e.name;
+        return c.toDisplayString (false);
+    }
+
+    void showColourMenu()
+    {
+        if (tracks.empty()) return;
+        juce::PopupMenu m;
+        m.addItem (1, "No colour", true, shownColour.isTransparent());
+        m.addSeparator();
+        const char* names[] = { "Pink", "Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple" };
+        for (int i = 1; i <= 8; ++i)
+        {
+            juce::PopupMenu::Item it (names[i - 1]);
+            it.itemID = 10 + i;
+            it.colour = rekordboxTrackColour (i);
+            it.isTicked = shownColour == rekordboxTrackColour (i);
+            m.addItem (it);
+        }
+        juce::PopupMenu more;
+        addCueColourPresets (more, 100, shownColour);
+        m.addSubMenu ("More colours", more);
+        addSavedColourItems (m, 200, shownColour, SavedColours::tags());
+        juce::Component::SafePointer<TrackInfoPanel> safe (this);
+        const auto area = colour.getScreenBounds();
+        const auto cur = shownColour.isTransparent() ? rekordboxTrackColour (1) : shownColour;
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&colour), [safe, area, cur] (int r)
+        {
+            if (safe == nullptr || r == 0) return;
+            auto set = [safe] (juce::Colour c) { if (safe != nullptr && safe->onEdit) safe->onEdit (safe->tracks, "colour", "#" + c.withAlpha (1.0f).toString()); };
+            if (r == 1) { if (safe->onEdit) safe->onEdit (safe->tracks, "colour", "0"); }
+            else if (r > 10 && r <= 18) { if (safe->onEdit) safe->onEdit (safe->tracks, "colour", juce::String (r - 10)); }
+            else if (r >= 100 && r < 116) set (juce::Colour (rekordboxCueColours()[(size_t) (r - 100)].argb));
+            else handleSavedColourMenu (r, 200, area, cur, set, SavedColours::tags());
+        });
+    }
+
     void commit (int i)
     {
         auto& f = fields[(size_t) i];
@@ -141,7 +189,10 @@ private:
     static constexpr int numText = 7;
     struct Field { juce::String id, label, shown; juce::TextEditor editor; juce::Rectangle<int> labelArea; };
     std::array<Field, numText> fields;
-    juce::ComboBox rating, colour;
+    juce::ComboBox rating;
+    juce::TextButton colour;
+    juce::ToggleButton colourNames;
+    juce::Colour shownColour;
     juce::TextButton writeTags { "WRITE TO FILE TAGS" };
     juce::Rectangle<int> ratingLabel, colourLabel, noteArea;
     std::vector<TrackInfo> tracks;

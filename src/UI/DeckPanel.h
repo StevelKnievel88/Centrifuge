@@ -59,6 +59,8 @@ public:
     std::function<void (int deck, int slot, double beats, juce::uint32 colour)> onJumpSlotChanged;
     /** The deck's vinyl speed knob: brake time in seconds, or synced to beats (0 = not synced). */
     std::function<void (int deck, double seconds, double beats)> onBrakeChanged;
+    /** Artist on the left and the title on the right (instead of title then artist). */
+    inline static bool artistFirst = false;
     /** The scrolling waveform's visible seconds and playhead position (0..1), for the view box on the overview. */
     std::function<std::pair<double, float>()> viewWindow;
 
@@ -92,7 +94,8 @@ private:
     void showDeckColourMenu (juce::Rectangle<float> area);
     juce::String heldAction, flashAction;
 public:
-    struct ChipDrawn { juce::Rectangle<float> r; juce::String text; bool lit; juce::Colour colour; };
+    struct ChipDrawn { juce::Rectangle<float> r; juce::String text; bool lit; juce::Colour colour;
+                       std::function<void (juce::Graphics&, juce::Colour)> icon; };
 private:
     std::vector<ChipDrawn> chipsDrawn;
     double flashUntil = 0.0;

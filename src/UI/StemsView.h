@@ -21,6 +21,9 @@ public:
     void resized() override;
     void mouseDown (const juce::MouseEvent&) override;
     /** The stem settings (quality, models, GPU...) shown under the controls. */
+    /** Each deck's VOLUME / FILTER switch for the knobs mapped to 'Stem control X (volume / filter)'. */
+    std::function<bool (int deck)> isFilterMode;
+    std::function<void (int deck)> toggleFilterMode;
     void setSettingsPanel (juce::Component* c) { settingsPanel = c; if (c != nullptr) addAndMakeVisible (c); resized(); }
 
 private:
@@ -37,6 +40,7 @@ private:
     std::function<std::array<int, 8>()> getMatrix;
     std::function<void (std::array<int, 8>)> setMatrix;
     juce::Rectangle<int> matrixArea;
+    juce::Rectangle<int> modeChip (int deck) const;
     juce::Component* settingsPanel = nullptr;
     CentrifugeRotor rotor;
     juce::Rectangle<int> cell (int control, int stem) const;

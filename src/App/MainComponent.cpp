@@ -173,13 +173,18 @@ MainComponent::MainComponent()
                 auto k = MusicalKey::parse (value);
                 if (k.isValid()) { k.camelotStyle = false; info.key = k.toString(); } else info.key = value;
             }
-            else if (field == "colour") info.colour = value.getIntValue() > 0 ? rekordboxTrackColour (value.getIntValue()) : juce::Colour();
+            else if (field == "colour")
+                info.colour = value.startsWith ("#") ? juce::Colour::fromString (value.substring (1))
+                            : value.getIntValue() > 0 ? rekordboxTrackColour (value.getIntValue()) : juce::Colour();
             centrifugeLibrary.setInfo (id, info);
         }
         flash ("Set " + field + " on " + juce::String ((int) tracks.size()) + (tracks.size() == 1 ? " track" : " tracks"));
     };
     browser.onWriteTags = [this] (const std::vector<TrackInfo>& tracks) { writeTags (tracks); };
     browser.onExpandToggled = [this] { browserExpanded = ! browserExpanded; browser.setExpanded (browserExpanded); resized(); };
+    browser.setTagColourNames (settings.tagColourNames);
+    browser.onTagColourNames = [this] (bool on) { settings.tagColourNames = on; settings.save(); };
+    browser.onHideToggled = [this] { settings.showBrowser = ! settings.showBrowser; settings.save(); resized(); };
     browser.onColumnsChanged = [this] (const juce::String& cols) { settings.browserColumns = cols; settings.save(); };
     waves.onTrackDropped = [this] (int d) { loadDragged (d); };
     prepView.onTrackDropped = [this] { loadDragged (AudioEngine::prepDeck); };
@@ -251,6 +256,8 @@ MainComponent::MainComponent()
         addChildComponent (c);
     addAndMakeVisible (phaseMeter);
     stemsView.setSettingsPanel (&stemSettingsView);
+    stemsView.isFilterMode = [this] (int d) { return router.isStemCtlFilterMode (d); };
+    stemsView.toggleFilterMode = [this] (int d) { router.toggleStemCtlFilterMode (d); };
 
     // Tabs in screen order, with their page ids (PREP is page 4)
     const std::pair<juce::TextButton*, int> tabList[] = { { &tabPlay, 0 }, { &tabPrep, 4 }, { &tabMapping, 1 }, { &tabStems, 2 }, { &tabSettings, 3 } };
@@ -262,8 +269,30 @@ MainComponent::MainComponent()
         t->onClick = [this, p = p] { showPage (p); };
     }
 
+    addAndMakeVisible (statusFold);
+    statusFold.setTooltip ("Fold the status boxes away to the right (more room for the phrase meter)");
+    statusFold.setColour (juce::TextButton::buttonOnColourId, psyched::Colours::cyan);
+    statusFold.onClick = [this]
+    {
+        settings.statusFolded = ! settings.statusFolded;
+        settings.save();
+        resized();
+        repaint();
+    };
+
     addAndMakeVisible (masterVolume);
     addAndMakeVisible (recButton);
+    recButton.stateNames = { "NOT RECORDING", "RECORDING", "PRESSED", "ARMED" };
+    recButton.setColour (juce::TextButton::buttonOnColourId, Theme::bad);
+    recButton.paintExtra = [this] (juce::Graphics& g, juce::Rectangle<float> b)
+    {
+        // a red dot that flashes while recording
+        if (recorder.isRecording() && ! recorder.isWaiting() && (juce::Time::getMillisecondCounter() / 500) % 2 == 0)
+        {
+            const auto c = juce::Point<float> (b.getX() + 10.0f, b.getCentreY());
+            psyched::paintLed (g, c, juce::Colours::red, true, 8.0f);
+        }
+    };
     recButton.setTooltip ("Record the master output (Settings > RECORD: folder, format, source, cue / split)");
     recButton.onClick = [this] { if (recorder.isRecording()) stopRecording(); else startRecording (false); };
     masterVolume.setSliderStyle (juce::Slider::LinearHorizontal);
@@ -423,6 +452,8 @@ void MainComponent::applySettings()
     }
     browser.setPreviewStyle (settings.previewStyle, settings.previewShape == 1, juce::Colour (settings.previewColour));
     phaseMeter.setOptions (settings.phraseBars, settings.phraseFollow, settings.phraseBrackets);
+    DeckPanel::artistFirst = settings.artistFirst;
+    deck1.repaint(); deck2.repaint();
 
     // Quantize: applied at start-up and when the setting changes (each deck's button can still toggle it).
     if (appliedQuantize != (int) settings.quantize)
@@ -505,6 +536,7 @@ void MainComponent::handleAppAction (const juce::String& id, int deck, const Act
 
     if (id == "deck.load")           browser.loadSelected (deck);
     else if (id == "browse.scroll")  browser.scroll ((int) std::round (v.delta));
+    else if (id == "browse.preview")  { if (v.down) browser.previewPlayStop(); }
     else if (id == "browse.enter")   { if (v.down) { if (loadConfirm != nullptr) loadConfirm->exitModalState (1); else browser.enter(); } }
     else if (id == "browse.back")    { if (v.down) { if (loadConfirm != nullptr) loadConfirm->exitModalState (0); else browser.back(); } }
     else if (id == "track.prev" || id == "track.next")
@@ -630,15 +662,14 @@ void MainComponent::timerCallback()
             const int sec = (int) recorder.elapsedSeconds();
             t = recNaming ? juce::String ("SAVING") : recorder.isWaiting() ? juce::String ("ARMED") : juce::String::formatted ("REC %d:%02d:%02d", sec / 3600, (sec / 60) % 60, sec % 60);
         }
-        if (t != recText)
+        const int recState = ! recorder.isRecording() ? ButtonStyle::off : recorder.isWaiting() ? ButtonStyle::alt : ButtonStyle::on;
+        if (t != recText || recState != recButton.altState)
         {
             recText = t;
             recButton.setButtonText (t);
-            const bool on = recorder.isRecording();
-            const bool blink = recorder.isWaiting() && (juce::Time::getMillisecondCounter() / 500) % 2 == 0;
-            recButton.setColour (juce::TextButton::buttonColourId, on && ! blink ? Theme::bad.withAlpha (0.85f) : psyched::Colours::edge2);
-            recButton.setColour (juce::TextButton::textColourOffId, on ? juce::Colours::white : Theme::textDim);
+            recButton.altState = recState;
         }
+        if (recorder.isRecording()) recButton.repaint();   // the flashing dot
     }
     if (std::abs (engine.getMasterPeak() - shownPeak) > 0.01f) { shownPeak = engine.getMasterPeak(); repaint (masterArea); }
     const bool newXdj = midi.isXdjConnected();
@@ -687,8 +718,9 @@ void MainComponent::paint (juce::Graphics& g)
     }
 
     // Status pills (right side)
-    auto pills = topBar.withSizeKeepingCentre (topBar.getWidth(), 34).reduced (10, 0).withLeft (phaseArea.getRight() + 14)
+    auto pills = topBar.withSizeKeepingCentre (topBar.getWidth(), 34).reduced (10, 0).withLeft (statusFold.getRight() + 8)
                        .withRight (recButton.getX() - 8).toFloat();
+    if (settings.statusFolded) pills = {};
     {
         // master volume: label, and a peak meter under the slider
         auto mr = masterArea.toFloat();
@@ -742,17 +774,24 @@ void MainComponent::resized()
     topBar = r.removeFromTop (52 + bracketRoom);
     masterArea = topBar.withSizeKeepingCentre (topBar.getWidth(), 34).reduced (10, 0).removeFromRight (190);
     masterVolume.setBounds (masterArea.withTrimmedLeft (54).reduced (0, 6));
-    recButton.setBounds (masterArea.getX() - 104, masterArea.getY() + 3, 98, masterArea.getHeight() - 6);
+    recButton.setBounds (masterArea.getX() - 112, masterArea.getY(), 104, masterArea.getHeight());   // as tall as the status boxes
 
+    // page buttons, a little apart
     auto tabs = topBar.withTrimmedLeft (262).withWidth (5 * 92).withSizeKeepingCentre (5 * 92, 28);
     for (auto* t : { &tabPlay, &tabPrep, &tabMapping, &tabStems, &tabSettings })
     {
-        t->setBounds (tabs.removeFromLeft (92));
-        tabs.removeFromLeft (-1);
+        t->setBounds (tabs.removeFromLeft (86));
+        tabs.removeFromLeft (6);
     }
-    // Phrase meter: both decks stacked, to the right of the tabs
-    phaseArea = juce::Rectangle<int> (262 + 5 * 92 + 18, topBar.getY() + 10, juce::jlimit (220, 520, (getWidth() - 262 - 5 * 92 - 18) / 2), topBar.getHeight() - 20);
+    // Phrase meter: both decks stacked, to the right of the tabs; the fold button after it (folded: the meter
+    // takes the status boxes' room, up to REC)
+    const int meterX = 262 + 5 * 92 + 18;
+    const int meterW = settings.statusFolded ? juce::jmax (220, recButton.getX() - 12 - 30 - meterX)
+                                             : juce::jlimit (220, 520, (getWidth() - 262 - 5 * 92 - 18) / 2);
+    phaseArea = juce::Rectangle<int> (meterX, topBar.getY() + 10, meterW, topBar.getHeight() - 20);
     phaseMeter.setBounds (phaseArea);
+    statusFold.setButtonText (settings.statusFolded ? "<" : ">");
+    statusFold.setBounds (phaseArea.getRight() + 8, topBar.getCentreY() - 14, 22, 28);
 
     deck1.setVisible (page == 0 && ! browserExpanded);
     deck2.setVisible (page == 0 && ! browserExpanded);
@@ -763,6 +802,7 @@ void MainComponent::resized()
         // The browser fills the screen (EXPAND / RESTORE on the browser)
         dividerDecks = dividerBrowser = {};
         browser.setVisible (true);
+        browser.setCollapsed (false);
         browser.setBounds (r);
     }
     else if (page == 0)
@@ -784,10 +824,13 @@ void MainComponent::resized()
         }
         else
         {
+            // hidden: just the browser's top bar stays (its SHOW button brings it back)
             dividerBrowser = {};
+            browser.setBounds (r.removeFromBottom (BrowserView::barHeight));
             waves.setBounds (r);
         }
-        browser.setVisible (settings.showBrowser);
+        browser.setCollapsed (! settings.showBrowser);
+        browser.setVisible (true);
     }
     else if (page == 4)
     {
@@ -795,6 +838,7 @@ void MainComponent::resized()
         const int prepH = juce::jmax (360, (int) (r.getHeight() * 0.6));
         prepView.setBounds (r.removeFromTop (prepH));
         r.removeFromTop (4);
+        browser.setCollapsed (false);
         browser.setBounds (r);
     }
     else
@@ -865,11 +909,11 @@ void MainComponent::withUserLists (LibrarySource& src)
     };
 
     PlaylistNode locations;
-    locations.id = "loc"; locations.name = "LOCATIONS"; locations.isFolder = true;
+    locations.id = "loc"; locations.name = "Locations"; locations.isFolder = true;
     locations.children = std::move (src.playlists.children);
 
     PlaylistNode mine;
-    mine.id = "pl"; mine.name = "PLAYLISTS"; mine.isFolder = true;
+    mine.id = "pl"; mine.name = "Playlists"; mine.isFolder = true;
     std::function<void (PlaylistNode&, juce::int64)> build = [&] (PlaylistNode& node, juce::int64 parent)
     {
         std::vector<const UserLists::List*> kids;
@@ -899,14 +943,14 @@ void MainComponent::withUserLists (LibrarySource& src)
     build (mine, 0);
 
     PlaylistNode toPlay;
-    toPlay.id = "toplay"; toPlay.name = "TO PLAY  (" + juce::String ((int) ul.toPlay().size()) + ")";
+    toPlay.id = "toplay"; toPlay.name = "Tag List  (" + juce::String ((int) ul.toPlay().size()) + ")";
     toPlay.trackIndices = indices (ul.toPlay(), false);
 
     PlaylistNode history;
-    history.id = "hist"; history.name = "PLAY HISTORY"; history.isFolder = true;
+    history.id = "hist"; history.name = "Play history"; history.isFolder = true;
     PlaylistNode sessions, sets;
-    sessions.id = "hist.s"; sessions.name = "SESSION HISTORY"; sessions.isFolder = true;
-    sets.id = "hist.l"; sets.name = "SET LIST HISTORY"; sets.isFolder = true;
+    sessions.id = "hist.s"; sessions.name = "Session history"; sessions.isFolder = true;
+    sets.id = "hist.l"; sets.name = "Set list history"; sets.isFolder = true;
     auto historyNode = [&] (const UserLists::History& h, const juce::String& id, const juce::String& name)
     {
         PlaylistNode n;
@@ -1176,7 +1220,7 @@ void MainComponent::trackAction (const std::vector<TrackInfo>& tracks, const juc
         {
             int added = 0;
             for (auto id : ids) added += ul.toggleToPlay (id) ? 1 : 0;
-            flash (added > 0 ? "Added to TO PLAY" : "Removed from TO PLAY");
+            flash (added > 0 ? "Added to the Tag List" : "Removed from the Tag List");
         }
         else if (action.startsWith ("list.remove:"))
         {
@@ -1594,8 +1638,24 @@ void MainComponent::stopRecording()
     w->addTextEditor ("name", def);
     w->addButton ("SAVE", 1, juce::KeyPress (juce::KeyPress::returnKey));
     w->addButton ("Keep the default name", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->addButton ("DISCARD...", 2);
     w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, def] (int r)
     {
+        if (r == 2)
+        {
+            // throw it away - after asking
+            juce::AlertWindow::showAsync (juce::MessageBoxOptions().withTitle ("Discard the recording?")
+                                            .withMessage ("The recording will be deleted. This can't be undone.")
+                                            .withButton ("DISCARD").withButton ("Keep it"),
+                                          [this, def] (int k)
+            {
+                if (k == 1) { recorder.discard(); flash ("Recording discarded"); }
+                else flash ("Saved " + recorder.stop (def));
+                recNaming = false;
+                recText = {};
+            });
+            return;
+        }
         const auto name = r == 1 ? w->getTextEditorContents ("name").trim() : def;
         const auto made = recorder.stop (name.isNotEmpty() ? name : def);
         recNaming = false;
@@ -1613,7 +1673,7 @@ void MainComponent::toggleSetList()
         ul.stopSetList();
         browser.setSetListRunning (false);
         if (recorder.isRecording() && recordWithSetList) stopRecording();
-        flash ("Set list stopped - it's in PLAY HISTORY > SET LIST HISTORY");
+        flash ("Set list stopped - it's in Play history > Set list history");
         browser.refreshSources();
         return;
     }

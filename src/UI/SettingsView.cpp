@@ -47,6 +47,10 @@ public:
         analysisRange.onChange = [this] { settings.analysisRange = analysisRange.getSelectedId() - 1; onChanged(); };
 
         addSection ("PLAY DECKS - WAVEFORMS");
+        add (&nameOrder, 28, "Track name on the decks");
+        nameOrder.addItemList ({ "Title, then artist", "Artist, then title" }, 1);
+        nameOrder.setSelectedId (settings.artistFirst ? 2 : 1, juce::dontSendNotification);
+        nameOrder.onChange = [this] { settings.artistFirst = nameOrder.getSelectedId() == 2; onChanged(); };
         const char* laneLabels[] = { "Deck 1 top lane", "Deck 1 bottom lane", "Deck 2 top lane", "Deck 2 bottom lane" };
         for (int i = 0; i < 4; ++i)
         {
@@ -697,7 +701,7 @@ private:
     std::array<juce::Slider, 4> stemOpacity;
     PairRow overviewRow;
     juce::TextButton colourButton;
-    juce::ComboBox deck1Out, deck2Out, previewOut, fps, analysisRange, keyNotation;
+    juce::ComboBox deck1Out, deck2Out, previewOut, fps, analysisRange, keyNotation, nameOrder;
     juce::ToggleButton sumToMaster, leds, stemsOnLoad, stemsGpu, foldSkips, quantize, followDeck;
     juce::TextEditor dbPath, dbKey, usbFolder, modelPath, cachePath;
     Resizer dbButtons;

@@ -132,8 +132,11 @@ public:
         if (node != nullptr && node->isFolder && ! node->trackIndices.empty()) label += "  (" + juce::String ((int) node->trackIndices.size()) + ")";
         if (isSourceRoot && src->error.isNotEmpty()) label += "  -  " + src->error;
         if (isSourceRoot && src->kind == LibrarySource::Kind::centrifuge)
-            label += src->tracks.empty() ? juce::String ("  (empty - press IMPORT)")
-                                         : (src->libraryView == 0 ? juce::String ("  -  rekordbox copy") : juce::String ("  -  Centrifuge"));
+        {
+            label = "Centrifuge Library";
+            if (src->tracks.empty()) label += "  (empty - press IMPORT)";
+            else if (Features::rekordboxCopy && src->libraryView == 0) label += "  -  rekordbox copy";
+        }
         g.drawText (label, r, juce::Justification::centredLeft, true);
     }
 
@@ -235,12 +238,17 @@ BrowserView::BrowserView (LibraryManager& lib, StemManager& stems) : library (li
     addChildComponent (infoPanel);
     infoPanel.onEdit = [this] (const std::vector<TrackInfo>& t, const juce::String& f, const juce::String& v) { if (onEditInfo) onEditInfo (t, f, v); };
     infoPanel.onWriteTags = [this] (const std::vector<TrackInfo>& t) { if (onWriteTags) onWriteTags (t); };
+    infoPanel.setTagColourNames (tagColourNames);
+    infoPanel.onTagColourNames = [this] (bool on) { tagColourNames = on; table.repaint(); if (onTagColourNames) onTagColourNames (on); };
+    addAndMakeVisible (hideButton);
+    hideButton.setTooltip ("Hide the browser (only this bar stays) / show it again");
+    hideButton.onClick = [this] { if (onHideToggled) onHideToggled(); };
     addAndMakeVisible (expandButton);
     expandButton.setTooltip ("Make the browser fill the screen (and back)");
     expandButton.onClick = [this] { if (onExpandToggled) onExpandToggled(); };
     load2.onClick = [this] { loadSelected (1); };
 
-    for (auto* b : { &importButton, &exportButton, &viewR, &viewC })
+    for (auto* b : std::initializer_list<juce::TextButton*> { &importButton, &exportButton, &viewR, &viewC })
     {
         addAndMakeVisible (*b);
     }
@@ -264,7 +272,7 @@ BrowserView::BrowserView (LibraryManager& lib, StemManager& stems) : library (li
     rowsBigger.setTooltip ("Bigger rows (the preview waveform grows with them)");
     rowsSmaller.onClick = [this] { setRowHeight (table.getRowHeight() - 4); if (onRowHeightChanged) onRowHeightChanged (table.getRowHeight()); };
     rowsBigger.onClick = [this] { setRowHeight (table.getRowHeight() + 4); if (onRowHeightChanged) onRowHeightChanged (table.getRowHeight()); };
-    setListButton.setTooltip ("Start / stop a SET LIST: the tracks you play are kept in PLAY HISTORY > SET LIST HISTORY");
+    setListButton.setTooltip ("Start / stop a SET LIST: the tracks you play are kept in Play history > Set list history");
     setListButton.setColour (juce::TextButton::buttonOnColourId, Theme::bad);
     setListButton.onClick = [this] { if (onSetListToggled) onSetListToggled(); };
 
@@ -287,11 +295,14 @@ BrowserView::~BrowserView()
 
 void BrowserView::paint (juce::Graphics& g)
 {
-    g.fillAll (Theme::panel);
-    g.setColour (Theme::line);
-    g.fillRect (tree.getRight(), 0, 1, getHeight());
-    g.setColour (Theme::accent);
-    g.fillRect (0, 0, getWidth(), 2);
+    // like the decks: the coloured top line, the same thickness all along, with the 45-degree slant at the left
+    g.fillAll (Theme::bg);
+    psyched::paintPanel (g, getLocalBounds().toFloat(), Theme::accent);
+    if (! collapsed)
+    {
+        g.setColour (Theme::line);
+        g.fillRect (tree.getRight(), tree.getY(), 1, getHeight() - tree.getY());
+    }
 }
 
 bool BrowserView::isInterestedInFileDrag (const juce::StringArray& files)
@@ -330,10 +341,17 @@ void BrowserView::paintOverChildren (juce::Graphics& g)
 void BrowserView::resized()
 {
     auto r = getLocalBounds();
-    r.removeFromTop (1);
-    tree.setBounds (r.removeFromLeft (juce::jlimit (200, 320, getWidth() / 5)));
+    r.removeFromTop (3);   // the coloured line
+    // the library tree starts below the slant
+    auto treeCol = r.removeFromLeft (juce::jlimit (200, 320, getWidth() / 5));
+    tree.setBounds (treeCol.withTrimmedTop (16).withTrimmedLeft (2));
+    tree.setVisible (! collapsed);
+    table.setVisible (! collapsed);
     r.removeFromLeft (1);
-    auto top = r.removeFromTop (34).reduced (6, 4);
+    // the buttons sit in the middle of their bar, clear of the line
+    auto top = r.removeFromTop (barHeight - 3).withSizeKeepingCentre (r.getWidth(), 28).reduced (6, 0);
+    hideButton.setBounds (top.removeFromRight (64));
+    top.removeFromRight (6);
     importButton.setBounds (top.removeFromLeft (76));
     top.removeFromLeft (6);
     exportButton.setBounds (top.removeFromLeft (76));
@@ -365,6 +383,7 @@ void BrowserView::resized()
     rowsSmaller.setBounds (top.removeFromLeft (26));
     top.removeFromLeft (2);
     rowsBigger.setBounds (top.removeFromLeft (26));
+    infoPanel.setVisible (infoOpen && ! collapsed);
     if (infoOpen) infoPanel.setBounds (r.removeFromRight (juce::jmin (320, r.getWidth() / 2)));
     table.setBounds (r);
 }
@@ -571,7 +590,7 @@ void BrowserView::paintCell (juce::Graphics& g, int row, int col, int w, int h, 
     switch (col)
     {
         case 1: s = juce::String (numberOf (rows[(size_t) row])); g.setColour (Theme::textFaint); just = juce::Justification::centredRight; break;
-        case 2: s = t.title; break;
+        case 2: s = t.title; if (tagColourNames && ! t.colour.isTransparent()) g.setColour (t.colour); break;
         case 14: s = t.comment; g.setColour (Theme::textDim); break;
         case 15:
         {
@@ -581,12 +600,16 @@ void BrowserView::paintCell (juce::Graphics& g, int row, int col, int w, int h, 
             g.setColour (Theme::sync);
             break;
         }
-        case 3: s = t.artist; g.setColour (Theme::textDim); break;
+        case 3: s = t.artist; g.setColour (tagColourNames && ! t.colour.isTransparent() ? t.colour.darker (0.15f) : Theme::textDim); break;
         case 4: s = t.bpm > 0 ? juce::String (t.bpm, 2) : juce::String(); just = juce::Justification::centredRight; break;
         case 5:
         {
             s = MusicalKey::display (t.key);
-            g.setColour (Theme::good);
+            // coloured as on the Camelot wheel
+            {
+                const auto wc = MusicalKey::wheelColour (t.key);
+                g.setColour (wc.isTransparent() ? Theme::good : wc);
+            }
             if (t.libraryId != 0)
                 if (const auto* e = KeyOpinions::get (t.libraryId))
                 {
@@ -641,14 +664,25 @@ void BrowserView::paintCell (juce::Graphics& g, int row, int col, int w, int h, 
             // Preview waveform (click to play from there); the previewing track shows its position and a stop square
             const auto path = t.file.getFullPathName();
             const bool active = path == previewPath && previewPath.isNotEmpty();
-            auto area = juce::Rectangle<float> (2.0f, 3.0f, (float) w - 4.0f, (float) h - 6.0f);
+            auto area = juce::Rectangle<float> (previewLead, 3.0f, (float) w - previewLead - 2.0f, (float) h - 6.0f);
             {
-                // The stop square's place is always kept, so the waveform doesn't change size when a preview starts
-                auto stop = area.removeFromLeft (area.getHeight());
+                // The stop / play button's place is always kept, so the waveform doesn't change size when a preview
+                // starts: a red stop square while it plays, a green play triangle when it's stopped
+                auto stop = area.removeFromLeft (area.getHeight()).reduced (3.0f);
                 if (active)
                 {
-                    g.setColour (previewPlaying ? Theme::output : Theme::textDim);
-                    g.fillRect (stop.reduced (3.0f));
+                    if (previewPlaying)
+                    {
+                        g.setColour (juce::Colour (0xffff3b3b));
+                        g.fillRect (stop);
+                    }
+                    else
+                    {
+                        juce::Path tri;
+                        tri.addTriangle (stop.getX(), stop.getY(), stop.getX(), stop.getBottom(), stop.getRight(), stop.getCentreY());
+                        g.setColour (psyched::Colours::green);
+                        g.fillPath (tri);
+                    }
                 }
                 area.removeFromLeft (3.0f);
             }
@@ -794,8 +828,8 @@ void BrowserView::cellClicked (int row, int col, const juce::MouseEvent& e)
         float f = cellFraction (11, e);
         const bool active = t.file.getFullPathName() == previewPath && previewPath.isNotEmpty();
         const float stopW = (float) table.getRowHeight() - 6.0f;
-        if (active && f * (float) w < stopW + 2.0f) { if (onPreviewStop) onPreviewStop(); return; }
-        f = juce::jlimit (0.0f, 1.0f, (f * (float) w - stopW - 5.0f) / juce::jmax (1.0f, (float) w - stopW - 9.0f));
+        if (active && f * (float) w < previewLead + stopW) { previewPlayStop(); return; }
+        f = juce::jlimit (0.0f, 1.0f, (f * (float) w - previewLead - stopW - 3.0f) / juce::jmax (1.0f, (float) w - previewLead - stopW - 5.0f));
         if (onPreview) onPreview (t, currentSource->kind == LibrarySource::Kind::pcCollection, (double) f);
         return;
     }
@@ -892,7 +926,7 @@ void BrowserView::showTrackMenu (int)
         m.addSubMenu ("Add to playlist", addTo);
         bool inToPlay = false;
         for (auto& t : tracks) inToPlay = inToPlay || std::find (ul.toPlay().begin(), ul.toPlay().end(), t.libraryId) != ul.toPlay().end();
-        m.addItem (61, one && inToPlay ? "Remove from TO PLAY" : "Add to TO PLAY");
+        m.addItem (61, one && inToPlay ? "Remove from the Tag List" : "Add to the Tag List");
         if (currentNodeId.startsWith ("u") || currentNodeId == "toplay")
             m.addItem (62, "Remove from this list");
         juce::PopupMenu tagMenu;
@@ -1183,6 +1217,19 @@ void BrowserView::loadSelected (int deck)
     if (row < 0 || row >= (int) rows.size() || currentSource == nullptr) return;
     if (onLoadToDeck)
         onLoadToDeck (deck, currentSource->tracks[(size_t) rows[(size_t) row]], currentSource->kind == LibrarySource::Kind::pcCollection);
+}
+
+void BrowserView::previewPlayStop()
+{
+    if (previewPlaying) { if (onPreviewStop) onPreviewStop(); return; }
+    if (currentSource == nullptr || ! onPreview) return;
+    const bool pc = currentSource->kind == LibrarySource::Kind::pcCollection;
+    // stopped: carry on from where it stopped; nothing previewed yet: the selected track from the start
+    if (previewPath.isNotEmpty())
+        for (auto& t : currentSource->tracks)
+            if (t.file.getFullPathName() == previewPath) { onPreview (t, pc, previewFraction); return; }
+    const int row = table.getSelectedRow();
+    if (row >= 0 && row < (int) rows.size()) onPreview (currentSource->tracks[(size_t) rows[(size_t) row]], pc, 0.0);
 }
 
 void BrowserView::loadNeighbour (int deck, const juce::File& current, int dir)

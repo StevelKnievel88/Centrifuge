@@ -64,6 +64,11 @@ private:
     std::array<std::array<std::atomic<bool>, 4>, 2> stemMute, controlMute;
     std::array<std::atomic<int>, 8> matrix;   // [deck * 4 + control]
     std::array<std::atomic<bool>, 2> keySyncLit;
+public:
+    bool isStemCtlFilterMode (int d) const { return d >= 0 && d < 2 && stemCtlFilterMode[(size_t) d].load(); }
+    void toggleStemCtlFilterMode (int d) { if (d >= 0 && d < 2) stemCtlFilterMode[(size_t) d] = ! stemCtlFilterMode[(size_t) d].load(); }
+private:
+    std::array<std::atomic<bool>, 2> stemCtlFilterMode {};   // per deck: the stem control knobs work the filters
     std::array<std::atomic<double>, 8> jumpSlotBeats { 1.0, 4.0, 8.0, 16.0, 1.0, 4.0, 8.0, 16.0 };
     std::array<std::atomic<juce::uint32>, 8> jumpSlotColour {};
 };

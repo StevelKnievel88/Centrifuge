@@ -33,13 +33,13 @@ inline void paintStemControl (juce::Graphics& g, juce::Rectangle<float> r, int s
         if (ready && level > 0.0f)
         {
             g.setColour (fill);
-            g.fillRect (b.reduced (1.5f).withWidth ((b.getWidth() - 3.0f) * level));
+            g.fillRect (b.reduced (3.0f).withWidth ((b.getWidth() - 6.0f) * level));   // a black gap inside the outline
         }
         g.setColour (edge);
         g.drawRect (b, 1.0f);
         g.setColour (ready ? (level <= 0.001f ? Theme::textFaint : juce::Colours::white) : Theme::textFaint);
         g.setFont (Theme::font (fontH, true));
-        g.drawText (juce::String (stemName (stem)).toLowerCase(), b.toNearestInt(), juce::Justification::centred, false);
+        g.drawText (juce::String (stemName (stem)).toUpperCase(), b.toNearestInt(), juce::Justification::centred, false);
     }
 
     // --- Filter -------------------------------------------------------------------------------
@@ -47,7 +47,7 @@ inline void paintStemControl (juce::Graphics& g, juce::Rectangle<float> r, int s
         auto b = filterArea;
         g.setColour (juce::Colours::black);
         g.fillRect (b);
-        auto in = b.reduced (1.5f);
+        auto in = b.reduced (3.0f);
         const float third = in.getWidth() / 3.0f;
         auto left = in.withWidth (third), centre = in.withX (in.getX() + third).withWidth (third),
              right = in.withX (in.getX() + 2.0f * third).withWidth (third);
@@ -74,11 +74,11 @@ inline void paintStemControl (juce::Graphics& g, juce::Rectangle<float> r, int s
         g.setFont (Theme::font (small, true));
         if (left.getWidth() >= 14.0f)
         {
-            g.drawText ("lp", left.reduced (2.0f, 0.0f).toNearestInt(), juce::Justification::centredLeft, false);
-            g.drawText ("hp", right.reduced (2.0f, 0.0f).toNearestInt(), juce::Justification::centredRight, false);
+            g.drawText ("LP", left.reduced (2.0f, 0.0f).toNearestInt(), juce::Justification::centredLeft, false);
+            g.drawText ("HP", right.reduced (2.0f, 0.0f).toNearestInt(), juce::Justification::centredRight, false);
         }
         if (centre.getWidth() >= 26.0f)
-            g.drawText ("filter", centre.toNearestInt(), juce::Justification::centred, false);
+            g.drawText ("FILTER", centre.toNearestInt(), juce::Justification::centred, false);
     }
 }
 
@@ -98,7 +98,7 @@ inline double stemFilterAt (juce::Rectangle<float> bar, float x)
 }
 
 /** The stem filters' resonance: a small knob (0..1) in place of the old icon. */
-inline void paintResonanceKnob (juce::Graphics& g, juce::Rectangle<float> r, float value)
+inline void paintResonanceKnob (juce::Graphics& g, juce::Rectangle<float> r, float value, juce::Colour colour = Theme::sync)
 {
     const float side = juce::jmax (8.0f, juce::jmin (r.getWidth(), r.getHeight() - 9.0f));
     auto b = r.withHeight (side).withSizeKeepingCentre (side, side).withY (r.getY());
@@ -114,7 +114,7 @@ inline void paintResonanceKnob (juce::Graphics& g, juce::Rectangle<float> r, flo
     g.fillEllipse (b.reduced (side * 0.24f));
     g.setColour (Theme::line);
     g.strokePath (bg, juce::PathStrokeType (2.0f));
-    g.setColour (Theme::sync);
+    g.setColour (colour);
     g.strokePath (val, juce::PathStrokeType (2.5f));
     const float ang = a0 + (a1 - a0) * v, rr = side * 0.26f;
     g.drawLine (c.x, c.y, c.x + rr * std::sin (ang), c.y - rr * std::cos (ang), 2.0f);

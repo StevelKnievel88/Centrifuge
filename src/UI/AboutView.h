@@ -1,5 +1,6 @@
 #pragma once
 #include "CentrifugeRotor.h"
+#include "BinaryData.h"
 #include "Theme.h"
 
 #ifndef CENTRIFUGE_BUILD_INFO
@@ -51,8 +52,12 @@ public:
         psyched::paintScanlines (g, card.toFloat().reduced (1.0f).withHeight (170.0f), 0.02f);
 
         auto r = card.reduced (28).withTrimmedTop (150);
-        psyched::paintWordmark (g, r.removeFromTop (38).toFloat(), "Centrifuge", 0, psyched::Signature::spin, 26.0f,
-                                juce::Justification::centred);
+        {
+            // the Centrifuge logo
+            static const juce::Image mark = juce::ImageCache::getFromMemory (BinaryData::centrifugetopbarlogo_png, BinaryData::centrifugetopbarlogo_pngSize);
+            auto lr = r.removeFromTop (44);
+            if (mark.isValid()) g.drawImageWithin (mark, lr.getX(), lr.getY(), lr.getWidth(), lr.getHeight(), juce::RectanglePlacement::centred);
+        }
 
         g.setColour (Theme::accent);
         g.setFont (psyched::Fonts::value (13.0f));

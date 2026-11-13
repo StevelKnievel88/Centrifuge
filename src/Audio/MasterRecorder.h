@@ -28,6 +28,8 @@ public:
     juce::String start (const Options& o, double sampleRate, bool armed);
     /** Stops; the recording is renamed to `finalName` (no extension) and the cue / split files written. Returns what was made. */
     juce::String stop (const juce::String& finalName);
+    /** Stops and throws the recording away (the file is deleted). */
+    void discard();
     bool isRecording() const { return writer != nullptr; }
     bool isWaiting() const { return waiting.load(); }
     double elapsedSeconds() const { return rate > 0 ? (double) written.load() / rate : 0.0; }

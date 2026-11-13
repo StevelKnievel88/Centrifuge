@@ -54,7 +54,7 @@ void StemsView::resized()
     openCache.setBounds (row.removeFromLeft (170));
 
     r.removeFromTop (40);
-    matrixArea = r.removeFromTop (5 * 34 + 64).withWidth (juce::jmin (r.getWidth(), 820));
+    matrixArea = r.removeFromTop (6 * 34 + 64).withWidth (juce::jmin (r.getWidth(), 820));
     r.removeFromTop (12);
     if (settingsPanel != nullptr) settingsPanel->setBounds (r.withTrimmedLeft (-20).withWidth (juce::jmin (r.getWidth() + 20, 880)));
     auto right = getLocalBounds().reduced (24).removeFromRight (juce::jmin (260, getWidth() / 4));
@@ -68,8 +68,16 @@ juce::Rectangle<int> StemsView::cell (int control, int stem) const
     return { left + stem * 76, top + (control & 3) * 34, 70, 28 };
 }
 
+juce::Rectangle<int> StemsView::modeChip (int deck) const
+{
+    const auto c = cell (deck * 4 + 3, 0);
+    return { c.getX() - 96, c.getBottom() + 8, 96 + 4 * 76 - 6, 26 };
+}
+
 void StemsView::mouseDown (const juce::MouseEvent& e)
 {
+    for (int d = 0; d < 2; ++d)
+        if (modeChip (d).contains (e.getPosition()) && toggleFilterMode) { toggleFilterMode (d); repaint(); return; }
     auto m = getMatrix();
     for (int c = 0; c < 8; ++c)
         for (int s = 0; s < 4; ++s)
@@ -150,6 +158,13 @@ void StemsView::paint (juce::Graphics& g)
             g.setColour (Theme::stemColour (s));
             g.drawText (juce::String (stemName (s)).toUpperCase(), h, juce::Justification::centred);
         }
+    }
+    for (int d = 0; d < 2; ++d)
+    {
+        // the VOLUME / FILTER switch (mappable: Deck N - Stem controls > VOLUME / FILTER switch)
+        const bool f = isFilterMode && isFilterMode (d);
+        psyched::paintChip (g, modeChip (d).toFloat(), f ? "KNOBS (volume / filter): FILTER" : "KNOBS (volume / filter): VOLUME",
+                            f ? Theme::sync : Theme::accent, psyched::ChipState::on);
     }
     for (int c = 0; c < 8; ++c)
     {

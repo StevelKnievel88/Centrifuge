@@ -1,4 +1,5 @@
 #include "CentrifugeRotor.h"
+#include "BinaryData.h"
 #include "Theme.h"
 
 namespace orbit
@@ -198,10 +199,13 @@ void CentrifugeSplash::paint (juce::Graphics& g)
     g.setOpacity (alpha);
     CentrifugeRotor::paintRotor (g, area, angle, spd, fill, streaks, std::fmod (e * 1.6f, 1.0f));
 
-    g.setColour (Theme::text.withAlpha (alpha));
-    g.setFont (Theme::font (size * 0.16f, true));
-    g.drawText ("CENTRIFUGE", area.withY (area.getBottom() + size * 0.08f).withHeight (size * 0.2f).expanded (size, 0.0f),
-                juce::Justification::centred);
+    // the Centrifuge logo under it
+    static const juce::Image mark = juce::ImageCache::getFromMemory (BinaryData::centrifugetopbarlogo_png, BinaryData::centrifugetopbarlogo_pngSize);
+    if (mark.isValid())
+    {
+        auto lr = area.withY (area.getBottom() + size * 0.08f).withHeight (size * 0.22f).expanded (size * 0.4f, 0.0f).toNearestInt();
+        g.drawImageWithin (mark, lr.getX(), lr.getY(), lr.getWidth(), lr.getHeight(), juce::RectanglePlacement::centred);
+    }
 }
 
 } // namespace orbit

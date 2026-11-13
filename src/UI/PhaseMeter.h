@@ -43,8 +43,6 @@ public:
         for (int b : { 4, 8, 16, 32, 64 })
             m.addItem (b, juce::String (b) + " bars", true, ! followPhrases && phraseBars == b);
         m.addItem (100, "Follow the track's phrases (length and start from the phrase playing)", true, followPhrases);
-        m.addSeparator();
-        m.addItem (200, "Show bar brackets (4 / 16 / 32 / 64 bars)", true, brackets);
         juce::Component::SafePointer<PhaseMeter> safe (this);
         m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [safe] (int r)
         {
@@ -211,7 +209,7 @@ private:
         const int upb = perBeat ? 4 : 1;                 // blocks per bar
         const int n = bars * upb;
         const int inPhrase = juce::jlimit (1, n, (followPhrases ? phrase : bars) * upb);   // blocks the phrase covers
-        const float gapUnit = perBeat ? 1.0f : 1.5f, gapBar = 3.0f, gap4 = 8.0f, gap16 = 11.0f;
+        const float gapUnit = perBeat ? 2.0f : 2.5f, gapBar = 5.0f, gap4 = 8.0f, gap16 = 11.0f;
         auto gapAfter = [&] (int i)   // gap after block i
         {
             const int barEnd = (i + 1) % upb == 0 ? (i + 1) / upb : -1;
@@ -248,9 +246,10 @@ private:
             g.setColour (c);
             g.fillRect (blk);
             // the phrase's own blocks are outlined in the deck's colour; blocks past its end stay plain
+            // (alternating light / darker with the bars, like the infill)
             if (i < inPhrase && i != cur)
             {
-                g.setColour (col);
+                g.setColour ((perBeat ? bar % 2 == 1 : (bar / 4) % 2 == 1) ? col.darker (0.9f) : col);
                 g.drawRect (blk, 1.0f);
             }
             x += bw;

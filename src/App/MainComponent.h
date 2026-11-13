@@ -9,6 +9,7 @@
 #include "../UI/XzScreenView.h"
 #include "../Control/XzScreenLink.h"
 #include "../UI/BrowserView.h"
+#include "../UI/ButtonStyles.h"
 #include "../UI/MappingView.h"
 #include "../UI/StemsView.h"
 #include "../UI/SettingsView.h"
@@ -99,7 +100,7 @@ private:
     juce::Rectangle<int> phaseArea;
     PhaseMeter phaseMeter { engine };
     PrepView prepView { engine, editor };
-    juce::TextButton tabPrep { "PREP" };
+    StyledTextButton tabPrep { "PREP", "tab.prep" };
     juce::String pendingPreviewPath;
     double pendingPreviewFraction = -1.0;
     std::array<int, 2> playSerial { -1, -1 };
@@ -137,7 +138,9 @@ private:
     SettingsView settingsView;
     SettingsView stemSettingsView;   // the STEMS settings, on the Stems page
 
-    juce::TextButton tabPlay { "PLAY" }, tabMapping { "MAPPING" }, tabStems { "STEMS" }, tabSettings { "SETTINGS" };
+    StyledTextButton tabPlay { "PLAY", "tab.play" }, tabMapping { "MAPPING", "tab.mapping" }, tabStems { "STEMS", "tab.stems" },
+                     tabSettings { "SETTINGS", "tab.settings" };
+    StyledTextButton statusFold { ">", "statusfold" };   // folds the status boxes away (the phrase meter gets their room)
     int page = 0;
 
     juce::Rectangle<int> topBar, dividerDecks, dividerBrowser, logoArea;
@@ -164,7 +167,7 @@ private:
     bool recordWithSetList = false;
     void startRecording (bool askSource);
     void stopRecording();
-    juce::TextButton recButton { "REC" };
+    StyledTextButton recButton { "REC", "rec" };
     juce::String recText;
     bool recNaming = false;
     int dragging = 0, dragStartValue = 0;

@@ -97,10 +97,12 @@ static std::vector<ActionDef> buildActions()
         add (p + "stem.reset", "Stems: reset all", D + " - Stems", B, d);
         add (p + "stem.resonance", "Stem filter resonance", D + " - Stems", C, d);
 
+        add (p + "stemctl.mode", "Stem controls: VOLUME / FILTER switch (for the knobs mapped to 'volume / filter')", D + " - Stem controls", B, d, true);
         for (auto letter : { "A", "B", "C", "D" })
         {
             // deck 2's controls are shown as E-H (each deck has its own matrix on the Stems page)
             const auto shown = juce::String::charToString ((juce::juce_wchar) (letter[0] + (d == 1 ? 4 : 0)));
+            add (p + "stemctl." + juce::String (letter) + ".knob",   "Stem control " + shown + " volume / filter (by the switch)", D + " - Stem controls", C, d);
             add (p + "stemctl." + juce::String (letter) + ".volume", "Stem control " + shown + " volume (matrix)", D + " - Stem controls", C, d);
             add (p + "stemctl." + juce::String (letter) + ".filter", "Stem control " + shown + " filter (matrix)", D + " - Stem controls", C, d);
             add (p + "stemctl." + juce::String (letter) + ".mute",   "Stem control " + shown + " mute (matrix)",   D + " - Stem controls", B, d, true);
@@ -139,7 +141,8 @@ static std::vector<ActionDef> buildActions()
     add ("browse.tree",     "Browse: playlists / tracks focus", "Browser", B, -1);
     add ("browse.load1",    "Load to deck 1",          "Browser", B, -1);
     add ("browse.load2",    "Load to deck 2",          "Browser", B, -1);
-    add ("browse.tag",      "Add to / remove from TO PLAY (like TAG TRACK)", "Browser", B, -1);
+    add ("browse.preview",  "Preview play / stop", "Browser", B, -1);
+    add ("browse.tag",      "Add to / remove from the Tag List (like TAG TRACK)", "Browser", B, -1);
     add ("browse.scrub",    "Preview scrub (encoder: nudges)", "Browser", E, -1);
     add ("browse.scrubpos", "Preview position (dial: left = start, right = end)", "Browser", ActionKind::continuous, -1);
     add ("setlist.toggle",  "SET LIST start / stop", "Browser", B, -1);

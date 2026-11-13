@@ -22,7 +22,7 @@ void drawPill (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& 
 {
     g.setColour (psyched::Colours::field);
     g.fillRect (r);
-    g.setColour (psyched::Colours::edge2);
+    g.setColour (bright ? dot.withAlpha (0.85f) : psyched::Colours::edge2);   // outlined in its dot's colour
     g.drawRect (r, 1.0f);
     psyched::paintLed (g, { r.getX() + 12.0f, r.getCentreY() }, dot, bright);
     psyched::paintLabel (g, text, r.withTrimmedLeft (22.0f).withTrimmedRight (8.0f), juce::Justification::centredLeft,

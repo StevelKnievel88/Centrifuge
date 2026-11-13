@@ -95,6 +95,17 @@ juce::String MasterRecorder::stop (const juce::String& finalName)
     return made.joinIntoString (", ");
 }
 
+void MasterRecorder::discard()
+{
+    {
+        const juce::ScopedLock sl (writerLock);
+        if (writer == nullptr) return;
+        writer.reset();
+    }
+    file.deleteFile();
+    markers.clear();
+}
+
 juce::String MasterRecorder::writeCue (const juce::File& audio) const
 {
     juce::String s;

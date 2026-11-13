@@ -313,6 +313,19 @@ void ActionRouter::perform (const ActionDef& a, const ActionValue& v)
         }
         updateStems (d);
     }
+    else if (name == "stemctl.mode" && d < 2)
+    {
+        // the switch: knobs mapped to "Stem control X (volume / filter)" work the filters instead of the volumes
+        if (v.down) stemCtlFilterMode[(size_t) d] = ! stemCtlFilterMode[(size_t) d].load();
+    }
+    else if (name.startsWith ("stemctl.") && name.endsWith (".knob") && d < 2)
+    {
+        const auto letter = name.fromFirstOccurrenceOf (".", false, false).substring (0, 1);
+        const int c = juce::jlimit (0, 3, (int) (letter[0] - 'A'));
+        if (stemCtlFilterMode[(size_t) d].load()) controlFilter[(size_t) d][(size_t) c] = (float) v.value;
+        else controlVolume[(size_t) d][(size_t) c] = (float) v.value;
+        updateStems (d);
+    }
     else if (name.startsWith ("stemctl.") && d < 2)
     {
         const auto letter = name.fromFirstOccurrenceOf (".", false, false).substring (0, 1);
@@ -376,6 +389,7 @@ bool ActionRouter::ledState (const ActionDef& a) const
         const int s = name.fromFirstOccurrenceOf (".", false, false).getIntValue() - 1;
         return s >= 0 && s < 4 && stemMute[(size_t) a.deck][(size_t) s].load();
     }
+    if (name == "stemctl.mode") return stemCtlFilterMode[(size_t) a.deck].load();
     if (name.startsWith ("stemctl.") && name.endsWith (".mute"))
     {
         const int c = juce::jlimit (0, 3, (int) (name.fromFirstOccurrenceOf (".", false, false)[0] - 'A'));

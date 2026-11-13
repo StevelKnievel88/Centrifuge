@@ -1,4 +1,5 @@
 #pragma once
+#include "ButtonStyles.h"
 #include "TrackMarks.h"
 #include "TrackInfoPanel.h"
 #include "../Library/LibraryManager.h"
@@ -101,6 +102,18 @@ public:
     std::function<void (bool)> onInfoPanelToggled;
     /** The browser's EXPAND button: fill the screen (over the decks / PREP) or go back. */
     std::function<void()> onExpandToggled;
+    /** HIDE / SHOW on the browser's top bar: hidden, only that bar stays (so it can be shown again). */
+    std::function<void()> onHideToggled;
+    /** Titles and artists in their tag colour (the info panel's tick box). */
+    inline static bool tagColourNames = false;
+    void setTagColourNames (bool on) { tagColourNames = on; infoPanel.setTagColourNames (on); table.repaint(); }
+    std::function<void (bool)> onTagColourNames;
+    /** The preview's play / stop button (also mappable: Browser > Preview play / stop): stops a playing preview,
+        or plays it again from where it stopped. */
+    void previewPlayStop();
+    void setCollapsed (bool c) { collapsed = c; hideButton.setButtonText (c ? "SHOW" : "HIDE"); resized(); repaint(); }
+    bool isCollapsed() const { return collapsed; }
+    static constexpr int barHeight = 42;   // the top bar (and the browser's height while hidden)
     void setExpanded (bool e) { expandButton.setToggleState (e, juce::dontSendNotification); expandButton.setButtonText (e ? "RESTORE" : "EXPAND"); }
   private:
     juce::String lastColumnState;
@@ -137,8 +150,11 @@ private:
     std::unique_ptr<juce::TreeViewItem> rootItem;
     juce::TableListBox table { "tracks", this };
     juce::TextEditor search;
-    juce::TextButton load1 { "LOAD 1" }, load2 { "LOAD 2" }, expandButton { "EXPAND" }, infoButton { "INFO" };
-    juce::TextButton filterButton { "FILTER" }, rowsSmaller { "-" }, rowsBigger { "+" }, setListButton { "SET LIST" };
+    // (right-click any of them for its colours)
+    StyledTextButton load1 { "LOAD 1", "browser.load1" }, load2 { "LOAD 2", "browser.load2" }, expandButton { "EXPAND", "browser.expand" },
+                     infoButton { "INFO", "browser.info" }, hideButton { "HIDE", "browser.hide" };
+    StyledTextButton filterButton { "FILTER", "browser.filter" }, rowsSmaller { "-", "browser.rows" }, rowsBigger { "+", "browser.rows" },
+                     setListButton { "SET LIST", "browser.setlist" };
     void showFilterPanel();
     void showTreeMenu (Item& item);
     juce::String currentNodeId;
@@ -146,7 +162,10 @@ private:
     TrackInfoPanel infoPanel;
     bool infoOpen = false;
     void selectedRowsChanged (int) override { infoPanel.setTracks (getSelectedTracks()); }
-    juce::TextButton importButton { "IMPORT" }, exportButton { "EXPORT" }, viewR { "REKORDBOX" }, viewC { "CENTRIFUGE" };
+    StyledTextButton importButton { "IMPORT", "browser.import" }, exportButton { "EXPORT", "browser.export" };
+    bool collapsed = false;
+    static constexpr float previewLead = 7.0f;   // room between the tag colour and the preview's play / stop button
+    juce::TextButton viewR { "REKORDBOX" }, viewC { "CENTRIFUGE" };
     int libView = 1;
     void setLibraryView (int v);
     juce::Label countLabel;

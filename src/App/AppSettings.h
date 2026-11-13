@@ -110,6 +110,9 @@ struct AppSettings
 
     // UI
     bool showBrowser = true;
+    bool statusFolded = false;     // top bar: status boxes folded away
+    bool artistFirst = false;      // decks: artist left of the title
+    bool tagColourNames = false;   // browser: title and artist in the track's tag colour
     int browserHeight = 300;
     int browserRowHeight = 24;
     double historySeconds = 30.0;
