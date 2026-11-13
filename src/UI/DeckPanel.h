@@ -55,6 +55,10 @@ public:
     /** A stem's control (or all four: stem -1) changed between level / low-pass / high-pass. */
     std::function<void (int deck, int stem, int mode)> onStemModeChanged;
     std::function<void()> onOpenSettings;
+    /** A beat jump button's size or colour was changed on the deck (slot 0-3). */
+    std::function<void (int deck, int slot, double beats, juce::uint32 colour)> onJumpSlotChanged;
+    /** The deck's vinyl speed knob: brake time in seconds, or synced to beats (0 = not synced). */
+    std::function<void (int deck, double seconds, double beats)> onBrakeChanged;
     /** The scrolling waveform's visible seconds and playhead position (0..1), for the view box on the overview. */
     std::function<std::pair<double, float>()> viewWindow;
 
@@ -86,11 +90,18 @@ private:
 
     juce::Rectangle<float> rowInfo, rowStatus, rowOverview, rowPads, rowJump, rowControls;
     void showDeckColourMenu (juce::Rectangle<float> area);
-    juce::String heldAction;
-    int dragStem = -1;
+    juce::String heldAction, flashAction;
+    double flashUntil = 0.0;
+    static juce::String jumpSizeText (double beats);
+    void showJumpSlotMenu (int slot, juce::Rectangle<float> area, bool colour);
+    int dragStem = -1, dragFilter = -1;
+    bool resoDrag = false, scrubDrag = false, brakeDrag = false;
+    double brakeDragStart = 0.0;
+    void setBrake (double seconds, double beats);
+    float scrubLastX = 0.0f;
+    float resoStart = 0.25f;
     juce::uint64 lastHash = 0;
-    CentrifugeRotor rotor;
-    juce::Rectangle<float> rotorArea;
+    juce::Rectangle<float> resoArea;
     int overviewStyle = 1;
     bool overviewHalf = false;
     juce::Colour singleColour { 0xff3d9bff };

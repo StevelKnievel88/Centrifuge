@@ -89,7 +89,8 @@ void PrepView::timerCallback()
     mix (st.loopInSec.load()); mix (st.loopOutSec.load()); mix (st.skipPendingFrom.load()); mix (st.cyclesLeft.load());
     mix (editor.editsRekordbox (deckIndex)); mix (editor.editsCentrifuge (deckIndex)); mix (editor.versionsDiffer (deckIndex));
     mix (editor.currentBpm (deckIndex)); mix (waves.getVisibleSeconds()); mix (loopBeats); mix (MusicalKey::camelotDisplay().load());
-    for (size_t i = 0; i < 4; ++i) { mix (st.stemGain[i].load()); mix (st.stemMode[i].load()); }
+    for (size_t i = 0; i < 4; ++i) { mix (st.stemGain[i].load()); mix (st.stemFilter[i].load()); }
+    mix (st.stemResonance.load());
     mix (st.stemsReady.load()); mix (std::floor (st.stemsProgress.load() * 400.0f)); mix (Theme::deckColour (deckIndex).getARGB());
     if (h != lastHash) { lastHash = h; repaint(); }
 }
@@ -243,7 +244,7 @@ void PrepView::paint (juce::Graphics& g)
                 auto xOfD = [&] (double d) { return r.getX() + (float) juce::jlimit (0.0, 1.0, d / len) * r.getWidth(); };
                 g.setColour (juce::Colours::black.withAlpha (0.28f));
                 g.fillRect (r.withRight (xOfD (t)));
-                if (overviewGrid) paintOverviewGrid (g, r, track->grid, st.lengthSec.load(), &fold, track->phrases.empty() ? 0.0f : juce::jmax (2.0f, juce::jmin (6.0f, r.getHeight() * 0.14f)));
+                if (overviewGrid) paintOverviewGrid (g, r, track->grid, st.lengthSec.load(), &fold, track->phrases.empty() ? 0.0f : overviewStripHeight (r.getHeight()), overviewStripHeight (r.getHeight()));
                 {
                     // the part the zoomed waveform shows (under the marks, above the phrases)
                     const double vis = waves.getVisibleSeconds();
@@ -352,7 +353,7 @@ void PrepView::paint (juce::Graphics& g)
         psyched::paintLabel (g, "Grid", r.removeFromLeft (36.0f), juce::Justification::centredLeft);
         struct B { const char* label; const char* action; float w; };
         const B buttons[] = { { "<10ms", "shift.back10", 1.0f }, { "<1ms", "shift.back1", 1.0f }, { "1ms>", "shift.fwd1", 1.0f },
-                              { "10ms>", "shift.fwd10", 1.0f }, { "ANCHOR", "anchor", 1.2f }, { "DOWNBEAT", "downbeat", 1.4f },
+                              { "10ms>", "shift.fwd10", 1.0f }, { "PHRASE DOWNBEAT", "phrasedownbeat", 2.3f }, { "DOWNBEAT", "downbeat", 1.4f },
                               { "-0.1", "bpm.down", 0.9f }, { "-.01", "bpm.downfine", 0.9f }, { "BPM", "", 1.6f },
                               { "+.01", "bpm.upfine", 0.9f }, { "+0.1", "bpm.up", 0.9f }, { "/2", "halve", 0.7f },
                               { "x2", "double", 0.7f }, { "TAP", "tap", 0.9f }, { "MORE", "more", 1.0f }, { "UNDO", "undo", 1.0f }, { "RESET", "reset", 1.0f } };
@@ -905,20 +906,20 @@ void PrepView::mouseDown (const juce::MouseEvent& e)
         dragStem = stem;
         return;
     }
-    if (r->kind == 13 || r->kind == 14)
+    if (r->kind == 13)   // resonance knob: drag up / down, double-click resets
     {
-        const int stem = r->kind == 14 ? r->action.getTrailingIntValue() : -1;
         if (e.mods.isPopupMenu()) return;
-        int m;
-        if (stem >= 0) m = 1 - st.stemMode[(size_t) stem].load();
-        else
-        {
-            bool same = true;
-            for (size_t k = 1; k < 4; ++k) same = same && st.stemMode[k].load() == st.stemMode[0].load();
-            m = ! same ? 0 : 1 - st.stemMode[0].load();   // from MIX: all VOL
-        }
-        deck().post (Deck::Cmd::stemMode, (double) m, stem);
-        if (onStemModeChanged) onStemModeChanged (stem, m);
+        if (e.getNumberOfClicks() >= 2) { post (Deck::Cmd::stemResonance, 0.25); return; }
+        resoDrag = true;
+        resoStart = st.stemResonance.load();
+        return;
+    }
+    if (r->kind == 14)   // a stem's filter: click / drag sets it, double-click opens it
+    {
+        if (e.mods.isPopupMenu()) return;
+        const int stem = r->action.getTrailingIntValue();
+        deck().post (Deck::Cmd::stemFilter, e.getNumberOfClicks() >= 2 ? 0.5 : stemFilterAt (r->r, e.position.x), stem);
+        dragFilter = stem;
         return;
     }
     if (r->kind == 10 && ! e.mods.isPopupMenu())
@@ -1056,11 +1057,23 @@ void PrepView::mouseDrag (const juce::MouseEvent& e)
         repaint (listArea);
         return;
     }
+    if (resoDrag)
+    {
+        post (Deck::Cmd::stemResonance, juce::jlimit (0.0, 1.0, (double) resoStart - e.getDistanceFromDragStartY() / 120.0));
+        return;
+    }
+    if (dragFilter >= 0)
+    {
+        for (auto& rg : regions)
+            if (rg.kind == 14 && rg.action.getTrailingIntValue() == dragFilter)
+                deck().post (Deck::Cmd::stemFilter, stemFilterAt (rg.r, e.position.x), dragFilter);
+        return;
+    }
     if (dragStem >= 0 && e.getDistanceFromDragStart() > 3)
     {
         for (auto& rg : regions)
             if (rg.kind == 12 && rg.action.getTrailingIntValue() == dragStem)
-                deck().post (Deck::Cmd::stemGain, juce::jlimit (0.0, 1.0, (double) ((e.position.x - rg.r.getX()) / rg.r.getWidth())), dragStem);
+                deck().post (Deck::Cmd::stemGain, stemVolumeAt (rg.r, e.position.x), dragStem);
         return;
     }
     if (resizingList)
@@ -1078,6 +1091,8 @@ void PrepView::mouseDrag (const juce::MouseEvent& e)
 
 void PrepView::mouseUp (const juce::MouseEvent& e)
 {
+    resoDrag = false;
+    dragFilter = -1;
     if (dragStem >= 0)
     {
         if (e.getDistanceFromDragStart() <= 3) deck().post (Deck::Cmd::stemMuteToggle, 0.0, dragStem, true);
@@ -2253,25 +2268,22 @@ void PrepView::addLoopLocatorAtPlayhead()
 
 void PrepView::paintStems (juce::Graphics& g, juce::Rectangle<float> r)
 {
-    // PREP's stem controls: bipolar (centre = untouched); click mutes, drag sets, double-click centres;
-    // VOL / FILTER under each, and the button on the left sets all four
+    // PREP's stem controls: each stem's volume over its filter (click the volume to mute, drag to set,
+    // double-click to reset), and the filters' resonance knob on the left
     const auto& st = deck().state();
     const bool ready = st.stemsReady.load();
-    int m0 = st.stemMode[0].load();
-    bool same = true;
-    for (size_t k = 1; k < 4; ++k) same = same && st.stemMode[k].load() == m0;
-    auto mc = r.removeFromLeft (48.0f).withSizeKeepingCentre (48.0f, juce::jmin (26.0f, r.getHeight()));
-    psyched::paintChip (g, mc, ! same ? "MIX" : m0 == 1 ? "FILTER" : "VOL", Theme::sync, (! same || m0 != 0) ? psyched::ChipState::on : psyched::ChipState::off);
-    regions.push_back ({ mc, "stemmode", 13 });
+    auto reso = r.removeFromLeft (juce::jmin (34.0f, r.getHeight())).reduced (1.0f);
+    paintResonanceKnob (g, reso, st.stemResonance.load());
+    regions.push_back ({ reso, "stemreso", 13 });
     r.removeFromLeft (6.0f);
     const float sw = (r.getWidth() - 3 * 5.0f) / 4.0f;
     for (int s = 0; s < 4; ++s)
     {
         auto b = juce::Rectangle<float> (r.getX() + (float) s * (sw + 5.0f), r.getY(), sw, r.getHeight());
-        juce::Rectangle<float> bar, modeBtn;
-        paintStemControl (g, b, s, st.stemGain[(size_t) s].load(), st.stemMode[(size_t) s].load(), ready, bar, modeBtn);
+        juce::Rectangle<float> bar, filterBar;
+        paintStemControl (g, b, s, st.stemGain[(size_t) s].load(), st.stemFilter[(size_t) s].load(), ready, bar, filterBar);
         regions.push_back ({ bar, "stem." + juce::String (s), 12 });
-        regions.push_back ({ modeBtn, "stemmode." + juce::String (s), 14 });
+        regions.push_back ({ filterBar, "stemfilter." + juce::String (s), 14 });
     }
     if (! ready && track != nullptr)
     {

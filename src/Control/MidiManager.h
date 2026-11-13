@@ -74,6 +74,8 @@ public:
     /** addToControl: keep whatever else is already on the control (one knob, several functions). */
     void startLearn (const juce::String& actionId, bool addToControl = false);
     std::vector<juce::String> getActionsSharingControl (const MidiBinding& b) const;
+    /** The functions the last learn took a control away from (it was mapped to them before). */
+    std::vector<juce::String> getLastReplaced() const { return lastReplaced; }
     void cancelLearn();
     juce::String getLearningAction() const;
     std::function<void (const MidiBinding&)> onLearned;   // message thread
@@ -130,6 +132,9 @@ public:
     int padNumberFor (juce::Colour c) const;
     /** A colour's number on the XDJ-XZ's pad colour wheel (bright 1 - 63, dim 64 - 127), -1 for white / grey. */
     static int padWheelNumber (juce::Colour c, bool dim);
+    /** White on the pads isn't on the colour wheel: the numbers you found for it (bright / dim), 0 = not set yet. */
+    int getWhitePad (bool dim) const { return whitePad[dim ? 1 : 0].load(); }
+    void setWhitePad (bool dim, int n) { whitePad[dim ? 1 : 0] = juce::jlimit (0, 127, n); }
     bool hotCuesInColour() const { return hotCueColours.load(); }
     void setHotCuesInColour (bool b) { hotCueColours = b; clearLedCache(); }
     /** Jog screens on the XDJ-XZ: the position bar turns with the track, and the cue marker shows the cue point. */
@@ -166,11 +171,15 @@ private:
     struct Candidate { MidiBinding b; std::vector<int> values; double firstMs = 0.0; bool saw14 = false;
                        std::vector<MidiBinding> heldWith; };   // buttons held down when this one was pressed (combos)
     std::map<juce::String, MidiBinding> held;      // buttons held down right now, by control
+    std::map<juce::String, double> heldSince;
+    std::vector<juce::String> lastReplaced;      // when each of those went down
+    std::set<juce::String> continuousControls;     // CCs seen with in-between values: knobs / faders, never "held" buttons
     std::map<juce::String, std::vector<juce::String>> pressedActions;   // which actions a held control's press went to
     struct PendingPress { double ms = 0.0; std::vector<std::pair<const ActionDef*, ActionValue>> shortHits, longHits; bool longFired = false; };
     std::map<juce::String, PendingPress> pendingPresses;   // short / long: waiting to see how long the button is held
     std::atomic<double> longPressMs { 500.0 };
     std::array<std::atomic<int>, numPadColours> padColours {};
+    std::array<std::atomic<int>, 2> whitePad {};
     std::atomic<bool> hotCueColours { true }, jogDisplay { true };
     std::array<int, 12> jogCache { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
     std::array<std::atomic<int>, 2> padMode { 1, 1 };   // last pad mode button pressed on each deck (lights only)

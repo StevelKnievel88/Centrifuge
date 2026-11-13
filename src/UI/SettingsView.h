@@ -19,6 +19,8 @@ public:
     void paint (juce::Graphics&) override;
     void refreshRouting();
     void refreshValues();
+    /** Laptop mode: the XDJ-XZ screen link's status, shown under its switch. */
+    inline static std::function<juce::String()> xzScreenStatus;
 
 private:
     class Content;

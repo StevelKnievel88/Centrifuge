@@ -478,9 +478,9 @@ int xz_ui_runtime_start(int audio_ready, int key_ready, int stems_enabled) {
     memset(&model, 0, sizeof(model));
     model.pad_feedback = 1;
     model.stems_overlay = 1;
-    model.fb_takeover = 0;
+    model.fb_takeover = 1;   /* Centrifuge: show the laptop's decks whenever Centrifuge is connected */
     model.takeover_assign = XZ_TAKEOVER_LINK;
-    __atomic_store_n(&fb_takeover_active, 0, __ATOMIC_RELEASE);
+    __atomic_store_n(&fb_takeover_active, 1, __ATOMIC_RELEASE);
     __atomic_store_n(&network_enabled, 0, __ATOMIC_RELEASE);
     __atomic_store_n(&network_connected, 0, __ATOMIC_RELEASE);
     requested_stems = !!stems_enabled;

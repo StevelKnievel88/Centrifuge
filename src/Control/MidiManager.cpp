@@ -256,6 +256,8 @@ bool MidiManager::saveToFile (const juce::File& f) const
     for (auto& p : padColours) pads.add (p.load());
     root->setProperty ("padColours", pads);
     root->setProperty ("hotCueColours", hotCueColours.load());
+    root->setProperty ("whiteBright", whitePad[0].load());
+    root->setProperty ("whiteDim", whitePad[1].load());
     f.getParentDirectory().createDirectory();
     return f.replaceWithText (juce::JSON::toString (juce::var (root)));
 }
@@ -280,6 +282,8 @@ bool MidiManager::loadFromFile (const juce::File& f)
         if (auto* arr = v["padColours"].getArray())
             for (int i = 0; i < juce::jmin (numPadColours, arr->size()); ++i) padColours[(size_t) i] = juce::jlimit (0, 127, (int) (*arr)[i]);
         hotCueColours = (bool) v.getProperty ("hotCueColours", true);
+        whitePad[0] = juce::jlimit (0, 127, (int) v.getProperty ("whiteBright", 0));
+        whitePad[1] = juce::jlimit (0, 127, (int) v.getProperty ("whiteDim", 0));
     }
     return true;
 }
@@ -364,6 +368,9 @@ void MidiManager::bind (MidiBinding b, bool add)
     {
         const juce::ScopedLock sl (bindingLock);
         // Replace: the control does only this now. Add: other functions stay on the control too.
+        lastReplaced.clear();
+        for (auto& x : bindings)
+            if (! add && x.actionId != b.actionId && x.sameControl (b)) lastReplaced.push_back (x.actionId);
         bindings.erase (std::remove_if (bindings.begin(), bindings.end(),
                                         [&] (auto& x) { return x.actionId == b.actionId || (! add && x.sameControl (b)); }),
                         bindings.end());
@@ -511,8 +518,25 @@ void MidiManager::handleIncomingMidiMessage (juce::MidiInput* source, const juce
     std::vector<MidiBinding> heldNow;
     {
         const juce::ScopedLock sl (learnLock);
-        for (auto& [k, hb] : held) if (k != ctlKey) heldNow.push_back (hb);
-        const bool buttonLike = type == MidiBinding::Type::note || (type == MidiBinding::Type::cc && (raw == 127 || raw == 0));
+        // A knob or fader resting at 0 / 127 isn't a button being held: once a CC has sent anything in between it
+        // never counts towards a combo. Anything "held" for over 20 s is a missed release, not a hand on a button.
+        const double nowMs = juce::Time::getMillisecondCounterHiRes();
+        if (type == MidiBinding::Type::cc && raw != 0 && raw != 127)
+        {
+            continuousControls.insert (ctlKey);
+            held.erase (ctlKey);
+            heldSince.erase (ctlKey);
+        }
+        for (auto it = held.begin(); it != held.end();)
+        {
+            if (nowMs - heldSince[it->first] > 20000.0 || continuousControls.count (it->first)) { heldSince.erase (it->first); it = held.erase (it); }
+            else ++it;
+        }
+        // One press can send several messages within a few ms (the XDJ-XZ does): those aren't a combo. A combo's first
+        // button has been down for a moment before the second is pressed.
+        for (auto& [k, hb] : held) if (k != ctlKey && nowMs - heldSince[k] > 120.0) heldNow.push_back (hb);
+        const bool buttonLike = type == MidiBinding::Type::note
+                             || (type == MidiBinding::Type::cc && (raw == 127 || raw == 0) && continuousControls.count (ctlKey) == 0);
         if (buttonLike)
         {
             if (raw > 0)
@@ -520,8 +544,9 @@ void MidiManager::handleIncomingMidiMessage (juce::MidiInput* source, const juce
                 MidiBinding hb;
                 hb.device = device; hb.channel = ch; hb.type = type; hb.number = number;
                 held[ctlKey] = hb;
+                heldSince[ctlKey] = nowMs;
             }
-            else held.erase (ctlKey);
+            else { held.erase (ctlKey); heldSince.erase (ctlKey); }
         }
     }
 
@@ -603,6 +628,19 @@ void MidiManager::handleIncomingMidiMessage (juce::MidiInput* source, const juce
             learnCands.push_back (c);
             return;
         }
+    }
+
+    // The XDJ-XZ changes a button's light itself when it's pressed / released: send ours again for that control
+    {
+        const juce::ScopedLock sl (bindingLock);
+        for (auto& b : bindings)
+            if (b.channel == ch && b.type == type && b.number == number && (b.device.isEmpty() || b.device == device))
+            {
+                ledCache.erase (b.device + "|" + b.describe() + "|" + b.actionId);
+                ledCache.erase ("shift|" + b.device + "|" + juce::String ((int) b.type) + "|" + juce::String (b.channel) + "|" + juce::String (b.number + 8));
+            }
+            else if (b.channel == ch && b.type == type && b.number + 8 == number && (b.device.isEmpty() || b.device == device))
+                ledCache.erase ("shift|" + b.device + "|" + juce::String ((int) b.type) + "|" + juce::String (b.channel) + "|" + juce::String (number));
     }
 
     // --- Dispatch --------------------------------------------------------------
@@ -746,6 +784,7 @@ void MidiManager::handleIncomingMidiMessage (juce::MidiInput* source, const juce
         if (h.def->id.contains (".padmode."))
         {
             if (h.v.down && h.def->deck >= 0 && h.def->deck < 2) padMode[(size_t) h.def->deck] = h.def->id.getTrailingIntValue();
+            clearLedCache();   // the unit lights its own pad mode buttons when pressed: put ours back on all of them
             continue;
         }
         if (h.def->id.startsWith ("light.")) continue;
@@ -919,14 +958,20 @@ void MidiManager::sendLeds()
 
         int value;
         const auto name = b.actionId.fromFirstOccurrenceOf (".", false, false);
-        if (def->deck >= 0 && def->deck < 2 && name.startsWith ("hotcue.") && ! name.endsWith (".delete"))
+        const bool hotPad = def->deck >= 0 && def->deck < 2 && name.startsWith ("hotcue.");
+        if (hotPad)
         {
-            // hot cue pads: the cue's own colour (when pad colours are set), dim when empty
+            // Hot cue pads have two states: no hot cue (Unlit) / hot cue set (its own colour, or Lit). The delete
+            // function (usually SHIFT + the pad) shows exactly the same, so holding SHIFT doesn't change the pads.
             const int idx = name.fromFirstOccurrenceOf (".", false, false).getIntValue() - 1;
+            int on = b.ledOn, off = b.ledOff;
+            if (name.endsWith (".delete"))
+                for (auto& o : all)
+                    if (o.actionId == b.actionId.upToLastOccurrenceOf (".", false, false)) { on = o.ledOn; off = o.ledOff; break; }
             const auto& st = router.deckState (def->deck);
             const bool set = idx >= 0 && idx < 8 && st.hotStart[(size_t) idx].load() >= 0.0;
             const int coloured = set && hotCueColours.load() ? padNumberFor (juce::Colour (st.hotColour[(size_t) idx].load())) : -1;
-            value = ! set ? b.ledOff : coloured > 0 ? coloured : b.ledOn;
+            value = ! set ? off : coloured > 0 ? coloured : on;
         }
         else if (name.startsWith ("padmode.") && def->deck >= 0 && def->deck < 2)
             value = padMode[(size_t) def->deck].load() == name.getTrailingIntValue() ? b.ledOn : b.ledOff;
@@ -939,10 +984,21 @@ void MidiManager::sendLeds()
             bool pressed = false;
             for (auto& k : heldNow) pressed = pressed || (k.endsWith (key.fromFirstOccurrenceOf ("|", true, false)) && (b.device.isEmpty() || k.startsWith (b.device)));
             value = pressed ? b.ledOn : b.ledOff;
+            // a deck's beat jump button with a colour of its own: its pads light in it (dim, bright while pressed)
+            if (const int slot = ActionRouter::jumpSlotOf (b.actionId); slot >= 0 && def->deck >= 0 && def->deck < 2
+                && b.type == MidiBinding::Type::note && router.getJumpSlotColour (def->deck, slot) != 0)
+            {
+                const auto jc = juce::Colour (router.getJumpSlotColour (def->deck, slot));
+                int n = padWheelNumber (jc, ! pressed);
+                if (n < 0) n = getWhitePad (! pressed) > 0 ? getWhitePad (! pressed) : (pressed ? b.ledOn : b.ledOff);
+                value = n;
+            }
         }
 
         // the pad's SHIFT layer (XDJ-XZ pads: note + 8), unless something is mapped there itself
-        if (b.type == MidiBinding::Type::note && (b.shiftOn >= 0 || b.shiftOff >= 0) && (b.number % 16) < 8 && b.number + 8 < 128)
+        // (hot cue pads: the same as without SHIFT unless SHIFT colours are set)
+        const bool mirrorShift = hotPad && ! name.endsWith (".delete") && b.shiftOn < 0 && b.shiftOff < 0;
+        if (b.type == MidiBinding::Type::note && (b.shiftOn >= 0 || b.shiftOff >= 0 || mirrorShift) && (b.number % 16) < 8 && b.number + 8 < 128)
         {
             bool mappedThere = false;
             for (auto& o : all) mappedThere = mappedThere || (o.type == MidiBinding::Type::note && o.channel == b.channel && o.number == b.number + 8 && ! o.hasModifier());
@@ -951,7 +1007,7 @@ void MidiManager::sendLeds()
                 const auto sk = b.device + "|" + juce::String ((int) b.type) + "|" + juce::String (b.channel) + "|" + juce::String (b.number + 8);
                 bool pressed = false;
                 for (auto& k : heldNow) pressed = pressed || k.endsWith (sk.fromFirstOccurrenceOf ("|", true, false));
-                const int sv = pressed ? (b.shiftOn >= 0 ? b.shiftOn : b.shiftOff) : (b.shiftOff >= 0 ? b.shiftOff : 0);
+                const int sv = mirrorShift ? value : pressed ? (b.shiftOn >= 0 ? b.shiftOn : b.shiftOff) : (b.shiftOff >= 0 ? b.shiftOff : 0);
                 const auto ck = "shift|" + sk;
                 bool send = true;
                 {

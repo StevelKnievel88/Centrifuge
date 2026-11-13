@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(Centrifuge VERSION 0.14.24 LANGUAGES C CXX)
+project(Centrifuge VERSION 0.15.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -106,7 +106,8 @@ juce_add_gui_app(Centrifuge
 include(${CMAKE_CURRENT_SOURCE_DIR}/skin/psyched-skin/juce/psyched_skin.cmake)
 juce_add_binary_data(CentrifugeData SOURCES
     resources/fonts/Inter-Regular.otf
-    resources/fonts/Inter-SemiBold.otf)
+    resources/fonts/Inter-SemiBold.otf
+    resources/branding/centrifuge-topbar-logo.png)
 
 file(GLOB_RECURSE ORBIT_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp

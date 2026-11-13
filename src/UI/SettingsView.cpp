@@ -296,6 +296,11 @@ public:
         jogScreens.setButtonText ("XDJ-XZ jog screens show the track turning and the cue point; LOAD lights on decks that aren't playing");
         jogScreens.setToggleState (settings.jogDisplay, juce::dontSendNotification);
         jogScreens.onClick = [this] { settings.jogDisplay = jogScreens.getToggleState(); onChanged(); };
+        add (&xzScreenOn, 28, {});
+        xzScreenOn.setButtonText ("Show Centrifuge's decks on the XDJ-XZ screen (network cable from the computer to LINK, deck started from the Centrifuge loader stick)");
+        xzScreenOn.setToggleState (settings.xzScreen, juce::dontSendNotification);
+        xzScreenOn.onClick = [this] { settings.xzScreen = xzScreenOn.getToggleState(); onChanged(); };
+        add (&xzScreenStatus, 22, "XDJ-XZ screen");
         add (&longPress, 28, "Long press time (s)");
         setupSlider (longPress, 0.25, 1.0, 0.05, settings.longPressSec);
         longPress.onValueChange = [this] { settings.longPressSec = longPress.getValue(); onChanged(); };
@@ -782,7 +787,12 @@ private:
     juce::ToggleButton throwOn, autoGain;
     juce::Slider throwSpeed, markerSize, longPress;
     juce::ComboBox stemFormat;
-    juce::ToggleButton padColoursOn, jogScreens;
+    juce::ToggleButton padColoursOn, jogScreens, xzScreenOn;
+    struct StatusLabel : juce::Label, juce::Timer
+    {
+        StatusLabel() { setColour (juce::Label::textColourId, Theme::textDim); setFont (Theme::mono (12.5f)); startTimerHz (2); }
+        void timerCallback() override { if (SettingsView::xzScreenStatus) setText (SettingsView::xzScreenStatus(), juce::dontSendNotification); }
+    } xzScreenStatus;
     juce::Slider historySec;
     juce::TextEditor recFolder, lamePath;
     juce::ComboBox recFormat, recSource;

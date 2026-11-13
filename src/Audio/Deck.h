@@ -66,6 +66,7 @@ struct LoadedTrack : public juce::ReferenceCountedObject
 class Deck
 {
 public:
+    static constexpr double secondsPerRevolution = 60.0 / (100.0 / 3.0); // 33 1/3 rpm
     explicit Deck (int index);
     ~Deck();
 
@@ -92,7 +93,14 @@ public:
         vinylBrakeSet,  // index 0 brake (stop), 1 start: value 1 on / 0 off
         throwSet,       // backspin / throw: value = speed needed to count as a throw (0 = off)
         slipToggle, slipSet,
-        gainSet         // value = gain (1 = unity), for auto gain
+        gainSet,        // value = gain (1 = unity), for auto gain
+        stemFilter,     // index = stem, value 0..1: left of 0.5 closes a low-pass, right a high-pass (0.5 = open)
+        stemResonance,  // value 0..1: how much the stem filters ring
+        reverse,        // momentary: down = plays backwards, up = forwards again
+        search,         // value -1 / +1 while a search button is held (fast through the track), 0 = let go
+        scrub,          // value = encoder clicks: moves through the track like the platter, audibly
+        brakeBeats,     // value = beats the brake takes to stop (0 = its time in seconds instead)
+        scrubHold       // down: holds the track like a hand on the platter (any mode); up: lets it go
     };
 
     static constexpr int maxLocators = 32;
@@ -162,7 +170,9 @@ public:
         std::array<std::atomic<float>, 4> stemGain;
         std::atomic<float> peakL { 0.0f }, peakR { 0.0f };
         std::atomic<bool> endWarning { false };
-        std::atomic<bool> slip { false }, slipping { false }, braking { false };
+        std::atomic<bool> slip { false }, slipping { false }, braking { false }, reversing { false };
+        std::atomic<int> searchDir { 0 };
+        std::atomic<double> brakeSeconds { 0.8 }, brakeBeats { 0.0 };
         std::atomic<bool> brakeOn { false }, startOn { false };
         std::atomic<double> slipSec { -1.0 };        // where the track would be without the slip action (-1 = none)
         std::atomic<float> gain { 1.0f };
@@ -179,7 +189,9 @@ public:
         std::atomic<double> skipPendingFrom { -1.0 };
         std::atomic<int> playSegment { -1 };          // which stretch of the play map is playing (-1 = none)
         std::array<std::atomic<float>, 4> stemAuto;   // stem locators' gain on each stem (1 = untouched)
-        std::array<std::atomic<int>, 4> stemMode;     // what each stem's control does: 0 VOL, 1 FILTER
+        std::array<std::atomic<int>, 4> stemMode;     // (no longer used: every stem has a volume and a filter control)
+        std::array<std::atomic<float>, 4> stemFilter; // each stem's filter control (0.5 = open)
+        std::atomic<float> stemResonance { 0.25f };
         /** Counts edits to hot cues, locators and skips (so the app knows to save them). */
         std::atomic<int> cueEdits { 0 };
         /** Increases when the track's grid / cue data is swapped (e.g. switching rekordbox / Centrifuge version). */
@@ -200,6 +212,7 @@ public:
             for (auto& g : stemGain) g = 0.5f;   // the stem controls: centre = untouched
             for (auto& g : stemAuto) g = 1.0f;
             for (auto& m : stemMode) m = 0;
+            for (auto& f : stemFilter) f = 0.5f;
         }
     };
 
@@ -270,7 +283,6 @@ private:
     double jogTicksPending = 0.0;   // accumulated since last block
     double scratchVelocity = 0.0;   // source seconds per real second
     double ticksPerRevolution = 720.0;
-    static constexpr double secondsPerRevolution = 60.0 / (100.0 / 3.0); // 33 1/3 rpm
     bool coasting = false;          // let go of a fast spin: still following the platter until it slows down
     double sinceTickSec = 0.0;      // how long since the last jog tick
     double coastSec = 0.0;
@@ -280,7 +292,7 @@ private:
     double motor = 1.0;
     bool braking = false;
     bool brakeOn = false, startOn = false;
-    double brakeSec = 0.8, startSec = 0.4, releaseSec = 0.0;
+    double brakeSec = 0.8, startSec = 0.4, releaseSec = 0.0, brakeBeats = 0.0;
     double releaseFrom = 0.0, releaseT = 1.0;   // after letting go of a scratch: speed blends from releaseFrom
     bool startRamp = false;
     void beginPlay() noexcept;
@@ -291,7 +303,9 @@ private:
     bool slip = false, slipping = false;
     double slipSec = 0.0;
     bool slipWasPlaying = false, prevLoopActive = false;
-    int slipSource = 0;              // 1 scratch, 2 loop, 3 held hot cue, 4 beat jump
+    int slipSource = 0;              // 1 scratch, 2 loop, 3 held hot cue, 4 beat jump, 5 pause, 6 reverse
+    bool reversing = false, scrubbing = false;
+    int searchDir = 0;
     void slipBegin (int source) noexcept;
     void slipEnd() noexcept;
     float gainNow = 1.0f, gainTarget = 1.0f;
@@ -335,7 +349,9 @@ private:
     int playSeg = -1;                // current stretch of track->playMap
     void stemAutomationAt (double sec, std::array<float, 4>& g, std::array<int, 4>* modes = nullptr) const noexcept;
     // Stem controls as filters: what each stem's control does, and a state-variable filter per stem (stereo)
-    std::array<int, 4> stemMode { 0, 0, 0, 0 };     // 0 VOL, 1 FILTER
+    std::array<int, 4> stemMode { 0, 0, 0, 0 };     // (unused)
+    std::array<float, 4> stemFilterTarget { 0.5f, 0.5f, 0.5f, 0.5f };   // each stem's filter control: 0.5 = open
+    float stemReso = 0.25f;                          // 0 = gentle, 1 = rings
     std::array<float, 4> stemLpNow { 1, 1, 1, 1 }, stemHpNow { 1, 1, 1, 1 };   // how open each stem's filters are
     struct StemFilter { float lp1L = 0, lp2L = 0, lp1R = 0, lp2R = 0, hp1L = 0, hp2L = 0, hp1R = 0, hp2R = 0; bool on = false; };
     std::array<StemFilter, 4> stemFilters;

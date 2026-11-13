@@ -22,6 +22,11 @@ static std::vector<ActionDef> buildActions()
         add (p + "shift",       "Shift",                 D + " - Transport", B, d);
         add (p + "load",        "Load selected track",   D + " - Transport", B, d);
         add (p + "eject",       "Eject",                 D + " - Transport", B, d);
+        add (p + "track.prev",  "Track skip back (previous track in the list; restart if past 3 s)", D + " - Transport", B, d);
+        add (p + "track.next",  "Track skip forward (next track in the list)", D + " - Transport", B, d);
+        add (p + "search.back", "Search back (while held)",    D + " - Transport", B, d, true);
+        add (p + "search.fwd",  "Search forward (while held)", D + " - Transport", B, d, true);
+        add (p + "scrub",       "Scrub dial (encoder: moves through the track, you hear it)", D + " - Transport", E, d);
         add (p + "needle",      "Needle search (position)", D + " - Transport", C, d);
 
         add (p + "jog.touch",   "Jog: top touch",        D + " - Jog", B, d);
@@ -29,6 +34,7 @@ static std::vector<ActionDef> buildActions()
         add (p + "jog.side",    "Jog: turn (side / pitch bend)", D + " - Jog", E, d);
         add (p + "jog.vinyl",   "Vinyl / CDJ mode",      D + " - Jog", B, d, true);
         add (p + "slip",        "Slip on / off",         D + " - Jog", B, d, true);
+        add (p + "reverse",     "Reverse (while held)",  D + " - Jog", B, d, true);
         add (p + "vinyl.brake", "Vinyl brake (stop) on / off", D + " - Jog", B, d, true);
         add (p + "vinyl.start", "Vinyl start on / off",  D + " - Jog", B, d, true);
 
@@ -69,10 +75,12 @@ static std::vector<ActionDef> buildActions()
         add (p + "loop.toggle",       "Loop on / off (at the loop size)", D + " - Loops", B, d, true);
         add (p + "loopsize.halve",    "Loop size / 2 (halves a running loop)", D + " - Loops", B, d);
         add (p + "loopsize.double",   "Loop size x 2 (doubles a running loop)", D + " - Loops", B, d);
-        for (auto [beats, name] : { std::pair<int, const char*> { 1, "1 beat" }, { 4, "1 bar" }, { 8, "2 bars" }, { 16, "4 bars" } })
+        // the deck's four beat jump buttons (each one's size is set on the deck: click its number)
+        for (auto [beats, name] : { std::pair<int, const char*> { 1, "1 (1 beat to start with)" }, { 4, "2 (1 bar to start with)" },
+                                    { 8, "3 (2 bars to start with)" }, { 16, "4 (4 bars to start with)" } })
         {
-            add (p + "beatjump.back." + juce::String (beats), "Beat jump back " + juce::String (name),    D + " - Loops", B, d);
-            add (p + "beatjump.fwd." + juce::String (beats),  "Beat jump forward " + juce::String (name), D + " - Loops", B, d);
+            add (p + "beatjump.back." + juce::String (beats), "Beat jump " + juce::String (name) + " back",    D + " - Loops", B, d);
+            add (p + "beatjump.fwd." + juce::String (beats),  "Beat jump " + juce::String (name) + " forward", D + " - Loops", B, d);
         }
         add (p + "beatjump.back", "Beat jump back",      D + " - Loops", B, d);
         add (p + "beatjump.fwd",  "Beat jump forward",   D + " - Loops", B, d);
@@ -82,15 +90,20 @@ static std::vector<ActionDef> buildActions()
         for (int s = 0; s < 4; ++s)
         {
             add (p + "stem." + juce::String (s + 1) + ".volume", juce::String (stemNames[s]) + " volume", D + " - Stems", C, d);
+            add (p + "stem." + juce::String (s + 1) + ".filter", juce::String (stemNames[s]) + " filter (left low-pass, right high-pass)", D + " - Stems", C, d);
             add (p + "stem." + juce::String (s + 1) + ".mute",   juce::String (stemNames[s]) + " mute",   D + " - Stems", B, d, true);
             add (p + "stem." + juce::String (s + 1) + ".solo",   juce::String (stemNames[s]) + " solo",   D + " - Stems", B, d);
         }
         add (p + "stem.reset", "Stems: reset all", D + " - Stems", B, d);
+        add (p + "stem.resonance", "Stem filter resonance", D + " - Stems", C, d);
 
         for (auto letter : { "A", "B", "C", "D" })
         {
-            add (p + "stemctl." + juce::String (letter) + ".volume", "Stem control " + juce::String (letter) + " volume (matrix)", D + " - Stem controls", C, d);
-            add (p + "stemctl." + juce::String (letter) + ".mute",   "Stem control " + juce::String (letter) + " mute (matrix)",   D + " - Stem controls", B, d, true);
+            // deck 2's controls are shown as E-H (each deck has its own matrix on the Stems page)
+            const auto shown = juce::String::charToString ((juce::juce_wchar) (letter[0] + (d == 1 ? 4 : 0)));
+            add (p + "stemctl." + juce::String (letter) + ".volume", "Stem control " + shown + " volume (matrix)", D + " - Stem controls", C, d);
+            add (p + "stemctl." + juce::String (letter) + ".filter", "Stem control " + shown + " filter (matrix)", D + " - Stem controls", C, d);
+            add (p + "stemctl." + juce::String (letter) + ".mute",   "Stem control " + shown + " mute (matrix)",   D + " - Stem controls", B, d, true);
         }
 
         add (p + "edit.r",    "Edit the rekordbox copy (R) on / off",   D + " - Library editing", B, d);
@@ -100,6 +113,7 @@ static std::vector<ActionDef> buildActions()
             { "shift.back10", "Grid: move 10 ms earlier" }, { "shift.back1", "Grid: move 1 ms earlier" },
             { "shift.fwd1", "Grid: move 1 ms later" }, { "shift.fwd10", "Grid: move 10 ms later" },
             { "anchor", "Grid: put the nearest beat on the playhead" }, { "downbeat", "Grid: nearest beat is beat 1" },
+            { "phrasedownbeat", "Grid: phrase downbeat here (nearest beat moved onto the playhead and made beat 1)" },
             { "bpm.up", "Grid: BPM +0.1" }, { "bpm.down", "Grid: BPM -0.1" }, { "bpm.upfine", "Grid: BPM +0.01" },
             { "bpm.downfine", "Grid: BPM -0.01" }, { "halve", "Grid: halve BPM" }, { "double", "Grid: double BPM" },
             { "tap", "Grid: tap tempo" }, { "undo", "Grid: undo" }, { "reset", "Grid: reset to rekordbox's grid" } };
@@ -135,10 +149,10 @@ static std::vector<ActionDef> buildActions()
     add ("view.zoomin",     "Waveform zoom in",        "View", B, -1);
     add ("view.zoomout",    "Waveform zoom out",       "View", B, -1);
     add ("view.wavemode",   "Stem lanes: show stems / 3-band", "View", B, -1);
-    for (int l = 1; l <= 8; ++l)
-        add ("light." + juce::String (l), "Light only " + juce::String (l) + " (no function, just a colour)", "Lights only", B, -1);
     add ("master.volume",   "Master volume (Centrifuge's output)", "View", ActionKind::continuous, -1);
     add ("view.fold",       "Edited view on / off (skips folded out, phrases in play order)", "View", B, -1);
+    for (int l = 1; l <= 8; ++l)
+        add ("light." + juce::String (l), "Light only " + juce::String (l) + " (no function, just a colour)", "Lights only", B, -1);
     return a;
 }
 

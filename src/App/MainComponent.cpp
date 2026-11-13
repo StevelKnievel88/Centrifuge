@@ -1,3 +1,4 @@
+#include "BinaryData.h"
 #include "MainComponent.h"
 #include "../UI/ListDialogs.h"
 #include "../Library/UserLists.h"
@@ -20,7 +21,7 @@ MainComponent::MainComponent()
                  [this] { return browser.getSelectedTracks(); },
                  [this] { return browser.getCurrentListName(); },
                  [this] { return router.getStemMatrix(); },
-                 [this] (std::array<int, 4> m) { settings.stemMatrix = m; router.setStemMatrix (m); settings.save(); }),
+                 [this] (std::array<int, 8> m) { settings.stemMatrix = m; router.setStemMatrix (m); settings.save(); }),
       settingsView (settings, engine, [this] { applySettings(); }, [this] { library.reloadPcLibrary(); }),
       stemSettingsView (settings, engine, [this] { applySettings(); }, [this] { library.reloadPcLibrary(); }, true),
       exportView (centrifugeLibrary, fileLoader, stems,
@@ -95,6 +96,19 @@ MainComponent::MainComponent()
         dp->onRenameCue = [this] (int d, bool hot, int i, juce::String cur) { askRename (d, hot, i, cur); };
         dp->onSetBpm = [this] (int d) { askBpm (d); };
         dp->onOpenSettings = [this] { showPage (3); };
+        dp->onBrakeChanged = [this] (int d, double sec, double beats)
+        {
+            settings.brakeSec[(size_t) d] = sec;
+            settings.brakeBeats[(size_t) d] = beats;
+            settings.save();
+        };
+        dp->onJumpSlotChanged = [this] (int d, int slot, double beats, juce::uint32 c)
+        {
+            settings.jumpBeats[(size_t) (d * 4 + slot)] = beats;
+            settings.jumpColours[(size_t) (d * 4 + slot)] = c;
+            settings.save();
+            midi.clearLedCache();
+        };
         dp->viewWindow = [this] { return std::pair<double, float> { waves.getVisibleSeconds(), waves.getPlayheadPosition() }; };
         dp->onDeckColour = [this] (int d, juce::Colour c)
         {
@@ -267,6 +281,11 @@ MainComponent::MainComponent()
     addChildComponent (exportView);
     addChildComponent (conflictsView);
 
+    SettingsView::xzScreenStatus = [this] { return xzLink.getStatus(); };
+    xzLink.onTouch = [this] (bool down, int x, int y) { xzView.touch (down, x, y); };
+    xzTimer.f = [this] { if (xzLink.isEnabled() && xzLink.isConnected()) xzLink.submitFrame (xzView.render()); };
+    xzTimer.startTimerHz (25);
+
     applySettings();
     showPage (0);
     setWantsKeyboardFocus (true);
@@ -287,6 +306,9 @@ void MainComponent::skipSplash()
 
 MainComponent::~MainComponent()
 {
+    xzTimer.stopTimer();
+    SettingsView::xzScreenStatus = nullptr;
+    xzLink.onTouch = nullptr;
     stopImport = true;
     importPool.removeAllJobs (false, 20000);
     stemPreviewPool.removeAllJobs (true, 5000);
@@ -320,6 +342,7 @@ void MainComponent::applySettings()
     {
         auto& dk = engine.deck (d);
         dk.post (Deck::Cmd::vinylTime, settings.brakeSec[(size_t) d], 0);
+        dk.post (Deck::Cmd::brakeBeats, settings.brakeBeats[(size_t) d]);
         dk.post (Deck::Cmd::vinylTime, settings.startSec[(size_t) d], 1);
         dk.post (Deck::Cmd::vinylTime, settings.releaseSec[(size_t) d], 2);
         dk.post (Deck::Cmd::vinylBrakeSet, settings.brakeOn[(size_t) d] ? 1.0 : 0.0, 0);
@@ -371,10 +394,33 @@ void MainComponent::applySettings()
     deck2.setEditView (settings.editView[1]);
     prepView.setEditView (settings.editView[2]);
     waves.setPlayheadPosition (settings.playheadPosition);
+    {
+        // The XDJ-XZ screen shows the decks the same way as the play page
+        auto& xw = xzView.getWaves();
+        xw.setVisibleSeconds (settings.visibleSeconds);
+        for (int d = 0; d < 2; ++d)
+        {
+            xw.setLanes (d, { settings.laneStyle[(size_t) d][0], settings.laneShape[(size_t) d][0] },
+                            { settings.laneStyle[(size_t) d][1], settings.laneShape[(size_t) d][1] });
+            xw.setLaneSplit (d, settings.laneSplit[(size_t) d]);
+            xw.setEditView (d, settings.editView[(size_t) d]);
+        }
+        xw.setSingleColour (juce::Colour (settings.singleColour), settings.singleFollowsDeck);
+        xw.setStemLayers (settings.stemLayerOrder, settings.stemOpacity);
+        xw.setPlayheadPosition (settings.playheadPosition);
+        xw.forceRedraw();
+        xzView.setOverviewStyle (settings.overviewStyle, settings.overviewShape == 1, juce::Colour (settings.singleColour));
+        xzLink.setEnabled (settings.xzScreen);
+    }
     for (auto* dp : { &deck1, &deck2 })
         dp->setOverviewStyle (settings.overviewStyle, settings.overviewShape == 1,
                               settings.singleFollowsDeck ? Theme::deckColour (dp == &deck1 ? 0 : 1) : juce::Colour (settings.singleColour));
     router.setStemMatrix (settings.stemMatrix);
+    for (int i = 0; i < 8; ++i)
+    {
+        router.setJumpSlotBeats (i / 4, i % 4, settings.jumpBeats[(size_t) i]);
+        router.setJumpSlotColour (i / 4, i % 4, settings.jumpColours[(size_t) i]);
+    }
     browser.setPreviewStyle (settings.previewStyle, settings.previewShape == 1, juce::Colour (settings.previewColour));
     phaseMeter.setOptions (settings.phraseBars, settings.phraseFollow, settings.phraseBrackets);
 
@@ -408,6 +454,11 @@ void MainComponent::applySettings()
 
 void MainComponent::loadToDeck (int deck, const TrackInfo& info, bool fromPc)
 {
+    loadToDeck (deck, info, fromPc, false);
+}
+
+void MainComponent::loadToDeck (int deck, const TrackInfo& info, bool fromPc, bool confirmed)
+{
     if (deck >= 2)
     {
         // PREP / preview deck: never on air, so it's fine to stop it and load
@@ -415,11 +466,26 @@ void MainComponent::loadToDeck (int deck, const TrackInfo& info, bool fromPc)
         loader.load (deck, info, fromPc, editor.versionToLoad (deck, info));
         return;
     }
-    if (engine.deck (deck).state().playing.load())
+    if (engine.deck (deck).state().playing.load() && ! confirmed)
     {
-        (deck == 0 ? deck1 : deck2).setLoadingText ("Deck is playing - pause it to load");
+        // Loading onto a playing deck: ask first (the browser's select button = LOAD, back = CANCEL)
+        if (loadConfirm != nullptr) return;
+        loadConfirm = std::make_unique<juce::AlertWindow> ("Deck " + juce::String (deck + 1) + " is playing",
+                                                           "Load " + info.displayArtistTitle() + " onto it anyway?",
+                                                           juce::MessageBoxIconType::WarningIcon, this);
+        loadConfirm->addButton ("LOAD", 1, juce::KeyPress (juce::KeyPress::returnKey));
+        loadConfirm->addButton ("CANCEL", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+        juce::Component::SafePointer<MainComponent> safe (this);
+        loadConfirm->enterModalState (true, juce::ModalCallbackFunction::create ([safe, deck, info, fromPc] (int r)
+        {
+            if (safe == nullptr) return;
+            juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->loadConfirm.reset(); });
+            if (r == 1) safe->loadToDeck (deck, info, fromPc, true);
+        }), false);
         return;
     }
+    if (engine.deck (deck).state().playing.load())
+        engine.deck (deck).post (Deck::Cmd::pause);
     (deck == 0 ? deck1 : deck2).setLoadingText ("Loading " + info.displayArtistTitle() + " ...");
     loader.load (deck, info, fromPc, editor.versionToLoad (deck, info));
 }
@@ -439,8 +505,17 @@ void MainComponent::handleAppAction (const juce::String& id, int deck, const Act
 
     if (id == "deck.load")           browser.loadSelected (deck);
     else if (id == "browse.scroll")  browser.scroll ((int) std::round (v.delta));
-    else if (id == "browse.enter")   { if (v.down) browser.enter(); }
-    else if (id == "browse.back")    { if (v.down) browser.back(); }
+    else if (id == "browse.enter")   { if (v.down) { if (loadConfirm != nullptr) loadConfirm->exitModalState (1); else browser.enter(); } }
+    else if (id == "browse.back")    { if (v.down) { if (loadConfirm != nullptr) loadConfirm->exitModalState (0); else browser.back(); } }
+    else if (id == "track.prev" || id == "track.next")
+    {
+        // previous / next track in the browser list (from the one on the deck); |<< near the start of a track goes back to its start first
+        if (! v.down || deck < 0 || deck > 1) return;
+        auto& dk = engine.deck (deck);
+        auto t = dk.state().trackSerial.load() != 0 ? dk.getLoadedTrack() : nullptr;
+        if (id == "track.prev" && t != nullptr && dk.state().positionSec.load() > 3.0) { dk.post (Deck::Cmd::seekSeconds, 0.0); return; }
+        browser.loadNeighbour (deck, t != nullptr ? t->info.file : juce::File(), id == "track.next" ? 1 : -1);
+    }
     else if (id == "browse.tree")    { if (v.down) browser.toggleFocus(); }
     else if (id == "browse.load1")   { if (v.down) browser.loadSelected (0); }
     else if (id == "browse.load2")   { if (v.down) browser.loadSelected (1); }
@@ -545,6 +620,7 @@ void MainComponent::timerCallback()
             settings.startOn[(size_t) d] = st.startOn.load();
             settings.save();
         }
+
     }
     {
         // REC button: time while recording, ARMED while it waits for sound
@@ -602,8 +678,13 @@ void MainComponent::paint (juce::Graphics& g)
     auto r = topBar.reduced (14, 0);
     auto logo = r.removeFromLeft (236).toFloat();
     logoArea = logo.toNearestInt();
-    CentrifugeRotor::paintRotor (g, logo.withWidth (30.0f).withSizeKeepingCentre (30.0f, 30.0f), 0.4f, 0.0f, 1.0f, 0.0f, 0.0f);
-    psyched::paintWordmark (g, logo.withTrimmedLeft (40.0f), "Centrifuge", 0, psyched::Signature::spin, 17.0f);
+    {
+        // The user's own wordmark (transparent PNG), fitted to the top bar
+        static const juce::Image mark = juce::ImageCache::getFromMemory (BinaryData::centrifugetopbarlogo_png, BinaryData::centrifugetopbarlogo_pngSize);
+        if (mark.isValid())
+            g.drawImageWithin (mark, (int) logo.getX(), (int) logo.getY() + 8, (int) logo.getWidth(), (int) logo.getHeight() - 16,
+                               juce::RectanglePlacement::xLeft | juce::RectanglePlacement::yMid | juce::RectanglePlacement::onlyReduceInSize);
+    }
 
     // Status pills (right side)
     auto pills = topBar.withSizeKeepingCentre (topBar.getWidth(), 34).reduced (10, 0).withLeft (phaseArea.getRight() + 14)

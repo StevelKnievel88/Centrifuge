@@ -71,7 +71,9 @@ struct AppSettings
     float playheadPosition = 0.5f;     // across the scrolling waveform (0.5 = centre)
     std::array<float, 2> laneSplit { 0.5f, 0.5f };   // top lane share of each deck's waveform area
     int deckPanelHeight = 210;
-    std::array<int, 4> stemMatrix { 1, 2, 4, 8 };    // stem controls A-D -> stems (bit 0 drums .. bit 3 vocals)
+    std::array<double, 8> jumpBeats { 1.0, 4.0, 8.0, 16.0, 1.0, 4.0, 8.0, 16.0 };   // each deck's 4 beat jump buttons
+    std::array<juce::uint32, 8> jumpColours {};                                        // ... and their colours (0 = default)
+    std::array<int, 8> stemMatrix { 1, 2, 4, 8, 1, 2, 4, 8 };    // stem controls A-D (deck 1), E-H (deck 2) -> stems (bit 0 drums .. bit 3 vocals)
     double visibleSeconds = 10.0;      // width of the scrolling waveform
     int maxFps = 60;
 
@@ -84,10 +86,12 @@ struct AppSettings
     bool ledFeedback = true;
     double longPressSec = 0.5;
     bool hotCuePadColours = true;      // hot cue pads light in their cue's colour
+    bool xzScreen = true;              // laptop mode: show Centrifuge's decks on the XDJ-XZ screen (network cable + loader)
     bool jogDisplay = true;            // drive the XDJ-XZ's jog screens (position bar, cue marker) and LOAD lights         // a button held this long is a long press (0.25 - 1 s)
     // Vinyl speed adjust, per deck: brake (stop), start, release after a scratch (seconds), and brake / start on or off
     std::array<double, 2> brakeSec { 0.8, 0.8 }, startSec { 0.4, 0.4 }, releaseSec { 0.0, 0.0 };
     std::array<bool, 2> brakeOn { false, false }, startOn { false, false };
+    std::array<double, 2> brakeBeats { 0.0, 0.0 };   // the brake synced to beats (0 = brakeSec instead)
     bool throwOn = true;               // backspin / throw plays out after letting go of a fast spin
     double throwSpeed = 0.6;           // how fast a spin has to be (x normal speed) to count as a throw
     bool autoGain = false;             // match each loaded track's loudness to the master deck

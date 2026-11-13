@@ -360,6 +360,7 @@ void TrackEditor::gridAction (int deck, const juce::String& action)
     else if (action == "shift.fwd10")  op = [] (auto& b) { return GridOps::shift (b, 0.010); };
     else if (action == "anchor")       op = [pos] (auto& b) { return GridOps::anchorAt (b, pos); };
     else if (action == "downbeat")     op = [pos] (auto& b) { return GridOps::setDownbeat (b, pos); };
+    else if (action == "phrasedownbeat") op = [pos] (auto& b) { return GridOps::setDownbeat (GridOps::anchorAt (b, pos), pos); };
     else if (action == "barhere")      op = [pos] (auto& b) { return GridOps::barStartsHere (b, pos); };
     else if (action == "beat.add")     op = [pos] (auto& b) { return GridOps::shiftCount (b, pos, 1); };
     else if (action == "beat.remove")  op = [pos] (auto& b) { return GridOps::shiftCount (b, pos, -1); };

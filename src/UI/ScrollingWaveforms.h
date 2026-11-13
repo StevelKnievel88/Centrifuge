@@ -77,6 +77,9 @@ public:
     void setLaneSplit (int deck, float share) { laneSplit[(size_t) deck] = juce::jlimit (0.1f, 0.9f, share); needsRedraw = true; }
     float getLaneSplit (int deck) const { return laneSplit[(size_t) deck]; }
     void forceRedraw() { needsRedraw = true; }
+    /** For a copy that is never on screen (the XDJ-XZ screen): advance it by hand before painting it. */
+    void tick (double timestampSec) { onVBlank (timestampSec); }
+    juce::Rectangle<float> labelAvoid;   // while painting: the deck badge and lanes button (lane names keep clear of them)
 
     std::function<void (double newVisibleSeconds)> onZoomChanged;
     std::function<void (int deck, float share)> onLaneSplitChanged;
@@ -172,6 +175,8 @@ private:
     int dragDeck = -1, dragDivider = -1;
     bool dragPlayhead = false;
     double dragStartPos = 0.0;
+    bool dragScrub = false;
+    float dragLastX = 0.0f;
 
     juce::VBlankAttachment vblank;
 };

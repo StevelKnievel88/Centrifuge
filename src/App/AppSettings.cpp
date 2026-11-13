@@ -157,7 +157,15 @@ void AppSettings::load()
     if (auto* arr = v["laneSplit"].getArray())
         for (int i = 0; i < juce::jmin (2, arr->size()); ++i) laneSplit[(size_t) i] = juce::jlimit (0.1f, 0.9f, (float) (double) (*arr)[i]);
     if (auto* arr = v["stemMatrix"].getArray())
-        for (int i = 0; i < juce::jmin (4, arr->size()); ++i) stemMatrix[(size_t) i] = juce::jlimit (0, 15, (int) (*arr)[i]);
+    {
+        for (int i = 0; i < juce::jmin (8, arr->size()); ++i) stemMatrix[(size_t) i] = juce::jlimit (0, 15, (int) (*arr)[i]);
+        if (arr->size() == 4)   // from before each deck had its own: both decks start the same
+            for (int i = 0; i < 4; ++i) stemMatrix[(size_t) (i + 4)] = stemMatrix[(size_t) i];
+    }
+    if (auto* arr = v["jumpBeats"].getArray())
+        for (int i = 0; i < juce::jmin (8, arr->size()); ++i) jumpBeats[(size_t) i] = juce::jlimit (0.0625, 128.0, (double) (*arr)[i]);
+    if (auto* arr = v["jumpColours"].getArray())
+        for (int i = 0; i < juce::jmin (8, arr->size()); ++i) jumpColours[(size_t) i] = (juce::uint32) (juce::int64) (*arr)[i];
     num ("visibleSeconds", visibleSeconds);
     num ("maxFps", maxFps);
 
@@ -167,6 +175,7 @@ void AppSettings::load()
     {
         const auto n = juce::String (d + 1);
         num (("brakeSec" + n).toRawUTF8(), brakeSec[(size_t) d]);
+        num (("brakeBeats" + n).toRawUTF8(), brakeBeats[(size_t) d]);
         num (("startSec" + n).toRawUTF8(), startSec[(size_t) d]);
         num (("releaseSec" + n).toRawUTF8(), releaseSec[(size_t) d]);
         boolean (("brakeOn" + n).toRawUTF8(), brakeOn[(size_t) d]);
@@ -189,6 +198,7 @@ void AppSettings::load()
     num ("longPressSec", longPressSec);
     boolean ("hotCuePadColours", hotCuePadColours);
     boolean ("jogDisplay", jogDisplay);
+    boolean ("xzScreen", xzScreen);
     longPressSec = juce::jlimit (0.25, 1.0, longPressSec);
     num ("markerScale", markerScale);
     markerScale = juce::jlimit (0.75f, 3.0f, markerScale);
@@ -291,7 +301,16 @@ void AppSettings::save() const
     o->setProperty ("editTargets", juce::Array<juce::var> { editR[0], editC[0], editR[1], editC[1] });
     o->setProperty ("deckPanelHeight", deckPanelHeight);
     o->setProperty ("laneSplit", juce::Array<juce::var> { laneSplit[0], laneSplit[1] });
-    o->setProperty ("stemMatrix", juce::Array<juce::var> { stemMatrix[0], stemMatrix[1], stemMatrix[2], stemMatrix[3] });
+    {
+        juce::Array<juce::var> m;
+        for (auto v : stemMatrix) m.add (v);
+        o->setProperty ("stemMatrix", m);
+        juce::Array<juce::var> jb, jc;
+        for (auto v : jumpBeats) jb.add (v);
+        for (auto v : jumpColours) jc.add ((juce::int64) v);
+        o->setProperty ("jumpBeats", jb);
+        o->setProperty ("jumpColours", jc);
+    }
     o->setProperty ("visibleSeconds", visibleSeconds);
     o->setProperty ("maxFps", maxFps);
 
@@ -300,6 +319,7 @@ void AppSettings::save() const
     {
         const auto n = juce::String (d + 1);
         o->setProperty ("brakeSec" + n, brakeSec[(size_t) d]);
+        o->setProperty ("brakeBeats" + n, brakeBeats[(size_t) d]);
         o->setProperty ("startSec" + n, startSec[(size_t) d]);
         o->setProperty ("releaseSec" + n, releaseSec[(size_t) d]);
         o->setProperty ("brakeOn" + n, brakeOn[(size_t) d]);
@@ -319,6 +339,7 @@ void AppSettings::save() const
     o->setProperty ("longPressSec", longPressSec);
     o->setProperty ("hotCuePadColours", hotCuePadColours);
     o->setProperty ("jogDisplay", jogDisplay);
+    o->setProperty ("xzScreen", xzScreen);
     o->setProperty ("stemsLossless", stemsLossless);
     o->setProperty ("markerScale", (double) markerScale);
     o->setProperty ("previewColour", (juce::int64) previewColour);

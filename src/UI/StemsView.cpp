@@ -8,8 +8,8 @@ StemsView::StemsView (StemManager& s,
                       std::function<std::vector<TrackInfo>()> list,
                       std::function<std::vector<TrackInfo>()> selected,
                       std::function<juce::String()> name,
-                      std::function<std::array<int, 4>()> gm,
-                      std::function<void (std::array<int, 4>)> sm)
+                      std::function<std::array<int, 8>()> gm,
+                      std::function<void (std::array<int, 8>)> sm)
     : stems (s), getList (std::move (list)), getSelected (std::move (selected)), getListName (std::move (name)),
       getMatrix (std::move (gm)), setMatrix (std::move (sm))
 {
@@ -54,7 +54,7 @@ void StemsView::resized()
     openCache.setBounds (row.removeFromLeft (170));
 
     r.removeFromTop (40);
-    matrixArea = r.removeFromTop (5 * 34 + 64).withWidth (juce::jmin (r.getWidth(), 560));
+    matrixArea = r.removeFromTop (5 * 34 + 64).withWidth (juce::jmin (r.getWidth(), 820));
     r.removeFromTop (12);
     if (settingsPanel != nullptr) settingsPanel->setBounds (r.withTrimmedLeft (-20).withWidth (juce::jmin (r.getWidth() + 20, 880)));
     auto right = getLocalBounds().reduced (24).removeFromRight (juce::jmin (260, getWidth() / 4));
@@ -63,14 +63,15 @@ void StemsView::resized()
 
 juce::Rectangle<int> StemsView::cell (int control, int stem) const
 {
-    const int top = matrixArea.getY() + 64 + 34, left = matrixArea.getX() + 150;
-    return { left + stem * 96, top + control * 34, 88, 28 };
+    // controls 0-3: deck 1 (A-D) on the left, 4-7: deck 2 (E-H) on the right
+    const int top = matrixArea.getY() + 64 + 34, left = matrixArea.getX() + 96 + (control >= 4 ? 410 : 0);
+    return { left + stem * 76, top + (control & 3) * 34, 70, 28 };
 }
 
 void StemsView::mouseDown (const juce::MouseEvent& e)
 {
     auto m = getMatrix();
-    for (int c = 0; c < 4; ++c)
+    for (int c = 0; c < 8; ++c)
         for (int s = 0; s < 4; ++s)
             if (cell (c, s).contains (e.getPosition()))
             {
@@ -130,23 +131,29 @@ void StemsView::paint (juce::Graphics& g)
     auto mr = matrixArea;
     g.setColour (Theme::accent);
     g.setFont (Theme::font (12.5f, true));
-    g.drawText ("STEM CONTROLS  (shared by both decks)", mr.removeFromTop (22), juce::Justification::centredLeft);
+    g.drawText ("STEM CONTROLS", mr.removeFromTop (22), juce::Justification::centredLeft);
     g.setColour (Theme::textDim);
     g.setFont (Theme::font (12.5f));
-    g.drawText ("Map 'Stem control A-D' to knobs in Mapping, then tick which stems each one moves.",
+    g.drawText ("Map 'Stem control A-D' (deck 1) and 'E-H' (deck 2) to knobs in Mapping, then tick which stems each one moves.",
                 mr.removeFromTop (8 + 34).withTrimmedTop (8), juce::Justification::topLeft);
 
     const auto m = getMatrix();
-    for (int s = 0; s < 4; ++s)
+    for (int deck = 0; deck < 2; ++deck)
     {
-        auto h = cell (0, s).translated (0, -34);
-        g.setColour (Theme::stemColour (s));
+        auto head = cell (deck * 4, 0).translated (-96, -34).withWidth (90);
+        g.setColour (Theme::deckColour (deck));
         g.setFont (Theme::font (13.0f, true));
-        g.drawText (juce::String (stemName (s)).toUpperCase(), h, juce::Justification::centred);
+        g.drawText ("DECK " + juce::String (deck + 1), head, juce::Justification::centredLeft);
+        for (int s = 0; s < 4; ++s)
+        {
+            auto h = cell (deck * 4, s).translated (0, -34);
+            g.setColour (Theme::stemColour (s));
+            g.drawText (juce::String (stemName (s)).toUpperCase(), h, juce::Justification::centred);
+        }
     }
-    for (int c = 0; c < 4; ++c)
+    for (int c = 0; c < 8; ++c)
     {
-        auto label = juce::Rectangle<int> (matrixArea.getX(), cell (c, 0).getY(), 140, 28);
+        auto label = juce::Rectangle<int> (cell (c, 0).getX() - 96, cell (c, 0).getY(), 90, 28);
         g.setColour (Theme::text);
         g.setFont (Theme::font (13.5f, true));
         g.drawText ("Control " + juce::String::charToString ((juce::juce_wchar) ('A' + c)), label, juce::Justification::centredLeft);

@@ -80,6 +80,8 @@ public:
     /** Puts the cursor in the search box (Ctrl+F). */
     void focusSearch() { search.grabKeyboardFocus(); search.selectAll(); }
     void loadSelected (int deck);
+    /** Loads the track before / after (dir -1 / +1) the given one in the list onto a deck (the selection moves to it). */
+    void loadNeighbour (int deck, const juce::File& current, int dir);
 
     std::vector<TrackInfo> getVisibleTracks() const;
     std::vector<TrackInfo> getSelectedTracks() const;

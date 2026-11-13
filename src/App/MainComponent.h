@@ -6,6 +6,8 @@
 #include "../UI/Theme.h"
 #include "../UI/DeckPanel.h"
 #include "../UI/ScrollingWaveforms.h"
+#include "../UI/XzScreenView.h"
+#include "../Control/XzScreenLink.h"
 #include "../UI/BrowserView.h"
 #include "../UI/MappingView.h"
 #include "../UI/StemsView.h"
@@ -73,6 +75,8 @@ private:
     void applySettings();
     void handleAppAction (const juce::String& id, int deck, const ActionValue& v);
     void loadToDeck (int deck, const TrackInfo& info, bool fromPc);
+    void loadToDeck (int deck, const TrackInfo& info, bool fromPc, bool confirmed);
+    std::unique_ptr<juce::AlertWindow> loadConfirm;
     void showImportMenu (juce::Component& anchor);
     void showExportMenu (juce::Component& anchor);
     void runImport (std::shared_ptr<const LibrarySource> source, std::vector<int> onlyTracks);
@@ -123,6 +127,10 @@ private:
 
     DeckPanel deck1 { 0, engine, router }, deck2 { 1, engine, router };
     ScrollingWaveforms waves { engine };
+    // Laptop mode: the decks drawn for the XDJ-XZ's screen and sent to it over the network cable
+    XzScreenView xzView { engine, router };
+    XzScreenLink xzLink;
+    struct FnTimer : juce::Timer { std::function<void()> f; void timerCallback() override { if (f) f(); } } xzTimer;
     BrowserView browser { library, stems };
     MappingView mapping;
     StemsView stemsView;

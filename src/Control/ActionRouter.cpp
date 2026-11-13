@@ -17,6 +17,14 @@ namespace
     }
 }
 
+int ActionRouter::jumpSlotOf (const juce::String& name)
+{
+    if (! (name.contains ("beatjump.back.") || name.contains ("beatjump.fwd."))) return -1;
+    const int n = name.getTrailingIntValue();
+    for (int k = 0; k < 4; ++k) if ((int) defaultJumpBeats[k] == n) return k;
+    return -1;
+}
+
 ActionRouter::ActionRouter (AudioEngine& e) : engine (e)
 {
     for (int d = 0; d < 4; ++d)
@@ -34,26 +42,30 @@ ActionRouter::ActionRouter (AudioEngine& e) : engine (e)
         {
             stemVolume[(size_t) d][(size_t) s] = 0.5f;      // stem controls are bipolar: centre = unchanged
             controlVolume[(size_t) d][(size_t) s] = 0.5f;
+            stemFilterV[(size_t) d][(size_t) s] = 0.5f;     // filters: centre = open
+            controlFilter[(size_t) d][(size_t) s] = 0.5f;
             stemMute[(size_t) d][(size_t) s] = false;
             controlMute[(size_t) d][(size_t) s] = false;
         }
         keySyncLit[(size_t) d] = false;
     }
-    for (int c = 0; c < 4; ++c)
-        matrix[(size_t) c] = 1 << c;   // A = drums, B = bass, C = inst, D = vocals
+    for (int c = 0; c < 8; ++c)
+        matrix[(size_t) c] = 1 << (c & 3);   // A / E = drums, B / F = bass, C / G = inst, D / H = vocals
 }
 
-void ActionRouter::setStemMatrix (const std::array<int, 4>& m)
+void ActionRouter::setStemMatrix (const std::array<int, 8>& m)
 {
-    for (int c = 0; c < 4; ++c)
+    for (int c = 0; c < 8; ++c)
         matrix[(size_t) c] = m[(size_t) c] & 0xf;
-    for (int d = 0; d < AudioEngine::maxDecks; ++d)
+    for (int d = 0; d < 2; ++d)
         updateStems (d);
 }
 
-std::array<int, 4> ActionRouter::getStemMatrix() const
+std::array<int, 8> ActionRouter::getStemMatrix() const
 {
-    return { matrix[0].load(), matrix[1].load(), matrix[2].load(), matrix[3].load() };
+    std::array<int, 8> m {};
+    for (int c = 0; c < 8; ++c) m[(size_t) c] = matrix[(size_t) c].load();
+    return m;
 }
 
 void ActionRouter::updateStems (int d)
@@ -63,15 +75,19 @@ void ActionRouter::updateStems (int d)
     for (int s = 0; s < 4; ++s)
     {
         float g = stemVolume[(size_t) d][(size_t) s].load();
+        float f = stemFilterV[(size_t) d][(size_t) s].load();
         bool muted = stemMute[(size_t) d][(size_t) s].load();
         for (int c = 0; c < 4; ++c)
-            if ((matrix[(size_t) c].load() >> s) & 1)
+            if ((matrix[(size_t) (d * 4 + c)].load() >> s) & 1)
             {
                 const float cv = controlVolume[(size_t) d][(size_t) c].load();
                 if (std::abs (cv - 0.5f) > std::abs (g - 0.5f)) g = cv;
+                const float cf = controlFilter[(size_t) d][(size_t) c].load();
+                if (std::abs (cf - 0.5f) > std::abs (f - 0.5f)) f = cf;
                 muted = muted || controlMute[(size_t) d][(size_t) c].load();
             }
         engine.deck (d).post (Deck::Cmd::stemGain, muted ? 0.0 : (double) g, s);
+        engine.deck (d).post (Deck::Cmd::stemFilter, (double) f, s);
     }
 }
 
@@ -165,6 +181,17 @@ void ActionRouter::perform (const ActionDef& a, const ActionValue& v)
             juce::MessageManager::callAsync ([fn, d, v] { fn ("deck.load", d, v); });
         }
     }
+    else if (name == "track.prev" || name == "track.next")
+    {
+        if (v.down && onAppAction)
+        {
+            auto fn = onAppAction;
+            auto id = name;
+            juce::MessageManager::callAsync ([fn, d, id, v] { fn (id, d, v); });
+        }
+    }
+    else if (name == "search.back" || name == "search.fwd") deck.post (C::search, v.down ? (name == "search.fwd" ? 1.0 : -1.0) : 0.0);
+    else if (name == "scrub")       deck.post (C::scrub, v.delta);
     else if (name.startsWith ("edit.") || name.startsWith ("grid."))
     {
         // Library editing is handled by the app (message thread)
@@ -238,12 +265,14 @@ void ActionRouter::perform (const ActionDef& a, const ActionValue& v)
     }
     else if (name.startsWith ("beatjump.back.") || name.startsWith ("beatjump.fwd."))
     {
-        const double beats = name.fromLastOccurrenceOf (".", false, false).getDoubleValue();
+        const int slot = jumpSlotOf (name);
+        const double beats = slot >= 0 && d < 2 ? jumpSlotBeats[(size_t) (d * 4 + slot)].load() : name.fromLastOccurrenceOf (".", false, false).getDoubleValue();
         if (beats > 0.0) button (C::beatJump, name.startsWith ("beatjump.back.") ? -beats : beats);   // release ends a slip jump
     }
     else if (name == "beatjump.back") button (C::beatJump, -beatJump[(size_t) d].load());
     else if (name == "beatjump.fwd")  button (C::beatJump,  beatJump[(size_t) d].load());
     else if (name == "slip")          { if (v.down) button (C::slipToggle); }
+    else if (name == "reverse")       button (C::reverse);
     else if (name == "vinyl.brake")   { if (v.down) deck.post (C::vinylBrakeSet, deck.state().brakeOn.load() ? 0.0 : 1.0, 0); }
     else if (name == "vinyl.start")   { if (v.down) deck.post (C::vinylBrakeSet, deck.state().startOn.load() ? 0.0 : 1.0, 1); }
     else if (name == "beatjump.size")
@@ -259,15 +288,21 @@ void ActionRouter::perform (const ActionDef& a, const ActionValue& v)
             for (int s = 0; s < 4; ++s)
             {
                 stemVolume[(size_t) d][(size_t) s] = 0.5f; controlVolume[(size_t) d][(size_t) s] = 0.5f;
+                stemFilterV[(size_t) d][(size_t) s] = 0.5f; controlFilter[(size_t) d][(size_t) s] = 0.5f;
                 stemMute[(size_t) d][(size_t) s] = false;  controlMute[(size_t) d][(size_t) s] = false;
             }
             updateStems (d);
         }
     }
+    else if (name == "stem.resonance")
+    {
+        deck.post (C::stemResonance, juce::jlimit (0.0, 1.0, v.value));
+    }
     else if (name.startsWith ("stem.") && d < 2)
     {
         const int s = juce::jlimit (0, 3, name.fromFirstOccurrenceOf (".", false, false).getIntValue() - 1);
         if (name.endsWith (".volume"))     stemVolume[(size_t) d][(size_t) s] = (float) v.value;
+        else if (name.endsWith (".filter")) stemFilterV[(size_t) d][(size_t) s] = (float) v.value;
         else if (name.endsWith (".mute"))  { if (! v.down) return; stemMute[(size_t) d][(size_t) s] = ! stemMute[(size_t) d][(size_t) s].load(); }
         else if (name.endsWith (".solo"))
         {
@@ -283,6 +318,7 @@ void ActionRouter::perform (const ActionDef& a, const ActionValue& v)
         const auto letter = name.fromFirstOccurrenceOf (".", false, false).substring (0, 1);
         const int c = juce::jlimit (0, 3, (int) (letter[0] - 'A'));
         if (name.endsWith (".volume"))     controlVolume[(size_t) d][(size_t) c] = (float) v.value;
+        else if (name.endsWith (".filter")) controlFilter[(size_t) d][(size_t) c] = (float) v.value;
         else if (name.endsWith (".mute"))  { if (! v.down) return; controlMute[(size_t) d][(size_t) c] = ! controlMute[(size_t) d][(size_t) c].load(); }
         updateStems (d);
     }
@@ -313,6 +349,9 @@ bool ActionRouter::ledState (const ActionDef& a) const
     if (name == "quantize")  return st.quantize.load();
     if (name == "jog.vinyl") return st.vinylMode.load();
     if (name == "slip")      return st.slip.load();
+    if (name == "reverse")   return st.reversing.load();
+    if (name == "search.back") return st.searchDir.load() < 0;
+    if (name == "search.fwd")  return st.searchDir.load() > 0;
     if (name == "vinyl.brake") return st.brakeOn.load();
     if (name == "vinyl.start") return st.startOn.load();
     if (name == "skip.toggle") return st.skipsOn.load();

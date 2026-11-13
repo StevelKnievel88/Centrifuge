@@ -10,7 +10,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 void xz_settings_default(struct xz_settings *s) {
-    *s = (struct xz_settings){1,0,0,3,0,0,1,0,0,0,0,0};
+    *s = (struct xz_settings){1,0,0,3,0,0,1,0,1,0,0,0};
 }
 static int valid(const struct xz_settings *s) {
     return (unsigned)s->stems <= 1 && (unsigned)s->gate <= 1 &&

@@ -31,7 +31,6 @@ namespace
 DeckPanel::DeckPanel (int d, AudioEngine& e, ActionRouter& r) : deck (d), engine (e), router (r)
 {
     setOpaque (true);
-    addAndMakeVisible (rotor);
     startTimerHz (20);
 }
 
@@ -90,14 +89,15 @@ void DeckPanel::timerCallback()
     mix (gridMode); mix (router.getLoopBeats (deck)); mix (st.autoLoopLocator.load()); mix (st.cyclesLeft.load());
     for (size_t i = 0; i < 8; ++i) mix (st.hotEnd[i].load());
     mix (Theme::deckColour (deck).getARGB()); mix (MusicalKey::camelotDisplay().load());
-    rotor.setBounds (rotorArea.toNearestInt());
-    rotor.setSpinning (st.stemsReady.load() && st.stemsProgress.load() < 0.999f);
-    rotor.setProgress (st.stemsReady.load() ? st.stemsProgress.load() : 0.0f);
     mix (router.getPitchRangePercent (deck));
     mix (editView); mix (st.playSegment.load());
     if (editor != nullptr) { mix ((double) (editor->activeEdit (deck).hashCode() & 0xffff)); mix (editor->activeEditModified (deck)); mix (editor->hasEdits (deck)); }
     if (auto* n = noteShowing (st.positionSec.load())) mix (n->timeSec + 7.0 + std::floor (st.positionSec.load() * 10.0));
-    for (size_t i = 0; i < 4; ++i) mix (st.stemMode[i].load());
+    for (size_t i = 0; i < 4; ++i) mix (st.stemFilter[i].load());
+    mix (st.stemResonance.load());
+    mix (heldAction.hashCode()); mix (st.reversing.load()); mix (st.searchDir.load()); mix (scrubDrag);
+    mix (st.brakeSeconds.load()); mix (st.brakeBeats.load()); mix (st.brakeOn.load()); mix (st.startOn.load()); mix (juce::Time::getMillisecondCounterHiRes() < flashUntil);
+    for (int k = 0; k < 4; ++k) { mix (router.getJumpSlotBeats (deck, k)); mix ((double) router.getJumpSlotColour (deck, k)); }
     mix (overviewGrid); mix (st.stemsReady.load() && st.stemsProgress.load() < 0.999f ? std::floor (st.stemsProgress.load() * 400.0f) : -1.0);
     if (h != lastHash) { lastHash = h; repaint(); }
 }
@@ -205,10 +205,7 @@ void DeckPanel::paint (juce::Graphics& g)
         if (! Features::rekordboxCopy)
         {
             const auto p = juce::String ("d") + juce::String (deck + 1) + ".";
-            r.removeFromLeft (10.0f);
-            auto gc = r.removeFromLeft (44.0f).reduced (1.0f, 3.0f);
-            chip (g, gc, "GRID", gridMode, Theme::warn);
-            regions.push_back ({ gc, p + "grid.mode", 0 });
+            // (GRID sits left of the hot cue pads)
             // Edited view on / off, and which edit version is playing
             r.removeFromLeft (4.0f);
             auto ev = r.removeFromLeft (58.0f).reduced (1.0f, 3.0f);
@@ -250,16 +247,12 @@ void DeckPanel::paint (juce::Graphics& g)
                 g.setFont (Theme::font (10.0f, true));
                 g.drawText ("R/C DIFFER", r.removeFromLeft (64.0f), juce::Justification::centred);
             }
-            r.removeFromLeft (4.0f);
-            auto gc = r.removeFromLeft (44.0f).reduced (1.0f, 3.0f);
-            chip (g, gc, "GRID", gridMode, Theme::warn);
-            regions.push_back ({ gc, p + "grid.mode", 0 });
         }
 
         // Tempo + range
-        auto right = r.removeFromRight (440.0f);
+        auto right = r.removeFromRight (juce::jmax (440.0f, r.getWidth() - 4.0f));
         const double pct = (st.tempoRatio.load() - 1.0) * 100.0;
-        auto tempo = right.removeFromRight (100.0f);
+        auto tempo = right.removeFromRight (right.getWidth() < 470.0f ? 80.0f : 100.0f);
         g.setColour (Theme::text);
         g.setFont (Theme::font (14.0f, true));
         auto pctArea = tempo.removeFromTop (16.0f);
@@ -281,19 +274,42 @@ void DeckPanel::paint (juce::Graphics& g)
             chip (g, cr, label, lit, c);
             regions.push_back ({ cr, action, 0 });
         };
-        addChip ("MASTER", st.master.load(), Theme::accent, p + "master", 52.0f);
-        addChip ("SYNC", st.sync.load(), col, p + "sync", 40.0f);
-        addChip ("MT", st.keyLock.load(), Theme::warn, p + "keylock", 28.0f);
-        addChip ("QUANTIZE", st.quantize.load(), Theme::bad.withSaturation (0.6f), p + "quantize", 62.0f);
-        addChip (st.vinylMode.load() ? "VINYL" : "CDJ", st.vinylMode.load(), Theme::warn, p + "jog.vinyl", 50.0f);
-        addChip (st.slipping.load() ? "SLIPPING" : "SLIP", st.slip.load(), Theme::sync.brighter (0.2f), p + "slip", st.slipping.load() ? 64.0f : 40.0f);
+        // (compact when the deck is narrow)
+        const bool tight = right.getWidth() < 470.0f;
+        addChip ("MASTER", st.master.load(), Theme::accent, p + "master", tight ? 48.0f : 52.0f);
+        addChip ("SYNC", st.sync.load(), col, p + "sync", tight ? 36.0f : 40.0f);
+        addChip ("MT", st.keyLock.load(), Theme::warn, p + "keylock", 26.0f);
+        addChip (tight ? "QUANT" : "QUANTIZE", st.quantize.load(), Theme::bad.withSaturation (0.6f), p + "quantize", tight ? 44.0f : 62.0f);
+        addChip (st.vinylMode.load() ? "VINYL" : "CDJ", st.vinylMode.load(), juce::Colour (0xff2f4dff), p + "jog.vinyl", tight ? 42.0f : 50.0f);
+        addChip (st.slipping.load() ? "SLIPPING" : "SLIP", st.slip.load(), Theme::sync.brighter (0.2f), p + "slip", st.slipping.load() ? 60.0f : 36.0f);
+        addChip ("REV", st.reversing.load(), Theme::bad, p + "reverse", 32.0f);   // backwards while held
         {
             // vinyl speed: brake (stop) / start, click for the choices
             const bool b = st.brakeOn.load(), s2 = st.startOn.load();
-            const juce::String t = b && s2 ? "BRAKE+START" : b ? "BRAKE" : s2 ? "START" : "INSTANT";
-            auto cr = right.removeFromLeft (t.length() > 8 ? 82.0f : 58.0f).reduced (2.0f, 3.0f);
+            const juce::String t = b && s2 ? "BRK+ST" : b ? "BRAKE" : s2 ? "START" : "INST";
+            auto cr = right.removeFromLeft (48.0f).reduced (2.0f, 3.0f);
             chip (g, cr, t, b || s2, Theme::warn.withRotatedHue (0.08f));
             regions.push_back ({ cr, "vinylspeed", 10 });
+            // how slow: a knob (drag up / down) from instant to 3 s, and a button that locks it to beats (1/4 beat - 2 bars)
+            const auto vc = Theme::warn.withRotatedHue (0.08f);
+            const double beats = st.brakeBeats.load();
+            auto knob = right.removeFromLeft (22.0f).reduced (2.0f, 2.0f);
+            knob = knob.withSizeKeepingCentre (juce::jmin (knob.getWidth(), knob.getHeight()), juce::jmin (knob.getWidth(), knob.getHeight()));
+            const float v = beats > 0.0 ? (float) (std::log2 (beats / 0.25) / 4.0) : (float) juce::jlimit (0.0, 1.0, st.brakeSeconds.load() / 3.0);
+            const float a0 = -juce::MathConstants<float>::pi * 0.75f, a1 = juce::MathConstants<float>::pi * 0.75f;
+            juce::Path arc, val;
+            const auto kc = knob.getCentre();
+            const float kr = knob.getWidth() * 0.42f;
+            arc.addCentredArc (kc.x, kc.y, kr, kr, 0.0f, a0, a1, true);
+            val.addCentredArc (kc.x, kc.y, kr, kr, 0.0f, a0, a0 + (a1 - a0) * juce::jlimit (0.0f, 1.0f, v), true);
+            g.setColour (Theme::line);
+            g.strokePath (arc, juce::PathStrokeType (2.0f));
+            g.setColour (vc);
+            g.strokePath (val, juce::PathStrokeType (2.2f));
+            regions.push_back ({ knob, "brakeknob", 13 });
+            auto sync = right.removeFromLeft (beats > 0.0 ? 50.0f : 36.0f).reduced (2.0f, 3.0f);
+            chip (g, sync, beats > 0.0 ? jumpSizeText (beats) : juce::String ("BEAT"), beats > 0.0, vc);
+            regions.push_back ({ sync, "brakesync", 14 });
         }
     }
 
@@ -369,7 +385,7 @@ void DeckPanel::paint (juce::Graphics& g)
                         g.setColour (juce::Colours::black.withAlpha (st.skipsOn.load() ? 0.62f : 0.35f));
                         g.fillRect (juce::Rectangle<float>::leftTopRightBottom (x0, r.getY(), x1, r.getBottom()));
                     }
-                if (overviewGrid) paintOverviewGrid (g, r, track->grid, len, &fold, track->phrases.empty() ? 0.0f : juce::jmax (2.0f, juce::jmin (6.0f, r.getHeight() * 0.14f)));
+                if (overviewGrid) paintOverviewGrid (g, r, track->grid, len, &fold, track->phrases.empty() ? 0.0f : overviewStripHeight (r.getHeight()), overviewStripHeight (r.getHeight()));
                 if (viewWindow)
                 {
                     // the part the scrolling waveform shows
@@ -396,14 +412,23 @@ void DeckPanel::paint (juce::Graphics& g)
         }
     }
 
+    // --- GRID / CUES switch: left of the pads, it names what it switches to ------
+    auto padsRow = rowPads;
+    {
+        auto gb = padsRow.removeFromLeft (48.0f);
+        padsRow.removeFromLeft (6.0f);
+        chip (g, gb, gridMode ? "CUES" : "GRID", true, gridMode ? Theme::accent : Theme::warn);
+        regions.push_back ({ gb, "d" + juce::String (deck + 1) + ".grid.mode", 0 });
+    }
+
     // --- Beat grid editor (replaces the pads while GRID is on) -------------------
     if (gridMode)
     {
-        auto r = rowPads;
+        auto r = padsRow;
         const auto p = juce::String ("d") + juce::String (deck + 1) + ".grid.";
         struct B { const char* label; const char* action; float w; };
         const B buttons[] = { { "<10ms", "shift.back10", 1.0f }, { "<1ms", "shift.back1", 1.0f }, { "1ms>", "shift.fwd1", 1.0f },
-                              { "10ms>", "shift.fwd10", 1.0f }, { "ANCHOR", "anchor", 1.2f }, { "DOWNBEAT", "downbeat", 1.4f },
+                              { "10ms>", "shift.fwd10", 1.0f }, { "PHRASE DOWNBEAT", "phrasedownbeat", 2.3f }, { "DOWNBEAT", "downbeat", 1.4f },
                               { "-0.1", "bpm.down", 0.9f }, { "-.01", "bpm.downfine", 0.9f }, { "BPM", "", 1.6f },
                               { "+.01", "bpm.upfine", 0.9f }, { "+0.1", "bpm.up", 0.9f }, { "/2", "halve", 0.7f },
                               { "x2", "double", 0.7f }, { "TAP", "tap", 0.9f }, { "MORE", "more", 1.0f }, { "UNDO", "undo", 1.0f }, { "RESET", "reset", 1.0f } };
@@ -429,7 +454,7 @@ void DeckPanel::paint (juce::Graphics& g)
     else
     // --- Hot cue pads ------------------------------------------------------------
     {
-        auto r = rowPads;
+        auto r = padsRow;
         const float w = (r.getWidth() - 7 * 5.0f) / 8.0f;
         for (int i = 0; i < 8; ++i)
         {
@@ -457,7 +482,7 @@ void DeckPanel::paint (juce::Graphics& g)
         auto r = rowJump;
         const auto p = juce::String ("d") + juce::String (deck + 1) + ".beatjump.";
         psyched::paintLabel (g, "Jump", r.removeFromLeft (36.0f), juce::Justification::centredLeft);
-        const std::pair<int, const char*> sizes[] = { { 1, "1 BEAT" }, { 4, "1 BAR" }, { 8, "2 BARS" }, { 16, "4 BARS" } };
+        static const int slotIds[4] = { 1, 4, 8, 16 };   // the actions keep their first sizes as names (mappings stay put)
         // each size sits tight between its buttons; the rest of the row shows notes
         const float gw = juce::jlimit (78.0f, 104.0f, (r.getWidth() * 0.55f - 3 * 8.0f) / 4.0f);
         {
@@ -473,6 +498,53 @@ void DeckPanel::paint (juce::Graphics& g)
             const auto pp = juce::String ("d") + juce::String (deck + 1) + ".";
             regions.push_back ({ prev, pp + "callprev", 0 });
             regions.push_back ({ next, pp + "callnext", 0 });
+
+            // track skip (previous / next track in the list), search (fast through the track while held), scrub dial
+            auto icon = [&g] (juce::Rectangle<float> b, int dir, bool bar, bool lit, juce::Colour c)
+            {
+                g.setColour (lit ? c.withAlpha (0.35f) : Theme::panelHi);
+                g.fillRect (b);
+                g.setColour (c);
+                g.drawRect (b, 1.0f);
+                auto t = b.reduced (b.getWidth() * 0.22f, b.getHeight() * 0.28f);
+                const float w = t.getWidth() / (bar ? 2.6f : 2.0f);
+                juce::Path p;
+                for (int k = 0; k < 2; ++k)
+                {
+                    const float x0 = dir > 0 ? t.getX() + k * w : t.getRight() - k * w;
+                    p.addTriangle (x0, t.getY(), x0, t.getBottom(), x0 + dir * w, t.getCentreY());
+                }
+                g.fillPath (p);
+                if (bar) g.fillRect (dir > 0 ? juce::Rectangle<float> (t.getRight() - 1.6f, t.getY(), 1.6f, t.getHeight())
+                                             : juce::Rectangle<float> (t.getX(), t.getY(), 1.6f, t.getHeight()));
+            };
+            auto tPrev = rest.removeFromLeft (24.0f); rest.removeFromLeft (2.0f);
+            auto tNext = rest.removeFromLeft (24.0f); rest.removeFromLeft (6.0f);
+            auto sBack = rest.removeFromLeft (24.0f); rest.removeFromLeft (2.0f);
+            auto sFwd = rest.removeFromLeft (24.0f); rest.removeFromLeft (6.0f);
+            icon (tPrev, -1, true, false, Theme::text);
+            icon (tNext, 1, true, false, Theme::text);
+            icon (sBack, -1, false, st.searchDir.load() < 0, Theme::sync);
+            icon (sFwd, 1, false, st.searchDir.load() > 0, Theme::sync);
+            regions.push_back ({ tPrev, pp + "track.prev", 0 });
+            regions.push_back ({ tNext, pp + "track.next", 0 });
+            regions.push_back ({ sBack, pp + "search.back", 0 });
+            regions.push_back ({ sFwd, pp + "search.fwd", 0 });
+            {
+                // scrub dial: drag sideways to move through the track (you hear it, like the platter)
+                auto dial = rest.removeFromLeft (rest.getHeight()).reduced (1.0f);
+                rest.removeFromLeft (6.0f);
+                g.setColour (Theme::panelHi);
+                g.fillEllipse (dial);
+                g.setColour (scrubDrag ? Theme::sync : Theme::line);
+                g.drawEllipse (dial.reduced (0.5f), 1.2f);
+                const float a = (float) std::fmod (st.positionSec.load() / 1.8, 1.0) * juce::MathConstants<float>::twoPi;
+                const auto cc = dial.getCentre();
+                const float rr = dial.getWidth() * 0.36f;
+                g.setColour (Theme::sync);
+                g.drawLine (cc.x, cc.y, cc.x + rr * std::sin (a), cc.y - rr * std::cos (a), 1.6f);
+                regions.push_back ({ dial, pp + "scrub", 12 });
+            }
             paintNotesBox (g, rest);
         }
         for (int k = 0; k < 4; ++k)
@@ -481,11 +553,25 @@ void DeckPanel::paint (juce::Graphics& g)
             if (k < 3) r.removeFromLeft (8.0f);
             auto back = grp.removeFromLeft (22.0f);
             auto fwd = grp.removeFromRight (22.0f);
-            chip (g, back, "<", false, Theme::sync);
-            chip (g, fwd, ">", false, Theme::sync);
-            psyched::paintLabel (g, sizes[k].second, grp, juce::Justification::centred, Theme::textDim, 9.5f);
-            regions.push_back ({ back, p + "back." + juce::String (sizes[k].first), 0 });
-            regions.push_back ({ fwd, p + "fwd." + juce::String (sizes[k].first), 0 });
+            const auto slotCol = router.getJumpSlotColour (deck, k) != 0 ? juce::Colour (router.getJumpSlotColour (deck, k)) : Theme::sync;
+            // triangles: the shape gives the direction
+            for (auto [b, left] : { std::pair<juce::Rectangle<float>, bool> { back, true }, { fwd, false } })
+            {
+                auto t = b.reduced (2.0f, 1.0f);
+                juce::Path tri;
+                if (left) tri.addTriangle (t.getRight(), t.getY(), t.getRight(), t.getBottom(), t.getX(), t.getCentreY());
+                else      tri.addTriangle (t.getX(), t.getY(), t.getX(), t.getBottom(), t.getRight(), t.getCentreY());
+                g.setColour (slotCol.withAlpha (0.28f));
+                g.fillPath (tri);
+                g.setColour (slotCol);
+                g.strokePath (tri, juce::PathStrokeType (1.2f));
+            }
+            // the size: click to change it, right-click for its colour
+            psyched::paintLabel (g, jumpSizeText (router.getJumpSlotBeats (deck, k)), grp, juce::Justification::centred,
+                                 router.getJumpSlotColour (deck, k) != 0 ? slotCol : Theme::textDim, 9.5f);
+            regions.push_back ({ back, p + "back." + juce::String (slotIds[k]), 0 });
+            regions.push_back ({ fwd, p + "fwd." + juce::String (slotIds[k]), 0 });
+            regions.push_back ({ grp, "jumpslot." + juce::String (k), 11 });
         }
     }
 
@@ -553,44 +639,91 @@ void DeckPanel::paint (juce::Graphics& g)
             regions.push_back ({ reBtn, p + "loop.reloop", 0 });
         }
 
-        // Locator (memory) and skip: SKIP once to start, again to end
-        r.removeFromLeft (6.0f);
-        auto memBtn = vfit (r.removeFromLeft (66.0f));
-        chip (g, memBtn, "MARKER", false, Theme::bad);
-        regions.push_back ({ memBtn, p + "locator.add", 0 });
-        r.removeFromLeft (6.0f);
-        auto skipBtn = vfit (r.removeFromLeft (56.0f));
-        const bool pending = st.skipPendingFrom.load() >= 0.0;
-        chip (g, skipBtn, pending ? "SKIP TO" : "SKIP", pending, juce::Colour (0xff38d9ff));
-        regions.push_back ({ skipBtn, p + "skip.set", 0 });
+        // (MARKER and SKIP live on PREP and in the mapping; the deck has no buttons for them)
 
-        // Stems (rotor shows separation progress); the mode chip switches all four between level and filter
+        // Stems: the filters' resonance knob, then each stem's volume over its filter
         r.removeFromLeft (8.0f);
-        rotorArea = r.removeFromLeft (r.getHeight()).reduced (1.0f);
+        resoArea = r.removeFromLeft (juce::jmin (34.0f, r.getHeight())).reduced (1.0f);
+        paintResonanceKnob (g, resoArea, st.stemResonance.load());
+        regions.push_back ({ resoArea, p + "stem.resonance", 8 });
         r.removeFromLeft (6.0f);
         const bool ready = st.stemsReady.load();
-        const float prog = st.stemsProgress.load();
-        {
-            // VOL / FILTER for all four (MIX when they differ - pressing it sets them all to VOL)
-            int m0 = st.stemMode[0].load();
-            bool same = true;
-            for (size_t k = 1; k < 4; ++k) same = same && st.stemMode[k].load() == m0;
-            auto mc = vfit (r.removeFromLeft (46.0f));
-            chip (g, mc, ! same ? "MIX" : m0 == 1 ? "FILTER" : "VOL", ! same || m0 != 0, Theme::sync);
-            regions.push_back ({ mc, "stemmode", 8 });
-            r.removeFromLeft (6.0f);
-        }
-        juce::ignoreUnused (prog);
         const float sw = (r.getWidth() - 3 * 6.0f) / 4.0f;
         for (int s = 0; s < 4; ++s)
         {
             auto b = juce::Rectangle<float> (r.getX() + s * (sw + 6.0f), r.getY() + 1.0f, sw, r.getHeight() - 2.0f);
-            juce::Rectangle<float> bar, modeBtn;
-            paintStemControl (g, b, s, st.stemGain[(size_t) s].load(), st.stemMode[(size_t) s].load(), ready, bar, modeBtn);
+            juce::Rectangle<float> bar, filterBar;
+            paintStemControl (g, b, s, st.stemGain[(size_t) s].load(), st.stemFilter[(size_t) s].load(), ready, bar, filterBar);
             regions.push_back ({ bar, p + "stem." + juce::String (s + 1) + ".mute", 2 });
-            regions.push_back ({ modeBtn, "stemmode." + juce::String (s), 9 });
+            regions.push_back ({ filterBar, p + "stem." + juce::String (s + 1) + ".filter", 9 });
         }
     }
+
+    // pressed buttons flash
+    if (const bool flashing = juce::Time::getMillisecondCounterHiRes() < flashUntil; flashing || heldAction.isNotEmpty())
+        for (auto& rg : regions)
+            if (rg.kind == 0 && ((flashing && rg.action == flashAction) || rg.action == heldAction))
+            {
+                g.setColour (juce::Colours::white.withAlpha (0.35f));
+                g.fillRect (rg.r);
+            }
+}
+
+void DeckPanel::setBrake (double seconds, double beats)
+{
+    auto& dk = engine.deck (deck);
+    dk.post (Deck::Cmd::vinylTime, seconds, 0);
+    dk.post (Deck::Cmd::brakeBeats, beats);
+    // turning the knob up from instant switches the brake on; all the way down, off
+    const bool on = seconds > 0.0 || beats > 0.0;
+    if (on != dk.state().brakeOn.load()) dk.post (Deck::Cmd::vinylBrakeSet, on ? 1.0 : 0.0, 0);
+    if (onBrakeChanged) onBrakeChanged (deck, seconds, beats);
+    repaint();
+}
+
+juce::String DeckPanel::jumpSizeText (double beats)
+{
+    if (beats < 1.0) return "1/" + juce::String ((int) std::lround (1.0 / beats)) + " BEAT";
+    if (beats < 4.0 || std::fmod (beats, 4.0) != 0.0) return juce::String ((int) beats) + (beats == 1.0 ? " BEAT" : " BEATS");
+    const int bars = (int) (beats / 4.0);
+    return juce::String (bars) + (bars == 1 ? " BAR" : " BARS");
+}
+
+void DeckPanel::showJumpSlotMenu (int slot, juce::Rectangle<float> area, bool colour)
+{
+    const auto screen = localAreaToGlobal (area.toNearestInt());
+    juce::Component::SafePointer<DeckPanel> safe (this);
+    auto changed = [safe, slot] (double beats, juce::uint32 c)
+    {
+        if (safe == nullptr) return;
+        safe->router.setJumpSlotBeats (safe->deck, slot, beats);
+        safe->router.setJumpSlotColour (safe->deck, slot, c);
+        if (safe->onJumpSlotChanged) safe->onJumpSlotChanged (safe->deck, slot, beats, c);
+        safe->repaint();
+    };
+    const double beats = router.getJumpSlotBeats (deck, slot);
+    const auto c = router.getJumpSlotColour (deck, slot);
+    juce::PopupMenu m;
+    if (! colour)
+    {
+        m.addSectionHeader ("Beat jump " + juce::String (slot + 1) + " - how far");
+        const double sizes[] = { 0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64, 128 };
+        for (int i = 0; i < 11; ++i) m.addItem (1 + i, jumpSizeText (sizes[i]), true, std::abs (sizes[i] - beats) < 1.0e-6);
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (screen),
+                         [changed, c] (int r) { const double s[] = { 0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64, 128 }; if (r >= 1 && r <= 11) changed (s[r - 1], c); });
+        return;
+    }
+    m.addSectionHeader ("Beat jump " + juce::String (slot + 1) + " colour (and the pads it's mapped to)");
+    m.addItem (200, "Default", true, c == 0);
+    m.addSeparator();
+    const auto current = c != 0 ? juce::Colour (c) : Theme::sync;
+    addCueColourItems (m, 100, current);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (screen),
+                     [changed, beats, screen, current] (int r)
+    {
+        if (r == 200) { changed (beats, 0); return; }
+        handleCueColourMenu (r, 100, screen, current, [changed, beats] (juce::Colour col) { changed (beats, col.getARGB()); });
+    });
 }
 
 void DeckPanel::showPadMenu (int pad, juce::Rectangle<float> area)
@@ -649,6 +782,13 @@ const DeckPanel::Region* DeckPanel::regionAt (juce::Point<float> p) const
 
 void DeckPanel::press (const juce::String& id, bool down)
 {
+    if (down)
+    {
+        // the button flashes as it's pressed
+        flashAction = id;
+        flashUntil = juce::Time::getMillisecondCounterHiRes() + 160.0;
+        repaint();
+    }
     ActionValue v;
     v.down = down;
     router.perform (id, v);
@@ -765,22 +905,24 @@ void DeckPanel::mouseDown (const juce::MouseEvent& e)
 {
     auto* r = regionAt (e.position);
     if (r == nullptr) return;
-    if (r->kind == 2 && e.mods.isPopupMenu()) return;   // (no right-click menu: the VOL / FILTER buttons do it)
+    if ((r->kind == 2 || r->kind == 8 || r->kind == 9) && e.mods.isPopupMenu()) return;
     if (r->kind == 8)
     {
-        if (e.mods.isPopupMenu()) return;
-        // all four: VOL <> FILTER (from MIX: VOL)
-        const auto& st = engine.deck (deck).state();
-        bool same = true;
-        for (size_t k = 1; k < 4; ++k) same = same && st.stemMode[k].load() == st.stemMode[0].load();
-        setStemMode (-1, ! same ? 0 : 1 - st.stemMode[0].load());
+        // resonance knob: drag up / down, double-click back to the start value
+        ActionValue av;
+        if (e.getNumberOfClicks() >= 2) { av.value = 0.25; router.perform (r->action, av); return; }
+        resoDrag = true;
+        resoStart = engine.deck (deck).state().stemResonance.load();
         return;
     }
     if (r->kind == 9)
     {
-        const int s = r->action.getTrailingIntValue();
-        if (e.mods.isPopupMenu()) return;
-        setStemMode (s, 1 - engine.deck (deck).state().stemMode[(size_t) s].load());
+        // filter bar: click / drag sets it, double-click opens it
+        const int s = r->action.fromFirstOccurrenceOf ("stem.", false, false).getIntValue() - 1;
+        ActionValue av;
+        av.value = e.getNumberOfClicks() >= 2 ? 0.5 : stemFilterAt (r->r, e.position.x);
+        router.perform (r->action, av);
+        dragFilter = s;
         return;
     }
     if (r->kind == 2 && e.getNumberOfClicks() >= 2)
@@ -803,6 +945,35 @@ void DeckPanel::mouseDown (const juce::MouseEvent& e)
         auto* ed = editor;
         const int dk = deck;
         showGridMoreMenu (localAreaToGlobal (r->r.toNearestInt()), [ed, dk] (const juce::String& a) { if (ed != nullptr) ed->gridAction (dk, a); });
+        return;
+    }
+    if (r->kind == 13)
+    {
+        // vinyl speed knob: drag up / down; double-click = instant
+        const auto& st = engine.deck (deck).state();
+        if (e.getNumberOfClicks() >= 2) { setBrake (0.0, 0.0); return; }
+        brakeDrag = true;
+        brakeDragStart = st.brakeBeats.load() > 0.0 ? std::log2 (st.brakeBeats.load() / 0.25) / 4.0 : st.brakeSeconds.load() / 3.0;
+        return;
+    }
+    if (r->kind == 14)
+    {
+        // lock the stop to beats (or back to seconds)
+        const auto& st = engine.deck (deck).state();
+        if (st.brakeBeats.load() > 0.0) setBrake (st.brakeSeconds.load(), 0.0);
+        else setBrake (st.brakeSeconds.load(), 4.0);
+        return;
+    }
+    if (r->kind == 12)
+    {
+        scrubDrag = true;
+        scrubLastX = e.position.x;
+        repaint();
+        return;
+    }
+    if (r->kind == 11)
+    {
+        showJumpSlotMenu (r->action.getTrailingIntValue(), r->r, e.mods.isPopupMenu());
         return;
     }
     if (r->kind == 10)
@@ -909,12 +1080,52 @@ void DeckPanel::mouseDrag (const juce::MouseEvent& e)
         engine.deck (deck).post (Deck::Cmd::setPitchFader, juce::jlimit (-1.0, 1.0, (ratio - 1.0) / range));
         return;
     }
+    if (brakeDrag)
+    {
+        const auto& st = engine.deck (deck).state();
+        const double v = juce::jlimit (0.0, 1.0, brakeDragStart - e.getDistanceFromDragStartY() / 120.0);
+        if (st.brakeBeats.load() > 0.0)
+            setBrake (st.brakeSeconds.load(), 0.25 * std::pow (2.0, std::round (v * 4.0)));   // 1/4 beat .. 1 bar (4 beats)
+        else
+            setBrake (std::round (v * 30.0) / 10.0, 0.0);   // 0 - 3 s in 0.1 s
+        return;
+    }
+    if (scrubDrag)
+    {
+        const float dx = e.position.x - scrubLastX;
+        if (std::abs (dx) >= 3.0f)
+        {
+            ActionValue av;
+            av.delta = dx / 3.0f;
+            scrubLastX = e.position.x;
+            router.perform ("d" + juce::String (deck + 1) + ".scrub", av);
+        }
+        return;
+    }
+    if (resoDrag)
+    {
+        ActionValue av;
+        av.value = juce::jlimit (0.0, 1.0, (double) resoStart - e.getDistanceFromDragStartY() / 120.0);
+        router.perform ("d" + juce::String (deck + 1) + ".stem.resonance", av);
+        return;
+    }
+    if (dragFilter >= 0)
+    {
+        for (auto& r : regions)
+            if (r.kind == 9 && r.action.contains ("stem." + juce::String (dragFilter + 1) + "."))
+            {
+                ActionValue av;
+                av.value = stemFilterAt (r.r, e.position.x);
+                router.perform (r.action, av);
+            }
+        return;
+    }
     if (dragStem >= 0 && e.getDistanceFromDragStart() > 3)
     {
         for (auto& r : regions)
             if (r.kind == 2 && r.action.contains ("stem." + juce::String (dragStem + 1) + "."))
             {
-                const double v = juce::jlimit (0.0, 1.0, (double) ((e.position.x - r.r.getX()) / r.r.getWidth()));
+                const double v = stemVolumeAt (r.r, e.position.x);
             {
                 ActionValue av;
                 av.value = v;
@@ -931,6 +1142,10 @@ void DeckPanel::mouseDrag (const juce::MouseEvent& e)
 void DeckPanel::mouseUp (const juce::MouseEvent& e)
 {
     tempoDrag = false;
+    resoDrag = false;
+    brakeDrag = false;
+    if (scrubDrag) { scrubDrag = false; repaint(); }
+    dragFilter = -1;
     if (dragStem >= 0)
     {
         if (e.getDistanceFromDragStart() <= 3)

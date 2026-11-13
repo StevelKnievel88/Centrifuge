@@ -1118,6 +1118,13 @@ void BrowserView::scroll (int delta)
         const int row = juce::jlimit (0, juce::jmax (0, (int) rows.size() - 1), table.getSelectedRow() + delta);
         table.selectRow (row);
         table.scrollToEnsureRowIsOnscreen (row);
+        // A preview playing follows the highlighted track (from the start)
+        if (previewPlaying && previewPath.isNotEmpty() && currentSource != nullptr && onPreview)
+        {
+            const auto sel = getSelectedTracks();
+            if (! sel.empty() && sel.front().file.getFullPathName() != previewPath)
+                onPreview (sel.front(), currentSource->kind == LibrarySource::Kind::pcCollection, 0.0);
+        }
     }
     tree.repaint();
     table.repaint();
@@ -1141,6 +1148,16 @@ void BrowserView::enter()
             treeFocused = false;
             if (table.getSelectedRow() < 0 && ! rows.empty()) table.selectRow (0);
         }
+    }
+    else if (previewPlaying && previewPath.isNotEmpty())
+    {
+        // In the track list, select starts the highlighted track's preview; pressing it again stops it
+        if (onPreviewStop) onPreviewStop();
+    }
+    else if (currentSource != nullptr && onPreview)
+    {
+        const auto sel = getSelectedTracks();
+        if (! sel.empty()) onPreview (sel.front(), currentSource->kind == LibrarySource::Kind::pcCollection, 0.0);
     }
     tree.repaint();
     table.repaint();
@@ -1166,6 +1183,19 @@ void BrowserView::loadSelected (int deck)
     if (row < 0 || row >= (int) rows.size() || currentSource == nullptr) return;
     if (onLoadToDeck)
         onLoadToDeck (deck, currentSource->tracks[(size_t) rows[(size_t) row]], currentSource->kind == LibrarySource::Kind::pcCollection);
+}
+
+void BrowserView::loadNeighbour (int deck, const juce::File& current, int dir)
+{
+    if (currentSource == nullptr || rows.empty()) return;
+    int at = table.getSelectedRow();
+    for (int i = 0; i < (int) rows.size(); ++i)
+        if (currentSource->tracks[(size_t) rows[(size_t) i]].file == current) { at = i; break; }
+    const int next = juce::jlimit (0, (int) rows.size() - 1, at + dir);
+    if (next == at && at >= 0) return;
+    table.selectRow (next);
+    table.scrollToEnsureRowIsOnscreen (next);
+    loadSelected (deck);
 }
 
 void BrowserView::setLibraryView (int v)

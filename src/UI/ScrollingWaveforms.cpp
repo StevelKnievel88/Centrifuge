@@ -18,7 +18,7 @@ namespace
         auto mix = [&h] (double v) { h ^= (juce::uint64) std::llround (v * 1000.0); h *= 1099511628211ull; };
         mix (st.loopActive.load()); mix (st.loopInSec.load()); mix (st.loopOutSec.load()); mix (st.cuePointSec.load());
         for (size_t i = 0; i < 8; ++i) { mix (st.hotStart[i].load()); mix ((double) st.hotColour[i].load()); }
-        for (size_t i = 0; i < 4; ++i) { mix (st.stemGain[i].load()); mix (st.stemMode[i].load()); }
+        for (size_t i = 0; i < 4; ++i) { mix (st.stemGain[i].load()); mix (st.stemFilter[i].load()); }
         mix (std::floor (st.stemsProgress.load() * 100.0f));
         mix (st.stemsReady.load());
         mix (st.numLocators.load()); mix (st.numSkips.load()); mix (st.skipsOn.load()); mix (st.skipPendingFrom.load());
@@ -280,7 +280,9 @@ juce::Rectangle<int> ScrollingWaveforms::drawLabel (juce::Graphics& g, juce::Rec
     if (lane.getHeight() < 20) return {};
     const auto f = psyched::Fonts::label (10.0f);
     const float w = f.getStringWidthFloat (text.toUpperCase()) + 14.0f;
-    auto r = juce::Rectangle<float> ((float) lane.getX() + 34.0f, atTop ? (float) lane.getY() + 4.0f : (float) lane.getBottom() - 20.0f, w, 16.0f);
+    // left edge in line with the deck number square (above it is the badge and the lanes button)
+    auto r = juce::Rectangle<float> ((float) lane.getX() + 6.0f, atTop ? (float) lane.getY() + 4.0f : (float) lane.getBottom() - 20.0f, w, 16.0f);
+    if (r.intersects (labelAvoid)) r.setY (labelAvoid.getBottom() + 4.0f);
     g.setColour (psyched::Colours::field.withAlpha (0.85f));
     g.fillRect (r);
     g.setColour (psyched::Colours::edge2);
@@ -366,15 +368,16 @@ void ScrollingWaveforms::paintDeck (juce::Graphics& g, int d, juce::Rectangle<in
     g.setFont (Theme::display (11.0f, true));
     g.drawText (id < 2 ? juce::String (id + 1) : juce::String ("P"), badge, juce::Justification::centred);
 
+    labelAvoid = badge.withWidth (badge.getWidth() + 6.0f + 54.0f);
     labelRects[(size_t) d][0] = drawLabel (g, topLane, laneName (d, 0), ! two);
     labelRects[(size_t) d][1] = two ? drawLabel (g, bottomLane, laneName (d, 1), true) : juce::Rectangle<int>();
+    labelAvoid = {};
     {
-        // second lane on / off, next to the top lane's name
-        const auto lr = labelRects[(size_t) d][0];
+        // second lane on / off, right of the deck number square
         laneToggleRects[(size_t) d] = {};
-        if (! lr.isEmpty())
+        if (topLane.getHeight() >= 20)
         {
-            auto tr = juce::Rectangle<int> (lr.getRight() + 4, lr.getY(), 54, lr.getHeight());
+            auto tr = juce::Rectangle<int> ((int) badge.getRight() + 6, (int) badge.getY() + 1, 54, 16);
             g.setColour (psyched::Colours::field.withAlpha (0.85f));
             g.fillRect (tr);
             g.setColour (two ? Theme::deckColour (engineDeck (d)) : psyched::Colours::edge2);
@@ -494,11 +497,10 @@ void ScrollingWaveforms::paintLane (juce::Graphics& g, int d, int lane, juce::Re
                           { return renderStemStrip (*sw, s, col, sw->computed.load(), first, epp, w, h, o); });
             tc.setValidEntries (valid);
             // how much of the stem is let through (its control is bipolar: centre = all of it)
-            const float cv = st.stemGain[(size_t) s].load();
-            const bool filter = st.stemMode[(size_t) s].load() != 0;
-            const bool highPass = filter && cv > 0.52f;
-            float gain = ! filter ? juce::jmin (1.0f, cv * 2.0f)
-                       : cv < 0.48f ? cv / 0.48f : cv > 0.52f ? (1.0f - cv) / 0.48f : 1.0f;
+            // (each stem has a volume and a filter: left of centre low-pass, right high-pass)
+            const float cv = st.stemGain[(size_t) s].load(), fv = st.stemFilter[(size_t) s].load();
+            const bool highPass = fv > 0.52f;
+            float gain = juce::jmin (1.0f, cv * 2.0f) * (fv < 0.48f ? fv / 0.48f : fv > 0.52f ? (1.0f - fv) / 0.48f : 1.0f);
             gain *= juce::jlimit (0.0f, 1.0f, st.stemAuto[(size_t) s].load());   // stem locators too
             const float op = (stemsSeparate || oneStem) ? 1.0f : stemOpacity[(size_t) juce::jlimit (0, 3, s)];
             if (gain >= 0.999f) { tc.draw (g, area, t, px, op); continue; }
@@ -994,6 +996,11 @@ void ScrollingWaveforms::mouseDown (const juce::MouseEvent& e)
     if (nearPlayhead (e.getPosition())) { dragPlayhead = true; return; }
     dragDeck = d;
     dragStartPos = decks[(size_t) dragDeck].shownPos;
+    // While playing, grabbing the waveform holds it like a hand on the platter; dragging scrubs it (you hear it)
+    auto& dk = engine.deck (engineDeck (d));
+    dragScrub = dk.state().playing.load();
+    dragLastX = e.position.x;
+    if (dragScrub) dk.post (Deck::Cmd::scrubHold, 1.0, 0, true);
 }
 
 void ScrollingWaveforms::mouseDrag (const juce::MouseEvent& e)
@@ -1016,7 +1023,15 @@ void ScrollingWaveforms::mouseDrag (const juce::MouseEvent& e)
     }
     if (dragDeck < 0) return;
     auto& deck = engine.deck (engineDeck (dragDeck));
-    if (deck.state().playing.load() && ! scrubWhilePlaying) return;
+    if (dragScrub)
+    {
+        // waveform moved by dx pixels = that much of the track, as scrub clicks (1/40 of a platter turn each)
+        const double pps = (double) getWidth() / visibleSeconds;
+        const double dsec = -(e.position.x - dragLastX) / pps;
+        dragLastX = e.position.x;
+        if (dsec != 0.0) deck.post (Deck::Cmd::scrub, dsec * 40.0 / Deck::secondsPerRevolution);
+        return;
+    }
     const double pps = (double) getWidth() / visibleSeconds;
     const double disp = juce::jmax (0.0, dragStartPos - e.getDistanceFromDragStartX() / pps);
     deck.post (Deck::Cmd::seekSeconds, decks[(size_t) dragDeck].fold.toSource (disp));
@@ -1024,6 +1039,8 @@ void ScrollingWaveforms::mouseDrag (const juce::MouseEvent& e)
 
 void ScrollingWaveforms::mouseUp (const juce::MouseEvent&)
 {
+    if (dragScrub && dragDeck >= 0) engine.deck (engineDeck (dragDeck)).post (Deck::Cmd::scrubHold, 0.0, 0, false);
+    dragScrub = false;
     if (dragDivider >= 0 && onLaneSplitChanged)
         for (int k = 0; k < numSlots(); ++k) onLaneSplitChanged (engineDeck (k), laneSplit[(size_t) k]);
     if (dragPlayhead && onPlayheadMoved)

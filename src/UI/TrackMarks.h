@@ -8,6 +8,13 @@
 namespace orbit
 {
 
+/** Height of an overview's phrase strip along the bottom (and the bar strip along the top when the grid is on). */
+inline float overviewStripHeight (float overviewHeight, bool compact = false)
+{
+    return juce::jmax (2.0f, juce::jmin (compact ? 3.0f : 8.0f, overviewHeight * 0.18f));
+}
+
+
 /** Hot cues, locators, loops, skips and phrases of one track, in a form any overview can draw
     (deck overviews, PREP, the browser's preview column). Times in seconds of deck time. */
 struct TrackMarks
@@ -84,7 +91,7 @@ struct TrackMarks
     strip and is drawn before the marks so they stay bright; a 1-pixel outline in the deck's colour. */
 inline void paintOverviewViewBox (juce::Graphics& g, juce::Rectangle<float> r, float x0, float x1, juce::Colour col, bool hasPhrases)
 {
-    if (hasPhrases) r.removeFromBottom (juce::jmax (2.0f, juce::jmin (6.0f, r.getHeight() * 0.14f)) + 1.0f);
+    if (hasPhrases) r.removeFromBottom (overviewStripHeight (r.getHeight()) + 1.0f);
     x0 = juce::jlimit (r.getX(), r.getRight(), x0);
     x1 = juce::jlimit (r.getX(), r.getRight(), x1);
     if (x1 - x0 < 2.0f) return;
@@ -127,7 +134,7 @@ inline void paintOverviewMarks (juce::Graphics& g, juce::Rectangle<float> r, con
     float bottom = r.getBottom();
     if (! m.phrases.empty())
     {
-        const float ph = juce::jmax (2.0f, juce::jmin (compact ? 3.0f : 6.0f, r.getHeight() * 0.14f));
+        const float ph = overviewStripHeight (r.getHeight(), compact);
         auto strip = juce::Rectangle<float> (r.getX(), r.getBottom() - ph, r.getWidth(), ph);
         auto block = [&] (double d0, double d1, juce::Colour c)
         {
@@ -358,7 +365,7 @@ inline void paintPhraseStripFolded (juce::Graphics& g, juce::Rectangle<float> st
     down through the waveform every 16 bars (or wider when zoomed out), and minute marks along the bottom, above the
     phrase strip (`bottomInset` = its height). */
 inline void paintOverviewGrid (juce::Graphics& g, juce::Rectangle<float> r, const BeatGrid& grid, double sourceLength, const TimeFold* fold,
-                               float bottomInset = 0.0f)
+                               float bottomInset = 0.0f, float topStrip = 0.0f)
 {
     if (sourceLength <= 0.0) return;
     const double dlen = juce::jmax (0.001, fold != nullptr ? fold->displayLength (sourceLength) : sourceLength);
@@ -366,6 +373,12 @@ inline void paintOverviewGrid (juce::Graphics& g, juce::Rectangle<float> r, cons
     juce::Graphics::ScopedSaveState ss (g);
     g.reduceClipRegion (r.toNearestInt());
     const float bottom = r.getBottom() - bottomInset;
+    // the bar ticks get a black strip of their own along the top (like the phrase strip along the bottom)
+    if (topStrip > 0.0f)
+    {
+        g.setColour (juce::Colours::black);
+        g.fillRect (r.withHeight (topStrip + 1.0f));
+    }
     if (grid.isValid())
     {
         const double barSec = grid.beatLengthAt (sourceLength * 0.5) * 4.0;
@@ -381,7 +394,8 @@ inline void paintOverviewGrid (juce::Graphics& g, juce::Rectangle<float> r, cons
             if (beatInBar != 1) return;
             const int b = bar++;
             if (b % finest != 0) return;
-            const float len = b % 64 == 0 ? 10.0f : b % 16 == 0 ? 7.0f : b % 4 == 0 ? 4.0f : 2.0f;
+            const float full = topStrip > 0.0f ? topStrip : 10.0f;
+            const float len = b % 64 == 0 ? full : b % 16 == 0 ? full * 0.7f : b % 4 == 0 ? full * 0.45f : full * 0.25f;
             const bool line = b % lineEvery == 0;
             auto draw = [&] (float x)
             {
@@ -389,10 +403,10 @@ inline void paintOverviewGrid (juce::Graphics& g, juce::Rectangle<float> r, cons
                 if (line)
                 {
                     g.setColour (juce::Colours::white.withAlpha (0.3f));
-                    g.fillRect (x - 0.5f, r.getY(), 1.0f, bottom - r.getY());
+                    g.fillRect (x - 0.5f, r.getY() + topStrip, 1.0f, bottom - r.getY() - topStrip);
                 }
                 g.setColour (juce::Colours::black.withAlpha (0.6f));
-                g.fillRect (x - 1.0f, r.getY(), 2.0f, len + 1.0f);
+                if (topStrip <= 0.0f) g.fillRect (x - 1.0f, r.getY(), 2.0f, len + 1.0f);
                 g.setColour (juce::Colours::white.withAlpha (0.92f));
                 g.fillRect (x - 0.5f, r.getY(), 1.0f, len);
             };

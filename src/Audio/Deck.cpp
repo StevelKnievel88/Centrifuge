@@ -212,7 +212,8 @@ void Deck::loadTrack (LoadedTrack* t)
     playSeg = -1;
     stems = nullptr;
     playing = cuePreview = scratching = false;
-    coasting = braking = slipping = startRamp = false;
+    coasting = braking = slipping = startRamp = reversing = scrubbing = false;
+    searchDir = 0;
     prevLoopActive = false;
     motor = 1.0;
     releaseT = 1.0;
@@ -413,13 +414,25 @@ void Deck::apply (const Command& c)
             shiftHeld = c.down;
             break;
 
-        case Cmd::play:      if (c.down && track != nullptr) { if (! playing) syncSnapRequested = syncOn; beginPlay(); cuePreview = false; hotPreview = -1; } break;
-        case Cmd::pause:     if (c.down) beginStop(); break;
+        case Cmd::play:
+            if (c.down && track != nullptr)
+            {
+                if (slipping && slipSource == 5) { slipEnd(); break; }   // slip: carries on from where it would have got to
+                if (! playing) syncSnapRequested = syncOn;
+                beginPlay(); cuePreview = false; hotPreview = -1;
+            }
+            break;
+        case Cmd::pause:     if (c.down) { if (playing && ! braking) slipBegin (5); beginStop(); } break;
 
         case Cmd::playToggle:
             if (! c.down || track == nullptr) break;
             if (playing && ! braking && ! cuePreview && hotPreview < 0)
+            {
+                slipBegin (5);   // with slip on, the track carries on underneath the pause
                 beginStop();
+            }
+            else if (slipping && slipSource == 5)
+                slipEnd();
             else
             {
                 if (! playing) syncSnapRequested = syncOn;
@@ -427,6 +440,47 @@ void Deck::apply (const Command& c)
                 cuePreview = false;
                 hotPreview = -1;
             }
+            break;
+
+        case Cmd::scrubHold:
+            if (track == nullptr) break;
+            if (c.down && ! scratching)
+            {
+                if (playing && ! braking) slipBegin (1);
+                scratching = true;
+                scrubbing = false;
+                scratchVelocity = 0.0;
+                jogTicksPending = 0.0;
+                sinceTickSec = 0.0;
+            }
+            else if (! c.down && scratching && ! jogTouched) { scrubbing = false; endScratch(); }
+            break;
+
+        case Cmd::brakeBeats:
+            brakeBeats = juce::jlimit (0.0, 64.0, c.value);
+            break;
+
+        case Cmd::search:
+            searchDir = c.value > 0.5 ? 1 : c.value < -0.5 ? -1 : 0;
+            break;
+
+        case Cmd::scrub:
+            if (track == nullptr || c.value == 0.0) break;
+            if (! scratching)
+            {
+                if (playing && ! braking) slipBegin (1);
+                scratching = scrubbing = true;
+                scratchVelocity = 0.0;
+                jogTicksPending = 0.0;
+            }
+            sinceTickSec = 0.0;
+            jogTicksPending += c.value * ticksPerRevolution / 40.0;   // one click = 1/40 of a turn
+            break;
+
+        case Cmd::reverse:
+            if (track == nullptr) break;
+            if (c.down && ! reversing) { reversing = true; if (playing) slipBegin (6); }
+            else if (! c.down && reversing) { reversing = false; if (slipping && slipSource == 6) slipEnd(); }
             break;
 
         case Cmd::vinylTime:
@@ -742,6 +796,7 @@ void Deck::apply (const Command& c)
                 if (coasting) { coasting = false; break; }   // caught the platter again: carry on scratching
                 if (playing && ! braking) slipBegin (1);
                 scratching = true;
+                scrubbing = false;
                 scratchVelocity = 0.0;
                 jogTicksPending = 0.0;
                 sinceTickSec = 0.0;
@@ -951,7 +1006,15 @@ void Deck::apply (const Command& c)
         }
 
         case Cmd::stemReset:
-            if (c.down) { stemMuted.fill (false); stemTarget.fill (0.5f); }
+            if (c.down) { stemMuted.fill (false); stemTarget.fill (0.5f); stemFilterTarget.fill (0.5f); }
+            break;
+
+        case Cmd::stemFilter:
+            if (c.index >= 0 && c.index < 4) stemFilterTarget[(size_t) c.index] = (float) juce::jlimit (0.0, 1.0, c.value);
+            break;
+
+        case Cmd::stemResonance:
+            stemReso = (float) juce::jlimit (0.0, 1.0, c.value);
             break;
 
         case Cmd::eject:
@@ -1090,12 +1153,13 @@ void Deck::readResampled (float* outL, float* outR, int n, double step)
     stemAutoNow = autoG;
     for (size_t s = 0; s < 4; ++s)
     {
-        const float v = stemTarget[s];
+        // Every stem has both: the volume control (left of centre fades it down) and the filter control
+        const float v = stemTarget[s], fv = stemFilterTarget[s];
         float level = 1.0f, lp = 1.0f, hp = 1.0f;
         if (stemMuted[s]) level = 0.0f;
-        else if (stemMode[s] == 0) level = juce::jmin (1.0f, v * 2.0f);
-        else if (v < 0.48f) lp = v / 0.48f;
-        else if (v > 0.52f) hp = (1.0f - v) / 0.48f;
+        else level = juce::jmin (1.0f, v * 2.0f);
+        if (fv < 0.48f) lp = fv / 0.48f;
+        else if (fv > 0.52f) hp = (1.0f - fv) / 0.48f;
         const float ag = autoG[s];
         if (autoMode[s] == 1) lp = juce::jmin (lp, ag);
         else if (autoMode[s] == 2) hp = juce::jmin (hp, ag);
@@ -1142,7 +1206,7 @@ void Deck::readResampled (float* outL, float* outR, int n, double step)
     struct Coeffs { float a1 = 1, a2 = 0, a3 = 0; bool on = false; };
     std::array<Coeffs, 4> cLp {}, cHp {};
     std::array<float, 4> famp {};
-    constexpr float fk = 1.1f;   // a touch of resonance
+    const float fk = 1.4f - 1.25f * stemReso;   // damping: 1.4 gentle .. 0.15 rings (the resonance control)
     auto makeCoeffs = [&] (float fc)
     {
         Coeffs c;
@@ -1288,7 +1352,7 @@ void Deck::readResampled (float* outL, float* outR, int n, double step)
                     sr = sr * (1.0f - w) + orr * w;
                 }
                 auto& f = stemFilters[(size_t) s];
-                auto svf = [] (const Coeffs& c, float x, float& s1, float& s2, bool low)
+                auto svf = [fk] (const Coeffs& c, float x, float& s1, float& s2, bool low)
                 {
                     const float v3 = x - s2, v1 = c.a1 * s1 + c.a2 * v3, v2 = s2 + c.a2 * s1 + c.a3 * v3;
                     s1 = 2.0f * v1 - s1;
@@ -1337,6 +1401,13 @@ void Deck::process (float* outL, float* outR, int n)
     const double baseStep = srcRate / deviceRate;
     const double secPerTick = secondsPerRevolution / ticksPerRevolution;
 
+    // Search buttons: through the track at 8x while held (playing carries on from where it lands)
+    if (searchDir != 0 && track->audio != nullptr)
+    {
+        pos = juce::jlimit (0.0, (double) track->audio->numFrames - 1.0, pos + searchDir * 7.0 * blockSec * srcRate);
+        stretchActive = false;
+    }
+
     // Jog wheel
     if (scratching)
     {
@@ -1344,6 +1415,7 @@ void Deck::process (float* outL, float* outR, int n)
         const double inst = (jogTicksPending * secPerTick) / blockSec;
         jogTicksPending = 0.0;
         scratchVelocity += (inst - scratchVelocity) * 0.4;
+        if (scrubbing && ! jogTouched && sinceTickSec > 0.15) { scrubbing = false; endScratch(); }   // the scrub dial stopped
         if (coasting)
         {
             // Let go of a fast spin: keep following the platter until it has nearly stopped (or settled to play speed)
@@ -1379,7 +1451,10 @@ void Deck::process (float* outL, float* outR, int n)
     if (! playing) braking = false;
     if (braking)
     {
-        motor -= blockSec / juce::jmax (0.01, brakeSec);
+        // synced: the stop takes that many beats at the tempo it's playing
+        const double bpmNow = baseBpmAtPosition() * tempoRatio;
+        const double dur = brakeBeats > 0.0 && bpmNow > 1.0 ? brakeBeats * 60.0 / bpmNow : brakeSec;
+        motor -= blockSec / juce::jmax (0.01, dur);
         if (motor <= 0.0) { motor = 0.0; braking = false; playing = false; }
     }
     else if (playing && startRamp)
@@ -1407,6 +1482,7 @@ void Deck::process (float* outL, float* outR, int n)
         }
     }
     else releaseT = 1.0;
+    if (reversing && playing && ! scratching) speed = -speed;   // the reverse button: backwards at the same speed
 
     // Key lock and/or key shift go through the pitch-shifter; otherwise plain resampling (cheapest).
     // Brakes, starts and scratch releases sound like vinyl, so they skip it.
@@ -1547,6 +1623,10 @@ void Deck::publish()
     pub.braking = braking;
     pub.slip = slip;
     pub.slipping = slipping;
+    pub.reversing = reversing;
+    pub.searchDir = searchDir;
+    pub.brakeSeconds = brakeSec;
+    pub.brakeBeats = brakeBeats;
     pub.slipSec = slipping ? slipSec : -1.0;
     pub.brakeOn = brakeOn;
     pub.startOn = startOn;
@@ -1571,6 +1651,8 @@ void Deck::publish()
         pub.stemGain[s] = stemMuted[s] ? 0.0f : stemTarget[s];   // the control (centre 0.5 = untouched)
     for (size_t s = 0; s < 4; ++s) pub.stemAuto[s] = stemAutoNow[s];
     for (size_t s = 0; s < 4; ++s) pub.stemMode[s] = stemMode[s];
+    for (size_t s = 0; s < 4; ++s) pub.stemFilter[s] = stemFilterTarget[s];
+    pub.stemResonance = stemReso;
     pub.playSegment = playSeg;
 
     for (int i = 0; i < maxLocators; ++i)

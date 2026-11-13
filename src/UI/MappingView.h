@@ -45,7 +45,6 @@ private:
     void advanceGuided (bool skip);
     void listenForStep();
     void showLearnChoice (const std::vector<MidiManager::LearnChoice>&, int best);
-    void showLedEditor();
     void refreshControllerBoxes();
     static juce::String stepHint (const juce::String& id);
     void updateDetail();
@@ -77,13 +76,19 @@ private:
 
     juce::TextEditor filter;
     juce::TextButton learnButton { "LEARN" }, learnAddButton { "LEARN + ADD" }, clearButton { "CLEAR" }, guidedButton { "GUIDED SETUP" },
-                     skipButton { "SKIP  (TAB)" }, stopButton { "STOP" }, invertButton { "INVERT" }, ledButton { "LED..." };
+                     skipButton { "SKIP  (TAB)" }, stopButton { "STOP" }, invertButton { "INVERT" };
     std::array<juce::ComboBox, 2> controllerBox;
     std::array<juce::String, 2> deckController;
     juce::StringArray lastDevices;
     juce::ComboBox modeBox, pressBox;
     juce::Slider sensitivity;
     juce::Label sensLabel, banner, status;
+
+    /** The selected function's lights (always visible): lit / unlit and the SHIFT layer, each with -1 / +1 arrows
+        and the bright and dim colour banks. */
+    struct LedPanel;
+    std::unique_ptr<LedPanel> ledPanel;
+    juce::Rectangle<int> guidedBox;
 
     std::vector<juce::String> guidedSteps;
     int guidedIndex = -1;

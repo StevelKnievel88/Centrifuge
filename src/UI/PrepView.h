@@ -117,7 +117,9 @@ private:
     juce::Colour singleColour { 0xff3d9bff };
     ScrollingWaveforms waves { engine, { AudioEngine::prepDeck } };
     juce::Rectangle<int> rowStems;
-    int dragStem = -1;
+    int dragStem = -1, dragFilter = -1;
+    bool resoDrag = false;
+    float resoStart = 0.25f;
     double loopBeats = 4.0;
     int listScroll = 0;
     bool editView = true;

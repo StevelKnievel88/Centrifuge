@@ -14,8 +14,8 @@ public:
                std::function<std::vector<TrackInfo>()> currentList,
                std::function<std::vector<TrackInfo>()> selectedTracks,
                std::function<juce::String()> currentListName,
-               std::function<std::array<int, 4>()> getMatrix,
-               std::function<void (std::array<int, 4>)> setMatrix);
+               std::function<std::array<int, 8>()> getMatrix,
+               std::function<void (std::array<int, 8>)> setMatrix);
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -34,8 +34,8 @@ private:
     juce::TextButton openCache { "OPEN STEM FOLDER" };
     StemManager::Status shown;
     juce::String listName;
-    std::function<std::array<int, 4>()> getMatrix;
-    std::function<void (std::array<int, 4>)> setMatrix;
+    std::function<std::array<int, 8>()> getMatrix;
+    std::function<void (std::array<int, 8>)> setMatrix;
     juce::Rectangle<int> matrixArea;
     juce::Component* settingsPanel = nullptr;
     CentrifugeRotor rotor;
