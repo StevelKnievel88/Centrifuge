@@ -238,6 +238,16 @@ void DeckPanel::paint (juce::Graphics& g)
         auto pctArea = tempo.removeFromTop (16.0f);
         g.drawText ((pct >= 0 ? "+" : "") + juce::String (pct, 2) + "%", pctArea, juce::Justification::centredRight);
         regions.push_back ({ pctArea, "tempo.drag", 6 });   // drag up / down to change the tempo, double-click resets
+        // Catch-up: holding a tempo (just became master, or sync just off) - show where the slider points so it can
+        // be moved up to meet the playing %, when it takes over. Flashes while the slider is away from the tempo.
+        if (st.pickup.load())
+        {
+            const double fp = st.faderTargetPct.load();
+            auto cue = tempo.removeFromTop (13.0f);
+            g.setColour ((std::abs (fp - pct) < 0.1 ? Theme::accent : Theme::warn).withAlpha (0.9f));
+            g.setFont (Theme::font (10.5f, true));
+            g.drawText ("slider " + juce::String (fp >= 0 ? "+" : "") + juce::String (fp, 1) + "%", cue, juce::Justification::centredRight);
+        }
         g.setColour (Theme::textDim);
         g.setFont (Theme::font (10.5f));
         const int range = router.getPitchRangePercent (deck);

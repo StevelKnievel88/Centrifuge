@@ -46,6 +46,9 @@ static std::vector<ActionDef> buildActions()
         add (p + "master",      "Master",                D + " - Tempo", B, d, true);
         add (p + "quantize",    "Quantize",              D + " - Tempo", B, d, true);
 
+        // The channel fader, tracked only so Centrifuge knows which deck is up in the mix (for auto-master).
+        add (p + "mix.fader",   "Channel fader (Deck " + juce::String (d + 1) + ")", "Mixer", C, d);
+
         for (int h = 0; h < 8; ++h)
         {
             const juce::String letter = juce::String::charToString ((juce::juce_wchar) ('A' + h));
@@ -124,6 +127,7 @@ static std::vector<ActionDef> buildActions()
         add (p + "key.down",  "Key -1 semitone",  D + " - Key", B, d);
         add (p + "key.reset", "Key reset",        D + " - Key", B, d);
         add (p + "key.shift", "Key shift (encoder)", D + " - Key", E, d);
+        add (p + "key.dial",  "Key shift (dial: left -12, right +12)", D + " - Key", C, d);
         add (p + "key.sync",  "Key sync",         D + " - Key", B, d, true);
     }
 

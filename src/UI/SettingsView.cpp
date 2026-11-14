@@ -284,6 +284,10 @@ public:
             sl.setColour (juce::Slider::trackColourId, Theme::stemColour (st));
             sl.onValueChange = [this, st] { settings.stemOpacity[(size_t) st] = (float) stemOpacity[(size_t) st].getValue() / 100.0f; onChanged(); };
         }
+        add (&stemOffFade, 28, "Turned-off stem (%)");
+        setupSlider (stemOffFade, 0.0, 80.0, 1.0, settings.stemOffFade * 100.0);
+        stemOffFade.setTooltip ("How bright a stem that's turned fully down still shows as a ghost behind the others on the waveform.");
+        stemOffFade.onValueChange = [this] { settings.stemOffFade = (float) stemOffFade.getValue() / 100.0f; onChanged(); };
         addSection ("CONTROLLER");
         add (&quantize, 28, {});
         quantize.setButtonText ("Quantize on at start-up (each deck's QUANTIZE button turns it on / off)");
@@ -743,6 +747,7 @@ private:
         }
     } layerRow;
     std::array<juce::Slider, 4> stemOpacity;
+    juce::Slider stemOffFade;
     PairRow overviewRow;
     juce::TextButton colourButton;
     juce::ComboBox deck1Out, deck2Out, previewOut, fps, analysisRange, keyNotation, nameOrder;

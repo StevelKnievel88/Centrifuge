@@ -242,10 +242,12 @@ void XzScreenLink::serve (const juce::String& ip)
             havePending = false;
         }
 
-        // Only the rows that changed, unless it's time for a whole picture
+        // Only the rows that changed, unless it's time for a whole picture (or a full frame was asked for, e.g. the
+        // view just switched to / from the browser - otherwise a near-static new screen can arrive a row at a time)
         int y0 = 0, y1 = height - 1;
         const auto now = juce::Time::getMillisecondCounter();
-        if (shown.size() == next.size() && now - lastFull < fullRefreshMs)
+        const bool wantFull = forceFull.exchange (false);
+        if (! wantFull && shown.size() == next.size() && now - lastFull < fullRefreshMs)
         {
             auto rowSame = [&] (int y) { return std::memcmp (&shown[(size_t) (y * width)], &next[(size_t) (y * width)], (size_t) width * 2) == 0; };
             while (y0 < height && rowSame (y0)) ++y0;

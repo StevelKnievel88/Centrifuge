@@ -172,6 +172,8 @@ private:   // (after the browser: it shows it)
     void startSetList (bool record);
     void zoomWaves (double steps);
     void checkAutoMaster();
+    void checkAutoMasterFaders();
+    double faderMasterSince = 0.0;
     void setBrowserPoppedOut (bool out);
     std::unique_ptr<juce::DocumentWindow> browserWindow;
     std::unique_ptr<juce::DocumentWindow> keysWindow;      // PREP's keyboard   // the browser popped out into its own window

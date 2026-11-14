@@ -115,7 +115,7 @@ void XzScreenView::touch (int type, int x, int y)
                     }
             if (load1Rect.contains (p)) { browser.loadSelected (0); return; }
             if (load2Rect.contains (p)) { browser.loadSelected (1); return; }
-            if (closeRect.contains (p)) { browserShown = false; return; }
+            if (closeRect.contains (p)) { setBrowserShown (false); return; }
             if (searchRect.contains (p)) { if (onSearchTapped) onSearchTapped(); return; }
             if (filterRect.contains (p)) { showFilterMenu(); return; }
             if (setListRect.contains (p)) { showSetListMenu(); return; }

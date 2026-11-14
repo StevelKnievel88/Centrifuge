@@ -49,6 +49,10 @@ public:
     /** The key a deck is effectively playing in (track key + key shift + tempo when key lock is off). */
     juce::String effectiveKeyText (int deck) const;
 
+    /** Channel-fader tracking (for auto-master): the deck's fader position 0..1, and whether a fader is mapped. */
+    float getFaderLevel (int d) const noexcept { return d >= 0 && d < 2 ? faderLevel[(size_t) d].load() : 0.0f; }
+    bool faderTracked() const noexcept { return faderSeen.load(); }
+
 private:
     void updateStems (int deck);
     void keySync (int deck);
@@ -64,6 +68,8 @@ private:
     std::array<std::array<std::atomic<bool>, 4>, 2> stemMute, controlMute;
     std::array<std::atomic<int>, 8> matrix;   // [deck * 4 + control]
     std::array<std::atomic<bool>, 2> keySyncLit;
+    std::array<std::atomic<float>, 2> faderLevel { 0.0f, 0.0f };   // channel fader per deck (for auto-master)
+    std::atomic<bool> faderSeen { false };                          // a fader has been mapped and moved
 public:
     bool isStemCtlFilterMode (int d) const { return d >= 0 && d < 2 && stemCtlFilterMode[(size_t) d].load(); }
     void toggleStemCtlFilterMode (int d);

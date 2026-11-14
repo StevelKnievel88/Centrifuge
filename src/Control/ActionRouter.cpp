@@ -378,6 +378,8 @@ void ActionRouter::perform (const ActionDef& a, const ActionValue& v)
     else if (name == "key.up")    { if (v.down) { deck.post (C::keyShiftBy, 1.0);  keySyncLit[(size_t) (d & 1)] = false; } }
     else if (name == "key.down")  { if (v.down) { deck.post (C::keyShiftBy, -1.0); keySyncLit[(size_t) (d & 1)] = false; } }
     else if (name == "key.shift") { deck.post (C::keyShiftBy, v.delta > 0 ? 1.0 : -1.0); keySyncLit[(size_t) (d & 1)] = false; }
+    else if (name == "key.dial")  { deck.post (C::keyShiftSet, std::round ((v.value * 2.0 - 1.0) * 12.0)); keySyncLit[(size_t) (d & 1)] = false; }
+    else if (name == "mix.fader") { if (d >= 0 && d < 2) { faderLevel[(size_t) d] = (float) v.value; faderSeen = true; } }
     else if (name == "key.reset") { if (v.down) { deck.post (C::keyShiftSet, 0.0); keySyncLit[(size_t) (d & 1)] = false; } }
     else if (name == "key.sync")
     {

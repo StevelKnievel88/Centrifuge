@@ -515,9 +515,9 @@ void ScrollingWaveforms::paintLane (juce::Graphics& g, int d, int lane, juce::Re
             const float op = (stemsSeparate || oneStem) ? 1.0f : stemOpacity[(size_t) juce::jlimit (0, 3, s)];
             if (gain >= 0.999f) { tc.draw (g, area, t, px, op); continue; }
             // Turned down / low-passed: shrinks in towards the centre; high-passed: each column hollows out from the
-            // centre in proportion to its own height (the loud parts open up first, so the shape stays). A faint
-            // ghost of the whole stem stays, and fully off, its outline in the stem's colour.
-            tc.draw (g, area, t, px, 0.16f * op);
+            // centre in proportion to its own height (the loud parts open up first, so the shape stays). A faded
+            // ghost of the whole stem stays behind it (how faded is set in Settings).
+            tc.draw (g, area, t, px, stemOffFade * op);
             const float cy = (stemsSeparate || oneStem) ? (float) area.getCentreY() : baseY;
             auto direct = [&] (StripOptions so, float alpha)
             {
@@ -544,10 +544,6 @@ void ScrollingWaveforms::paintLane (juce::Graphics& g, int d, int lane, juce::Re
                     tc.draw (g, area, t, px, (0.45f + 0.5f * gain) * op);
                 }
             }
-            // whenever it's turned down / filtered at all, the whole stem's outline stays, in its edge colour
-            auto so = o;
-            so.outline = true;
-            direct (so, op);
         }
     }
     else
@@ -1039,8 +1035,15 @@ void ScrollingWaveforms::mouseDown (const juce::MouseEvent& e)
 
     dragDivider = dividerAt (e.getPosition());
     if (dragDivider >= 0) return;
-    if (nearPlayhead (e.getPosition())) { dragPlayhead = true; return; }
-    if (touchMode) return;   // the jog wheels scrub; a finger on the screen never moves the track
+    if (! touchMode && nearPlayhead (e.getPosition())) { dragPlayhead = true; return; }
+    if (touchMode)
+    {
+        // On the XZ screen, a tap / drag on the waveform drops the playhead there (needle drop); it stays put
+        // on release. The jog wheels still scrub the audio; this just moves the track to where you touch.
+        dragSeek = d;
+        engine.deck (engineDeck (d)).post (Deck::Cmd::seekSeconds, sourceTimeAt (d, e.position.x));
+        return;
+    }
     dragDeck = d;
     dragStartPos = decks[(size_t) dragDeck].shownPos;
     // While playing, grabbing the waveform holds it like a hand on the platter; dragging scrubs it (you hear it)
@@ -1068,6 +1071,11 @@ void ScrollingWaveforms::mouseDrag (const juce::MouseEvent& e)
         repaint();
         return;
     }
+    if (dragSeek >= 0)
+    {
+        engine.deck (engineDeck (dragSeek)).post (Deck::Cmd::seekSeconds, sourceTimeAt (dragSeek, e.position.x));
+        return;
+    }
     if (dragDeck < 0) return;
     auto& deck = engine.deck (engineDeck (dragDeck));
     if (dragScrub)
@@ -1092,7 +1100,7 @@ void ScrollingWaveforms::mouseUp (const juce::MouseEvent&)
         for (int k = 0; k < numSlots(); ++k) onLaneSplitChanged (engineDeck (k), laneSplit[(size_t) k]);
     if (dragPlayhead && onPlayheadMoved)
         onPlayheadMoved (playhead);
-    dragDeck = dragDivider = -1;
+    dragDeck = dragDivider = dragSeek = -1;
     dragPlayhead = false;
 }
 

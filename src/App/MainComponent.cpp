@@ -59,6 +59,7 @@ MainComponent::MainComponent()
     {
         if (deck < 2) (deck == 0 ? deck1 : deck2).setLoadingText ({});
         if (deck < 2) applyAutoGain (deck, t);
+        if (deck < 2 && xzView.isBrowserShown()) xzView.setBrowserShown (false);   // loading closes the XZ browser
         editor.trackLoaded (deck, t);
         waves.forceRedraw();
         if (t != nullptr && t->waveform != nullptr)
@@ -345,6 +346,7 @@ MainComponent::MainComponent()
     SettingsView::xzScreenStatus = [this] { return xzLink.getStatus(); };
     xzLink.onTouch = [this] (int type, int x, int y) { xzView.touch (type, x, y); };
     // the XZ screen works like the play page: lanes, split, zoom and grid stay the same in both places
+    xzView.onViewChanged = [this] { xzLink.requestFullFrame(); };
     xzView.getWaves().onLaneSplitChanged = waves.onLaneSplitChanged;
     xzView.getWaves().onLaneStyleChosen = waves.onLaneStyleChosen;
     xzView.getWaves().onPlayheadMoved = waves.onPlayheadMoved;
@@ -469,6 +471,7 @@ void MainComponent::applySettings()
     }
     waves.setSingleColour (juce::Colour (settings.singleColour), settings.singleFollowsDeck);
     waves.setStemLayers (settings.stemLayerOrder, settings.stemOpacity);
+    waves.setStemOffFade (settings.stemOffFade);
     for (int d = 0; d < 2; ++d) waves.setEditView (d, settings.editView[(size_t) d]);
     waves.forceRedraw();
     {
@@ -479,6 +482,7 @@ void MainComponent::applySettings()
         pw.setLaneSplit (0, settings.prepLaneSplit);
         pw.setSingleColour (juce::Colour (settings.singleColour), settings.singleFollowsDeck);
         pw.setStemLayers (settings.stemLayerOrder, settings.stemOpacity);
+        pw.setStemOffFade (settings.stemOffFade);
         pw.setEditView (0, settings.editView[2]);
         pw.setVisibleSeconds (settings.prepVisibleSeconds);
         pw.forceRedraw();
@@ -511,6 +515,7 @@ void MainComponent::applySettings()
         }
         xw.setSingleColour (juce::Colour (settings.singleColour), settings.singleFollowsDeck);
         xw.setStemLayers (settings.stemLayerOrder, settings.stemOpacity);
+        xw.setStemOffFade (settings.stemOffFade);
         xw.setPlayheadPosition (settings.playheadPosition);
         xw.extraLead = settings.xzScreenLeadMs / 1000.0;
         xw.forceRedraw();
@@ -685,7 +690,8 @@ void MainComponent::timerCallback()
     engine.getReleasePool().collect();
     editor.poll();
     countPlays();
-    if (settings.autoMaster) checkAutoMaster();
+    if (router.faderTracked()) checkAutoMasterFaders();   // faders mapped: the deck that's up in the mix leads
+    else if (settings.autoMaster) checkAutoMaster();
 
     // Cue / locator / phrase edits show in the browser's preview straight away
     for (int d = 0; d < AudioEngine::totalDecks; ++d)
@@ -1928,6 +1934,33 @@ void MainComponent::setBrowserPoppedOut (bool out)
     }
     browser.setPoppedOut (out);
     resized();
+}
+
+void MainComponent::checkAutoMasterFaders()
+{
+    // The faders are mapped, so the master follows them: whichever playing deck is up in the mix leads the beat
+    // grid. Becoming master holds that deck's current tempo (its slider then catches up), so nothing jumps.
+    const float f0 = router.getFaderLevel (0), f1 = router.getFaderLevel (1);
+    const auto& a = engine.deck (0).state();
+    const auto& b = engine.deck (1).state();
+    const bool p0 = a.playing.load() && a.trackSerial.load() != 0;
+    const bool p1 = b.playing.load() && b.trackSerial.load() != 0;
+    int want = -1;
+    if (p0 && p1) want = f0 >= f1 ? 0 : 1;   // the louder fader leads
+    else if (p0)  want = 0;
+    else if (p1)  want = 1;
+    if (want < 0) { faderMasterSince = 0.0; return; }
+
+    const int cur = a.master.load() ? 0 : b.master.load() ? 1 : -1;
+    if (want == cur) { faderMasterSince = 0.0; return; }
+    // when both are playing, only switch on a clear difference and after a moment, so it doesn't flap mid-blend
+    if (p0 && p1 && std::abs (f0 - f1) < 0.06f) { faderMasterSince = 0.0; return; }
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    if (faderMasterSince == 0.0) { faderMasterSince = now; return; }
+    if (now - faderMasterSince < 700.0) return;
+    faderMasterSince = 0.0;
+    ActionValue v; v.down = true;
+    router.perform ("d" + juce::String (want + 1) + ".master", v);
 }
 
 void MainComponent::checkAutoMaster()

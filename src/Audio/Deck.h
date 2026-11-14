@@ -145,6 +145,21 @@ public:
     bool takeSyncSnapRequest() noexcept { const bool r = syncSnapRequested; syncSnapRequested = false; return r; }
     bool takeMasterRequest() noexcept { const bool r = masterRequested; masterRequested = false; return r; }
     void setIsMaster (bool m) noexcept { pub.master = m; }
+    bool isMaster() const noexcept { return pub.master.load(); }
+    /** Called when this deck takes over as master. If it was following another deck (synced), it holds the tempo
+        it was playing and waits for the pitch slider to be moved up to it before the slider takes over - so the
+        beat doesn't jump to wherever the (unused) slider happened to sit. */
+    void onBecameMaster() noexcept
+    {
+        if (syncOn)
+        {
+            heldRatio = tempoRatio;
+            pitchPickup = true;
+            syncOn = false;
+            syncRatio = 0.0;
+            phaseNudge = 0.0;
+        }
+    }
     bool hasTrack() const noexcept { return track != nullptr; }
     void setJogResolution (double ticksPerRev) noexcept { ticksPerRevolution = juce::jmax (16.0, ticksPerRev); }
 
@@ -163,6 +178,8 @@ public:
         std::atomic<bool> loopActive { false };
         std::atomic<bool> playing { false }, keyLock { false }, sync { false }, master { false }, quantize { true };
         std::atomic<int> keyShift { 0 };          // semitones
+        std::atomic<bool> pickup { false };         // holding tempo, waiting for the slider to catch up
+        std::atomic<double> faderTargetPct { 0.0 }; // where the pitch slider currently points (for the catch-up readout)
         std::atomic<bool> vinylMode { true }, jogTouched { false }, stemsReady { false };
         std::atomic<float> stemsProgress { 0.0f };   // 0..1 while separating
         std::array<std::atomic<double>, 8> hotStart, hotEnd;

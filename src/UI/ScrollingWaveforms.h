@@ -177,6 +177,11 @@ private:
     bool singleFollowsDeck = false;
     std::array<int, 4> stemOrder { 2, 1, 3, 0 };
     std::array<float, 4> stemOpacity { 1.0f, 1.0f, 1.0f, 1.0f };
+public:
+    /** How bright a turned-off stem stays as a ghost behind the active stems (0 = invisible .. ~0.6). */
+    void setStemOffFade (float f) { stemOffFade = juce::jlimit (0.0f, 0.8f, f); needsRedraw = true; }
+private:
+    float stemOffFade = 0.28f;
     std::array<bool, 2> editView { true, true };
     bool stemsHidden = false;
     float playhead = 0.5f;
@@ -185,7 +190,7 @@ private:
     bool needsRedraw = true;
 
     std::vector<Marker> markers;
-    int dragDeck = -1, dragDivider = -1;
+    int dragDeck = -1, dragDivider = -1, dragSeek = -1;
     bool dragPlayhead = false;
     double dragStartPos = 0.0;
     bool dragScrub = false;

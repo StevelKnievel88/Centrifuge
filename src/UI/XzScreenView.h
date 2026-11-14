@@ -35,8 +35,11 @@ public:
     std::function<void()> onSearchTapped;
 
     /** The browser instead of the deck panels (mappable: XDJ-XZ screen > browser on / off). */
-    void setBrowserShown (bool b) { browserShown = b; }
+    void setBrowserShown (bool b) { if (b != browserShown) { browserShown = b; if (onViewChanged) onViewChanged(); } }
     bool isBrowserShown() const { return browserShown; }
+
+    /** The screen switched wholesale (browser on / off): the link resends a full frame so it can't trickle in. */
+    std::function<void()> onViewChanged;
 
     /** The start-up animation and logo over the screen for 5 s (when streaming starts). */
     void startSplash() { splashStart = juce::Time::getMillisecondCounterHiRes() / 1000.0; splashAngle = 0.4f; splashLast = -1.0; }

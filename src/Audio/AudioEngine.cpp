@@ -282,7 +282,9 @@ void AudioEngine::updateSync()
     for (int d = 0; d < maxDecks; ++d)
     {
         auto& dk = *decks[(size_t) d];
+        const bool wasMaster = dk.isMaster();
         dk.setIsMaster (d == m);
+        if (d == m && ! wasMaster) dk.onBecameMaster();   // hold the tempo it was playing; the slider catches up
 
         if (d == m || ! dk.wantsSync() || m < 0)
         {

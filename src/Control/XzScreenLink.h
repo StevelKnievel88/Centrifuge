@@ -35,6 +35,10 @@ public:
     /** The latest picture (any format; scaled to 800 x 480 if it isn't). Only the newest one is ever sent. */
     void submitFrame (const juce::Image& frame);
 
+    /** Force the next frame to be sent whole (not just changed rows): use when the screen's content changes
+        wholesale, e.g. opening or closing the browser, so it can't trickle in a row at a time. */
+    void requestFullFrame() { forceFull = true; }
+
     /** A touch on the XZ screen: 1 = down, 3 = moved while down, 2 = up; in screen pixels. Called on the message thread. */
     std::function<void (int type, int x, int y)> onTouch;
 
@@ -48,6 +52,7 @@ private:
     void setStatus (const juce::String& s);
 
     std::atomic<bool> enabled { true }, connected { false };
+    std::atomic<bool> forceFull { false };
     mutable std::mutex statusLock;
     juce::String status { "LOOKING FOR THE XDJ-XZ" };
 

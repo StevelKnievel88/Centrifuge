@@ -145,6 +145,7 @@ void AppSettings::load()
     }
     if (auto* arr = v["stemOpacity"].getArray())
         for (int i = 0; i < juce::jmin (4, arr->size()); ++i) stemOpacity[(size_t) i] = juce::jlimit (0.0f, 1.0f, (float) (double) (*arr)[i]);
+    stemOffFade = juce::jlimit (0.0f, 0.8f, (float) (double) v.getProperty ("stemOffFade", stemOffFade));
     boolean ("foldSkips", foldSkips);
     num ("playheadPosition", playheadPosition);
     boolean ("quantize", quantize);
@@ -305,6 +306,7 @@ void AppSettings::save() const
     o->setProperty ("editView", juce::Array<juce::var> { editView[0], editView[1], editView[2] });
     o->setProperty ("stemLayerOrder", juce::Array<juce::var> { stemLayerOrder[0], stemLayerOrder[1], stemLayerOrder[2], stemLayerOrder[3] });
     o->setProperty ("stemOpacity", juce::Array<juce::var> { stemOpacity[0], stemOpacity[1], stemOpacity[2], stemOpacity[3] });
+    o->setProperty ("stemOffFade", stemOffFade);
     o->setProperty ("foldSkips", foldSkips);
     o->setProperty ("playheadPosition", playheadPosition);
     o->setProperty ("quantize", quantize);

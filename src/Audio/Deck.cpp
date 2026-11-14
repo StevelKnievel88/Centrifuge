@@ -143,7 +143,7 @@ double Deck::heardPositionSec() const noexcept
 double Deck::baseBpmAtPosition() const noexcept
 {
     if (track == nullptr) return 0.0;
-    if (track->grid.isValid()) return track->grid.bpmAt (heardPositionSec());
+    if (track->grid.isValid()) return track->grid.smoothedBpmAt (heardPositionSec());
     return track->info.bpm;
 }
 
@@ -170,7 +170,10 @@ void Deck::setSyncTarget (double ratio, double phaseErrorBeats, bool snapPhase)
     }
     else
     {
-        phaseNudge = juce::jlimit (-0.004, 0.004, phaseErrorBeats * 0.08);
+        // Within a small fraction of a beat the decks are locked: stop nudging so the slave's tempo (and its
+        // displayed BPM) stays rock-steady instead of micro-adjusting every block. Outside it, a gentle pull.
+        const double e = std::abs (phaseErrorBeats) < 0.015 ? 0.0 : phaseErrorBeats;
+        phaseNudge = juce::jlimit (-0.003, 0.003, e * 0.05);
     }
 }
 
@@ -1613,8 +1616,13 @@ void Deck::publish()
     pub.positionSec = heard;
     pub.lengthSec = len;
     pub.tempoRatio = tempoRatio;
-    pub.bpm = baseBpmAtPosition() * tempoRatio;
+    // When synced, show the clean target tempo, not the tiny per-block phase nudge, so the BPM reads steady.
+    pub.bpm = baseBpmAtPosition() * ((syncOn && syncRatio > 0.0) ? syncRatio : tempoRatio);
     pub.pitchRange = pitchRange;
+    // Catch-up: while holding a tempo (sync off, or just became master) the slider must be moved to meet the
+    // current tempo before it takes over. Publish where the slider points so the UI can show it to chase.
+    pub.pickup = pitchPickup;
+    pub.faderTargetPct = pitchFader * pitchRange * 100.0;
     pub.cuePointSec = cuePoint;
     pub.loopInSec = loopIn;
     pub.loopOutSec = loopOut;

@@ -51,6 +51,18 @@ public:
         return len > 0.0 ? 60.0 / len : 0.0;
     }
 
+    /** BPM measured over a span of beats around t, so the millisecond rounding of individual beat times averages
+        out. Used for sync and the displayed tempo, which must stay rock-steady rather than jitter per beat. */
+    double smoothedBpmAt (double t, double span = 8.0) const noexcept
+    {
+        if (! isValid()) return 0.0;
+        const double bp = beatPosition (t);
+        const double t0 = timeAtBeat (bp - span * 0.5);
+        const double t1 = timeAtBeat (bp + span * 0.5);
+        const double dt = t1 - t0;
+        return dt > 1.0e-6 ? 60.0 * span / dt : bpmAt (t);
+    }
+
     /** Continuous beat number at t (e.g. 12.25 = a quarter of the way through beat 12). Extrapolates outside the grid. */
     double beatPosition (double t) const noexcept
     {
