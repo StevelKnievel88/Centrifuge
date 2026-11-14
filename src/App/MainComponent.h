@@ -171,6 +171,10 @@ private:   // (after the browser: it shows it)
     void startSetList (bool record);
     void zoomWaves (double steps);
     bool xzWasStreaming = false;
+    bool statusCompact = false;          // the status boxes folded into one STATUS menu (no room beside the phrase meter)
+    juce::Rectangle<int> statusMenuRect;
+    float fullStatusWidth() const;
+    void showStatusMenu();
     bool recordWithSetList = false;
     void startRecording (bool askSource);
     void stopRecording();

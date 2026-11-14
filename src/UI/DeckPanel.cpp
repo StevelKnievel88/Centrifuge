@@ -252,6 +252,10 @@ void DeckPanel::paint (juce::Graphics& g)
         const float keyRight = rowInfo.getRight() - 111.0f;
         r = r.withRight (juce::jmin (r.getRight(), keyRight));
         const bool tight = r.getWidth() < 760.0f;
+        // the gaps between the three groups: wide (40) when there's room, narrower before anything gets squeezed
+        const float needed = (50.0f + 54.0f + (tight ? 84.0f : 98.0f)) + (32.0f + (st.slipping.load() ? 60.0f : 36.0f) + (tight ? 42.0f : 50.0f) + (tight ? 44.0f : 62.0f))
+                           + (26.0f + (tight ? 36.0f : 40.0f) + (tight ? 48.0f : 52.0f)) + 6.0f + 66.0f + 140.0f;
+        const float groupGap = juce::jlimit (6.0f, 40.0f, (r.getWidth() - needed) / 2.0f);
         auto addChip = [&] (const juce::String& label, bool lit, juce::Colour c, const juce::String& action, float w)
         {
             auto cr = r.removeFromRight (w).reduced (2.0f, 3.0f);
@@ -263,10 +267,12 @@ void DeckPanel::paint (juce::Graphics& g)
             // button that locks it to beats (1/4 beat - 2 bars)
             const auto vc = Theme::warn.withRotatedHue (0.08f);
             const double beats = st.brakeBeats.load();
-            auto sync = r.removeFromRight (beats > 0.0 ? 50.0f : 40.0f).reduced (2.0f, 3.0f);
+            auto sync = r.removeFromRight (50.0f).reduced (2.0f, 3.0f);   // one size, whatever it shows
             chip (g, sync, beats > 0.0 ? jumpSizeText (beats) : juce::String ("BEAT"), beats > 0.0, vc);
             regions.push_back ({ sync, "brakesync", 14 });
+            r.removeFromRight (6.0f);
             auto knob = r.removeFromRight (42.0f);
+            r.removeFromRight (6.0f);
             paintVinylSpeedKnob (g, knob, st, vc);
             regions.push_back ({ knob, "brakeknob", 13 });
             const bool b = st.brakeOn.load(), s2 = st.startOn.load();
@@ -275,19 +281,19 @@ void DeckPanel::paint (juce::Graphics& g)
             chip (g, cr, t, b || s2, vc);
             regions.push_back ({ cr, "vinylspeed", 10 });
         }
-        r.removeFromRight (tight ? 6.0f : 12.0f);
+        r.removeFromRight (groupGap);
         addChip ("REV", st.reversing.load(), Theme::bad, p + "reverse", 32.0f);   // backwards while held
         addChip (st.slipping.load() ? "SLIPPING" : "SLIP", st.slip.load(), Theme::sync.brighter (0.2f), p + "slip", st.slipping.load() ? 60.0f : 36.0f);
         addChip (st.vinylMode.load() ? "VINYL" : "CDJ", st.vinylMode.load(), juce::Colour (0xff2f4dff), p + "jog.vinyl", tight ? 42.0f : 50.0f);
         addChip (tight ? "QUANT" : "QUANTIZE", st.quantize.load(), Theme::bad.withSaturation (0.6f), p + "quantize", tight ? 44.0f : 62.0f);
-        r.removeFromRight (tight ? 6.0f : 12.0f);
+        r.removeFromRight (groupGap);
         addChip ("MT", st.keyLock.load(), Theme::warn, p + "keylock", 26.0f);
         addChip ("SYNC", st.sync.load(), col, p + "sync", tight ? 36.0f : 40.0f);
         addChip ("MASTER", st.master.load(), Theme::accent, p + "master", tight ? 48.0f : 52.0f);
         r.removeFromRight (6.0f);
 
         // Edit targets: R = rekordbox copy, C = Centrifuge version (both lit = edit both)
-        if (! Features::rekordboxCopy)
+        if (! Features::rekordboxCopy && r.getWidth() >= 62.0f)   // (a very narrow deck leaves them out)
         {
             // Edited view on / off, and which edit version is playing (room for the version's name)
             r.removeFromLeft (4.0f);
@@ -313,7 +319,7 @@ void DeckPanel::paint (juce::Graphics& g)
                 regions.push_back ({ vc, p + "editver", 0 });
             }
         }
-        else
+        else if (Features::rekordboxCopy)
         {
             r.removeFromLeft (10.0f);
             const bool er = editor != nullptr && editor->editsRekordbox (deck), ec = editor != nullptr && editor->editsCentrifuge (deck);
@@ -1039,8 +1045,9 @@ void DeckPanel::mouseDown (const juce::MouseEvent& e)
     {
         // lock the stop to beats (or back to seconds)
         const auto& st = engine.deck (deck).state();
-        if (st.brakeBeats.load() > 0.0) setBrake (st.brakeSeconds.load(), 0.0);
-        else setBrake (st.brakeSeconds.load(), 4.0);
+        // (each mode keeps its own setting: beats and free time are separate)
+        if (st.brakeBeats.load() > 0.0) { savedBrakeBeats = st.brakeBeats.load(); setBrake (st.brakeSeconds.load(), 0.0); }
+        else setBrake (st.brakeSeconds.load(), savedBrakeBeats);
         return;
     }
     if (r->kind == 12)

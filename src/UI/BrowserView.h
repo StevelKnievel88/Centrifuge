@@ -45,7 +45,9 @@ public:
     /** Hot cues, locators, skips and phrases for a track's preview (e.g. straight after an edit on a deck). */
     void notePreviewMarks (const juce::String& filePath, const TrackMarks& marks);
     /** The preview column's look: style 1 3-band, 2 RGB, 3 single colour, 4 stems; half = bars from the bottom. */
-    void setPreviewStyle (int style, bool half, juce::Colour single) { previewStyle = style; previewHalf = half; previewTint = single; table.repaint(); }
+    void setPreviewStyle (int style, bool half, juce::Colour single) { previewStyle = style; previewHalf = half; previewTint = single; bandColour = single; table.repaint(); tree.repaint(); repaint(); }
+    /** The browser's colour (its band along the top and the tree's icons, here and on the XZ): the preview colour. */
+    inline static juce::Colour bandColour { 0xff3d9bff };
     /** A track's stems preview (when its stems are made or loaded). */
     void notePreviewStems (const juce::String& filePath, const std::array<std::vector<uint8_t>, 4>& stems) { previewWaves[filePath].stems = stems; table.repaint(); }
     /** Looks a track's preview up again (after it was analysed or cleared). */

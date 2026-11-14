@@ -39,7 +39,7 @@ static std::vector<ActionDef> buildActions()
 
         add (p + "pitch",       "Tempo slider",          D + " - Tempo", C, d);
         add (p + "pitchrange",  "Tempo range (6/10/16 %/Wide)", D + " - Tempo", B, d);
-        add (p + "tempo.reset", "Tempo reset (lit while the tempo isn't at 0 %)", D + " - Tempo", B, d, true);
+        add (p + "tempo.reset", "Tempo reset (lit at 0 %)", D + " - Tempo", B, d, true);
         add (p + "bend.up",     "Pitch bend +",          D + " - Tempo", B, d);
         add (p + "bend.down",   "Pitch bend -",          D + " - Tempo", B, d);
         add (p + "keylock",     "Master tempo (key lock)", D + " - Tempo", B, d, true);

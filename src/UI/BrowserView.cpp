@@ -107,7 +107,7 @@ public:
         {
             // a folder: tab and body
             const bool special = node->id == "loc" || node->id == "pl" || node->id.startsWith ("hist");
-            g.setColour (special ? Theme::accent : Theme::textDim);
+            g.setColour (special ? BrowserView::bandColour : Theme::textDim);
             juce::Path p;
             p.startNewSubPath (icon.getX(), icon.getY() + 2.0f);
             p.lineTo (icon.getX() + 4.5f, icon.getY() + 2.0f);
@@ -120,7 +120,7 @@ public:
         }
         else
         {
-            g.setColour (allTracks ? Theme::accent : Theme::textDim);
+            g.setColour (allTracks ? BrowserView::bandColour : Theme::textDim);
             for (int i = 0; i < 3; ++i)
                 g.fillRect (icon.getX(), icon.getY() + 1.0f + i * 4.0f, icon.getWidth(), 1.6f);
         }
@@ -341,7 +341,7 @@ void BrowserView::paint (juce::Graphics& g)
 {
     // like the decks: the coloured top line, the same thickness all along, with the 45-degree slant at the left
     g.fillAll (Theme::bg);
-    psyched::paintPanel (g, getLocalBounds().toFloat(), Theme::accent);
+    psyched::paintPanel (g, getLocalBounds().toFloat(), bandColour);
     if (! collapsed)
     {
         g.setColour (Theme::line);

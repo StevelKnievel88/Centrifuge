@@ -106,6 +106,7 @@ private:
     bool resoDrag = false, scrubDrag = false, brakeDrag = false;
     double brakeDragStart = 0.0;
     void setBrake (double seconds, double beats);
+    double savedBrakeBeats = 4.0;   // the beat-mode setting while the knob is in free time
     float scrubLastX = 0.0f;
     float resoStart = 0.25f;
     juce::uint64 lastHash = 0;

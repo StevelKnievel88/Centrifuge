@@ -334,7 +334,7 @@ void Deck::beginPlay() noexcept
 
 void Deck::beginStop() noexcept
 {
-    if (playing && brakeOn && brakeSec > 0.0 && ! cuePreview && hotPreview < 0 && ! scratching) { braking = true; startRamp = false; return; }
+    if (playing && brakeOn && (brakeBeats > 0.0 || brakeSec > 0.0) && ! cuePreview && hotPreview < 0 && ! scratching) { braking = true; startRamp = false; return; }
     playing = false;
     braking = false;
 }

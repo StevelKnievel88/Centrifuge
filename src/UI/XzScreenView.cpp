@@ -157,6 +157,18 @@ void XzScreenView::touch (int type, int x, int y)
             }
             if (overviewRects[(size_t) d].contains (p)) { drag = Drag::overview; dragDeck = d; seekOverview (d, p.x); return; }
         }
+        if (meter.getBounds().toFloat().expanded (0.0f, 2.0f).contains (p))
+        {
+            // the phrase meter: how many bars it shows (the computer's meter follows)
+            std::vector<Popup::Item> items;
+            for (int b : { 4, 8, 16, 32 }) items.push_back ({ b, juce::String (b) + " bars", {}, meter.getPhraseBars() == b });
+            openPopup ("Phrase meter", meter.getBounds().toFloat(), std::move (items), false, [this] (int bars)
+            {
+                meter.setOptions (bars, false, false);
+                if (meter.onOptionsChanged) meter.onOptionsChanged (bars, false, false);
+            });
+            return;
+        }
         if (waves.getBounds().toFloat().contains (p)) { drag = Drag::waves; sendToWaves (1, p); }
         return;
     }
@@ -401,7 +413,7 @@ void XzScreenView::paint (juce::Graphics& g)
 void XzScreenView::paintBrowser (juce::Graphics& g, juce::Rectangle<int> area)
 {
     auto r = area.toFloat();
-    psyched::paintPanel (g, r, Theme::accent, 12.0f);
+    psyched::paintPanel (g, r, BrowserView::bandColour, 12.0f);
     r.removeFromTop (4.0f);
 
     // Top bar: the list, the search box (tap: type on the computer's keyboard), FILTER, SET LIST, INFO, LOAD 1 / 2, CLOSE
@@ -458,7 +470,7 @@ void XzScreenView::paintBrowser (juce::Graphics& g, juce::Rectangle<int> area)
         r.removeFromLeft (6.0f);
         g.setColour (psyched::Colours::field);
         g.fillRect (treeArea);
-        g.setColour (Theme::accent.withAlpha (0.6f));
+        g.setColour (BrowserView::bandColour.withAlpha (0.6f));
         g.drawRect (treeArea, 1.0f);
         const float th = 26.0f;
         auto tr = treeArea.reduced (2.0f);

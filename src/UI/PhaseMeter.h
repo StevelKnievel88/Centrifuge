@@ -35,13 +35,50 @@ public:
     static int bracketLevels (int bars) { int n = 0; for (int L : { 4, 16, 32, 64 }) if (L <= bars) ++n; return n; }
     static constexpr float bracketStep = 4.0f;
 
+    /** The meter's blocks: one per beat, the same size whatever the length (4 / 8 / 16 / 32 bars). */
+    static constexpr float blockW = 5.0f, gapUnit = 2.0f, gapBar = 5.0f, gap4 = 8.0f, gap16 = 11.0f;
+    static float gapAfterBlock (int i)
+    {
+        if ((i + 1) % 4 != 0) return gapUnit;
+        const int barEnd = (i + 1) / 4;
+        if (barEnd % 16 == 0) return gap16;
+        if (barEnd % 4 == 0) return gap4;
+        return gapBar;
+    }
+    /** How wide the meter is for a length in bars at a height (the deck number square included). */
+    static float widthFor (int bars, float height)
+    {
+        const float rowH = juce::jmax (4.0f, (height - 4.0f) / 2.0f);
+        const int n = juce::jlimit (4, 32, bars) * 4;
+        float w = rowH + 2.0f + 4.0f + (float) n * blockW;
+        for (int i = 0; i < n - 1; ++i) w += gapAfterBlock (i);
+        return std::ceil (w);
+    }
+    int getPhraseBars() const { return juce::jlimit (4, 32, phraseBars); }
+
+    /** Right-click: how many bars the meter shows. */
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (! e.mods.isPopupMenu()) return;
+        juce::PopupMenu m;
+        m.addSectionHeader ("Phrase meter");
+        for (int b : { 4, 8, 16, 32 }) m.addItem (b, juce::String (b) + " bars", true, getPhraseBars() == b);
+        juce::Component::SafePointer<PhaseMeter> safe (this);
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [safe] (int r)
+        {
+            if (safe == nullptr || r == 0) return;
+            safe->setOptions (r, false, false);
+            if (safe->onOptionsChanged) safe->onOptionsChanged (r, false, false);
+        });
+    }
+
     void paint (juce::Graphics& g) override
     {
-        // Always 32 bars of grey blocks (a block per bar); the phrase playing is outlined in the deck's colour over
-        // as many bars as it lasts (an 8-bar phrase outlines the first quarter). No phrases: 16-bar phrases.
+        // 4 / 8 / 16 / 32 bars of grey blocks, a block per beat (always the same size); the phrase playing is outlined
+        // in the deck's colour over as many bars as it lasts. No phrases: 16-bar phrases.
         auto r = getLocalBounds().toFloat();
         const float rowH = juce::jmax (4.0f, (r.getHeight() - 4.0f) / 2.0f);
-        layoutBars = 32;
+        layoutBars = getPhraseBars();
         if (prepOnly)
         {
             auto rr = r.withSizeKeepingCentre (r.getWidth(), juce::jmin (r.getHeight(), rowH));
@@ -164,20 +201,13 @@ private:
         const int upb = 4;
         const int n = bars * upb;
         const int inPhrase = juce::jlimit (1, n, phrase * upb);
-        const float gapUnit = 1.0f, gapBar = 3.0f, gap4 = 6.0f, gap16 = 9.0f;
-        auto gapAfter = [&] (int i)   // gap after block i
-        {
-            if ((i + 1) % upb != 0) return gapUnit;
-            const int barEnd = (i + 1) / upb;
-            if (barEnd % 16 == 0) return gap16;
-            if (barEnd % 4 == 0) return gap4;
-            return gapBar;
-        };
+        auto gapAfter = [] (int i) { return gapAfterBlock (i); };
         float gaps = 0.0f;
         for (int i = 0; i < n - 1; ++i) gaps += gapAfter (i);
-        const float bw = juce::jmax (1.0f, (r.getWidth() - gaps) / (float) n);
+        // the same size on every length (smaller only when there isn't room, as on the XZ at 32 bars)
+        const float bw = juce::jmax (1.0f, juce::jmin (blockW, (r.getWidth() - gaps) / (float) n));
         const double unitPos = b;   // a block per beat
-        const int cur = unitPos < 0.0 ? -1 : (int) std::floor (unitPos) % juce::jmax (1, inPhrase) % n;
+        const int cur = unitPos < 0.0 ? -1 : (int) std::floor (unitPos) % juce::jmax (1, phrase * upb) % n;
         const double frac = b < 0.0 ? 0.0 : b - std::floor (b);   // each block flashes on its beat
 
         std::vector<float> xs ((size_t) n);

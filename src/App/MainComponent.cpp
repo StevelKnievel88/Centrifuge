@@ -200,6 +200,7 @@ MainComponent::MainComponent()
     {
         settings.phraseBars = bars; settings.phraseFollow = follow; settings.phraseBrackets = br;
         settings.save();
+        xzView.getPhaseMeter().setOptions (bars, false, false);   // the XZ screen's meter matches
         resized();
         repaint();
     };
@@ -339,6 +340,15 @@ MainComponent::MainComponent()
         applySettings();
     };
     xzView.setEditor (&editor);
+    xzView.getPhaseMeter().onOptionsChanged = [this] (int bars, bool, bool)
+    {
+        // chosen on the XZ screen: the computer's meter follows
+        settings.phraseBars = bars;
+        settings.save();
+        phaseMeter.setOptions (bars, false, false);
+        resized();
+        repaint();
+    };
     xzView.setListRunning = [] { return UserLists::get().setListRunning(); };
     xzView.onSetList = [this] (int choice)
     {
@@ -784,8 +794,18 @@ void MainComponent::paint (juce::Graphics& g)
     // Status pills (right side)
     auto pills = topBar.withSizeKeepingCentre (topBar.getWidth(), 34).reduced (10, 0).withLeft (phaseArea.getRight() + 14 + 30)
                        .withRight (recButton.getX() - 8).toFloat();
-    if (settings.statusFolded) pills = {};
     float leftmostPill = (float) recButton.getX() - 8.0f;
+    statusMenuRect = {};
+    if (statusCompact)
+    {
+        // everything in one STATUS menu next to REC, its dot the worst of them
+        pills = {};
+        auto pr = juce::Rectangle<float> ((float) recButton.getX() - 8.0f - 112.0f, (float) recButton.getY(), 112.0f, (float) recButton.getHeight());
+        const bool bad = audioStatus.startsWith ("No") || midiStatus == "No device detected" || cpu >= 0.8;
+        drawPill (g, pr, juce::String ("STATUS ") + juce::String::charToString (0x25be), bad ? Theme::bad : cpu >= 0.5 ? Theme::warn : Theme::good);
+        statusMenuRect = pr.toNearestInt();
+        leftmostPill = pr.getX();
+    }
     {
         // master volume: label, and a peak meter under the slider
         auto mr = masterArea.toFloat();
@@ -857,10 +877,17 @@ void MainComponent::resized()
     }
     // Phrase meter: both decks stacked, to the right of the tabs; the fold button after it (folded: the meter
     // takes the status boxes' room, up to REC)
+    // The meter is as wide as its length needs (its blocks never stretch). When it and the status boxes don't both
+    // fit, the status boxes become one STATUS menu next to REC.
     const int meterX = 262 + 5 * 92 + 18;
-    const int meterW = juce::jlimit (220, 520, (getWidth() - 262 - 5 * 92 - 18) / 2);
-    phaseArea = juce::Rectangle<int> (meterX, topBar.getY() + 10, meterW, topBar.getHeight() - 20);
+    const int meterH = topBar.getHeight() - 20;
+    int meterW = (int) PhaseMeter::widthFor (settings.phraseBars, (float) meterH);
+    const int roomRight = recButton.getX() - 8;
+    statusCompact = settings.statusFolded || meterX + meterW + 44 + (int) fullStatusWidth() > roomRight;
+    meterW = juce::jmin (meterW, roomRight - (statusCompact ? 130 : 0) - 14 - meterX);
+    phaseArea = juce::Rectangle<int> (meterX, topBar.getY() + 10, juce::jmax (120, meterW), meterH);
     phaseMeter.setBounds (phaseArea);
+    statusFold.setVisible (! statusCompact || settings.statusFolded);
     statusFold.setButtonText (settings.statusFolded ? "<" : ">");
     // the fold button sits just left of the status boxes (folded: just left of REC); paint() keeps it there
     statusFold.setBounds (recButton.getX() - 30, topBar.getCentreY() - 14, 22, 28);
@@ -929,9 +956,32 @@ void MainComponent::mouseMove (const juce::MouseEvent& e)
                          : logoArea.contains (e.getPosition()) ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
 }
 
+float MainComponent::fullStatusWidth() const
+{
+    // the status boxes side by side (as paint() lays them out)
+    float w = 84.0f + 8.0f;
+    w += juce::jmin (330.0f, psyched::Fonts::label().getStringWidthFloat (audioStatus.toUpperCase()) + 34.0f) + 8.0f;
+    w += juce::jmin (260.0f, psyched::Fonts::label().getStringWidthFloat (midiStatus.toUpperCase()) + 34.0f) + 8.0f;
+    w += juce::jmin (260.0f, psyched::Fonts::label().getStringWidthFloat (stemStatus.toUpperCase()) + 34.0f);
+    return w;
+}
+
+void MainComponent::showStatusMenu()
+{
+    juce::PopupMenu m;
+    m.addSectionHeader ("Status");
+    auto line = [&m] (const juce::String& text, juce::Colour c) { juce::PopupMenu::Item it (text); it.colour = c; it.isEnabled = false; m.addItem (it); };
+    line ("CPU " + juce::String (juce::roundToInt (cpu * 100.0)) + "%", cpu < 0.5 ? Theme::good : (cpu < 0.8 ? Theme::warn : Theme::bad));
+    line (audioStatus, audioStatus.startsWith ("No") ? Theme::bad : Theme::good);
+    line (midiStatus, midiStatus == "No device detected" ? Theme::bad : Theme::good);
+    if (stemStatus.isNotEmpty()) line (stemStatus, Theme::accent);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (localAreaToGlobal (statusMenuRect)));
+}
+
 void MainComponent::mouseDown (const juce::MouseEvent& e)
 {
     dragging = 0;
+    if (statusMenuRect.contains (e.getPosition())) { showStatusMenu(); return; }
     if (logoArea.contains (e.getPosition())) { about.show(); return; }
     if (page != 0) return;
     if (dividerBrowser.contains (e.getPosition())) { dragging = 2; dragStartValue = browser.getHeight(); }

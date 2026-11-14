@@ -72,23 +72,18 @@ std::array<int, 8> ActionRouter::getStemMatrix() const
 
 void ActionRouter::applyStemKnob (int d, int c)
 {
-    // One knob for both: right of centre is the high-pass in either mode (full volume). Left of centre: VOLUME mode
-    // turns the volume down and closes the low-pass together, FILTER mode only the low-pass. After switching with
-    // the knob left of centre, the volume stays where it was until the knob comes back to the centre (no jumps).
+    // One knob for both, in either mode: left of centre turns the volume down and closes the low-pass together,
+    // right of centre is the high-pass (full volume). The VOLUME / FILTER switch only shows which one you're
+    // watching (the other's bar is dimmed), so switching never jumps.
     const float k = knobPos[(size_t) d][(size_t) c].load();
-    const bool filterMode = stemCtlFilterMode[(size_t) d].load();
-    auto& held = hpHeld[(size_t) d][(size_t) c];   // (here: the volume held after a switch)
-    if (held.load() && k >= 0.5f) held = false;
     controlFilter[(size_t) d][(size_t) c] = k;
-    if (! held.load()) controlVolume[(size_t) d][(size_t) c] = filterMode ? 0.5f : juce::jmin (0.5f, k);
+    controlVolume[(size_t) d][(size_t) c] = juce::jmin (0.5f, k);
 }
 
 void ActionRouter::toggleStemCtlFilterMode (int d)
 {
     if (d < 0 || d > 1) return;
     stemCtlFilterMode[(size_t) d] = ! stemCtlFilterMode[(size_t) d].load();
-    for (int c = 0; c < 4; ++c)
-        if (knobPos[(size_t) d][(size_t) c].load() < 0.5f) hpHeld[(size_t) d][(size_t) c] = true;
     updateStems (d);
 }
 
@@ -392,7 +387,7 @@ bool ActionRouter::ledState (const ActionDef& a) const
     if (name == "sync")      return st.sync.load();
     if (name == "master")    return st.master.load();
     if (name == "keylock")   return st.keyLock.load();
-    if (name == "tempo.reset") return std::abs (st.tempoRatio.load() - 1.0) > 1.0e-5;   // unlit at 0 %
+    if (name == "tempo.reset") return std::abs (st.tempoRatio.load() - 1.0) <= 1.0e-5;   // lit at 0 %
     if (name == "quantize")  return st.quantize.load();
     if (name == "jog.vinyl") return st.vinylMode.load();
     if (name == "slip")      return st.slip.load();
