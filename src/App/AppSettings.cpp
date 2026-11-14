@@ -222,6 +222,7 @@ void AppSettings::load()
     num ("stemThreads", stemThreads);
     boolean ("stemsLossless", stemsLossless);
     boolean ("stemsOgg320", stemsOgg320);
+    boolean ("stemsMp3", stemsMp3);
 
     boolean ("showBrowser", showBrowser);
     boolean ("statusFolded", statusFolded);
@@ -352,6 +353,7 @@ void AppSettings::save() const
     o->setProperty ("xzScreenLeadMs", xzScreenLeadMs);
     o->setProperty ("stemsLossless", stemsLossless);
     o->setProperty ("stemsOgg320", stemsOgg320);
+    o->setProperty ("stemsMp3", stemsMp3);
     o->setProperty ("markerScale", (double) markerScale);
     o->setProperty ("previewColour", (juce::int64) previewColour);
     o->setProperty ("throwSpeed", throwSpeed);

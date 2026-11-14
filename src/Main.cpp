@@ -1,4 +1,5 @@
 #include "App/MainComponent.h"
+#include "UI/KeysWindow.h"
 #include "App/EditExporter.h"
 #include "App/TrackEditor.h"
 #include "Library/GridOps.h"
@@ -421,6 +422,39 @@ static int runCommandLine (const juce::StringArray& args)
         return juce::PNGImageFormat().writeImageToStream (img, os) ? 0 : 1;
     }
 
+    if (args.contains ("--mp3delay"))
+    {
+        // --mp3delay <lame>: how many samples MP3 stems come back late (an encode with LAME, a decode with JUCE)
+        juce::File lame (argAfter ("--mp3delay"));
+        for (double sr : { 44100.0, 48000.0 })
+        {
+            juce::AudioBuffer<float> b (2, (int) sr * 3);
+            b.clear();
+            for (int ch = 0; ch < 2; ++ch) b.setSample (ch, 20000, 0.9f);
+            auto f = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("cf_delay.mp3");
+            f.deleteFile();
+            {
+                juce::LAMEEncoderAudioFormat fmt (lame);
+                int q = 0;
+                const auto opts = fmt.getQualityOptions();
+                for (int i = 0; i < opts.size(); ++i) if (opts[i].contains ("320")) q = i;
+                std::unique_ptr<juce::OutputStream> os = std::make_unique<juce::FileOutputStream> (f);
+                auto w = fmt.createWriterFor (os, juce::AudioFormatWriterOptions{}.withSampleRate (sr).withNumChannels (2).withBitsPerSample (16).withQualityOptionIndex (q));
+                if (w == nullptr) { std::printf ("no writer\n"); return 1; }
+                w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
+            }
+            juce::MP3AudioFormat mp3;
+            std::unique_ptr<juce::AudioFormatReader> r (mp3.createReaderFor (new juce::FileInputStream (f), true));
+            if (r == nullptr) { std::printf ("no reader\n"); return 1; }
+            juce::AudioBuffer<float> in (2, (int) r->lengthInSamples);
+            r->read (&in, 0, in.getNumSamples(), 0, true, true);
+            int peak = 0; float best = 0.0f;
+            for (int i = 0; i < in.getNumSamples(); ++i) if (std::abs (in.getSample (0, i)) > best) { best = std::abs (in.getSample (0, i)); peak = i; }
+            std::printf ("sr %.0f: in %d out %d (len %lld vs %d) delay %d\n", sr, 20000, peak, (long long) r->lengthInSamples, b.getNumSamples(), peak - 20000);
+        }
+        return 0;
+    }
+
     if (args.contains ("--keytest"))
     {
         // --keytest <USB stick root, folder or audio files...>: Centrifuge's key detection (first method and v2)
@@ -701,6 +735,32 @@ private:
                 sos.setPosition (0);
                 sos.truncate();
                 juce::PNGImageFormat().writeImageToStream (simg, sos);
+                {
+                    // the PREP keyboard, and a quick listen to each sound (offline)
+                    KeysPanel kp (main.getEngine());
+                    kp.setSize (720, 210);
+                    auto kimg = kp.createComponentSnapshot (kp.getLocalBounds(), true, 1.0f);
+                    juce::FileOutputStream kos (shots.getChildFile ("10_keys.png"));
+                    kos.setPosition (0); kos.truncate();
+                    juce::PNGImageFormat().writeImageToStream (kimg, kos);
+                    KeySynth ks;
+                    ks.prepare (44100.0);
+                    for (int p = 0; p < KeySynth::numPresets; ++p)
+                    {
+                        ks.setPreset (p);
+                        ks.getKeyboardState().noteOn (1, 36, 0.9f);
+                        std::vector<float> l (44100, 0.0f), r (44100, 0.0f);
+                        for (int pos = 0; pos < 44100; pos += 512) ks.renderAdd (l.data() + pos, r.data() + pos, juce::jmin (512, 44100 - pos));
+                        ks.getKeyboardState().noteOff (1, 36, 0.0f);
+                        float peak = 0.0f; bool bad = false;
+                        for (float x : l) { peak = juce::jmax (peak, std::abs (x)); bad = bad || ! std::isfinite (x); }
+                        std::printf ("keys %s: peak %.3f %s\n", KeySynth::presetName (p), peak, bad ? "NaN!" : "");
+                        std::vector<float> tail (8192, 0.0f), tr (8192, 0.0f);
+                        for (int pos = 0; pos < 8192; pos += 512) ks.renderAdd (tail.data() + pos, tr.data() + pos, 512);
+                    }
+                    std::printf ("keys name C2 %d F#3 %d Eb1 %d none %d\n", KeySynth::noteFromName ("Bass C2"), KeySynth::noteFromName ("Pluck F#3"),
+                                 KeySynth::noteFromName ("x_Eb1"), KeySynth::noteFromName ("kick"));
+                }
             }
             main.showPage (1);
             stage = 4;

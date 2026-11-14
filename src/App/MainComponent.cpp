@@ -160,6 +160,13 @@ MainComponent::MainComponent()
         {
             const auto id = libraryIdFor (t, true);
             if (id == 0) continue;
+            {
+                // a locked track keeps that field
+                const int lk = UserLists::get().lockOf (id);
+                const int bit = field == "rating" ? UserLists::lockRating : field == "colour" ? UserLists::lockColour
+                              : field == "key" ? UserLists::lockKey : UserLists::lockInfo;
+                if (lk & bit) { flash (juce::String ("Locked: ") + UserLists::lockName (bit) + " (right-click > Lock... to change)"); continue; }
+            }
             if (field == "rating") { centrifugeLibrary.setRating (id, value.getIntValue()); continue; }
             auto lt = centrifugeLibrary.get (id);
             if (! lt) continue;
@@ -188,6 +195,15 @@ MainComponent::MainComponent()
     browser.onTagColourNames = [this] (bool on) { settings.tagColourNames = on; settings.save(); };
     browser.onHideToggled = [this] { settings.showBrowser = ! settings.showBrowser; settings.save(); resized(); };
     browser.onPopToggled = [this] { setBrowserPoppedOut (browserWindow == nullptr); };
+    prepView.onKeysToggled = [this]
+    {
+        // the keyboard to play over PREP's track
+        if (keysWindow != nullptr) { keysWindow = nullptr; engine.getKeySynth().getKeyboardState().allNotesOff (0); }
+        else keysWindow = std::make_unique<KeysWindow> (engine, [this] { keysWindow = nullptr; engine.getKeySynth().getKeyboardState().allNotesOff (0);
+                                                                          prepView.keysShown = false; prepView.repaint(); });
+        prepView.keysShown = keysWindow != nullptr;
+        prepView.repaint();
+    };
     browser.onColumnsChanged = [this] (const juce::String& cols) { settings.browserColumns = cols; settings.save(); };
     waves.onTrackDropped = [this] (int d) { loadDragged (d); };
     prepView.onTrackDropped = [this] { loadDragged (AudioEngine::prepDeck); };
@@ -540,6 +556,8 @@ void MainComponent::applySettings()
     ss.qualityBatch = (StemQuality) juce::jlimit (0, 3, settings.stemQualityBatch);
     ss.lossless = settings.stemsLossless;
     ss.oggQualityIndex = settings.stemsOgg320 ? 9 : 5;   // 320 / 160 kbps
+    ss.mp3 = settings.stemsMp3;
+    ss.lameExe = juce::File (settings.lamePath);
     ss.findModel = [s = settings] (const juce::String& n) { return s.findModel (n); };
     stems.setSettings (ss);
 
@@ -1325,6 +1343,71 @@ void MainComponent::trackAction (const std::vector<TrackInfo>& tracks, const juc
 {
     if (tracks.empty()) return;
     const bool pc = browser.getCurrentSource() != nullptr && browser.getCurrentSource()->kind == LibrarySource::Kind::pcCollection;
+    if (action == "lock")
+    {
+        // Lock...: tick what can't be changed on these tracks (each tick applies at once; click outside to close)
+        std::vector<juce::int64> ids;
+        for (auto& t : tracks) if (const auto id = libraryIdFor (t, true); id != 0) ids.push_back (id);
+        if (ids.empty()) return;
+        struct Panel : juce::Component
+        {
+            Panel (std::vector<juce::int64> i, std::function<void()> changed) : ids (std::move (i)), onChanged (std::move (changed))
+            {
+                for (int k = 0; k < UserLists::numLocks; ++k)
+                {
+                    const int bit = 1 << k;
+                    int count = 0;
+                    for (auto id : ids) count += (UserLists::get().lockOf (id) & bit) ? 1 : 0;
+                    auto* b = boxes.add (new juce::ToggleButton (juce::String (UserLists::lockName (bit))
+                                                                 + (count > 0 && count < (int) ids.size() ? "  (some)" : "")));
+                    b->setToggleState (count == (int) ids.size(), juce::dontSendNotification);
+                    b->onClick = [this, bit, b]
+                    {
+                        for (auto id : ids)
+                        {
+                            const int m = UserLists::get().lockOf (id);
+                            UserLists::get().setLock (id, b->getToggleState() ? (m | bit) : (m & ~bit));
+                        }
+                        if (onChanged) onChanged();
+                    };
+                    addAndMakeVisible (b);
+                }
+                addAndMakeVisible (all);
+                addAndMakeVisible (none);
+                all.onClick = [this] { setAll (true); };
+                none.onClick = [this] { setAll (false); };
+                setSize (330, 64 + 24 * boxes.size() + 44);
+            }
+            void setAll (bool on)
+            {
+                for (auto id : ids) UserLists::get().setLock (id, on ? (1 << UserLists::numLocks) - 1 : 0);
+                for (auto* b : boxes) b->setToggleState (on, juce::dontSendNotification);
+                if (onChanged) onChanged();
+            }
+            void paint (juce::Graphics& g) override
+            {
+                g.fillAll (juce::Colour (0xff141221));
+                psyched::paintLabel (g, "LOCK - " + juce::String ((int) ids.size()) + (ids.size() == 1 ? " TRACK" : " TRACKS"),
+                                     juce::Rectangle<float> (12.0f, 8.0f, 300.0f, 20.0f), juce::Justification::centredLeft, Theme::accent, 11.0f);
+                psyched::paintLabel (g, "Ticked can't be changed (until unticked)", juce::Rectangle<float> (12.0f, 28.0f, 300.0f, 18.0f),
+                                     juce::Justification::centredLeft, Theme::textDim, 9.5f);
+            }
+            void resized() override
+            {
+                for (int i = 0; i < boxes.size(); ++i) boxes[i]->setBounds (12, 54 + i * 24, getWidth() - 24, 22);
+                auto r = getLocalBounds().removeFromBottom (40).reduced (12, 6);
+                all.setBounds (r.removeFromLeft (r.getWidth() / 2 - 4));
+                none.setBounds (r.removeFromRight (r.getWidth() - 8));
+            }
+            std::vector<juce::int64> ids;
+            std::function<void()> onChanged;
+            juce::OwnedArray<juce::ToggleButton> boxes;
+            juce::TextButton all { "LOCK ALL" }, none { "UNLOCK ALL" };
+        };
+        juce::CallOutBox::launchAsynchronously (std::make_unique<Panel> (ids, [this] { browser.repaint(); }),
+                                                browser.getScreenBounds().withSizeKeepingCentre (10, 10), nullptr);
+        return;
+    }
     if (action == "stems.separate")
     {
         stems.addToBatch (tracks);
@@ -1374,7 +1457,11 @@ void MainComponent::trackAction (const std::vector<TrackInfo>& tracks, const juc
         {
             const bool on = action.fromFirstOccurrenceOf ("tag:", false, false).startsWith ("1");
             const auto tag = action.fromFirstOccurrenceOf ("tag:", false, false).fromFirstOccurrenceOf (":", false, false);
-            for (auto id : ids) ul.setTag (id, tag, on);
+            for (auto id : ids)
+            {
+                if (ul.lockOf (id) & UserLists::lockTags) { flash ("Locked: Tags (right-click > Lock... to change)"); continue; }
+                ul.setTag (id, tag, on);
+            }
         }
         else if (action == "tags.edit")
             juce::CallOutBox::launchAsynchronously (std::make_unique<TagsEditor> ([this] { browser.refreshSources(); }),
@@ -1450,15 +1537,17 @@ void MainComponent::trackAction (const std::vector<TrackInfo>& tracks, const juc
 
 void MainComponent::clearTracks (const std::vector<TrackInfo>& tracks, const juce::String& action)
 {
-    auto fn = [action] (TrackVersion& v)
+    int lk = 0;   // (set per track below: what's locked stays)
+    auto fn = [action, &lk] (TrackVersion& v)
     {
         const bool all = action == "clear.all";
-        if (all || action == "clear.locators") v.memory.clear();
-        if (all || action == "clear.skips") v.skips.clear();
-        if (all || action == "clear.hotcues") for (auto& h : v.hot) h.reset();
-        if (all || action == "clear.phrases") { v.phrases = std::vector<Phrase>(); v.arrangement.clear(); }
-        if (all || action == "clear.stemlocs") v.stemLocs.clear();
-        if (all || action == "clear.notes") v.notes.clear();
+        if ((all || action == "clear.locators") && ! (lk & UserLists::lockMarkers) && ! (lk & UserLists::lockLoops)) v.memory.clear();
+        if ((all || action == "clear.skips") && ! (lk & UserLists::lockSkips)) v.skips.clear();
+        if ((all || action == "clear.hotcues") && ! (lk & UserLists::lockHotCues)) for (auto& h : v.hot) h.reset();
+        if ((all || action == "clear.phrases") && ! (lk & UserLists::lockPhrases)) { v.phrases = std::vector<Phrase>(); v.arrangement.clear(); }
+        if ((all || action == "clear.stemlocs") && ! (lk & UserLists::lockStemMarkers)) v.stemLocs.clear();
+        if ((all || action == "clear.notes") && ! (lk & UserLists::lockNotes)) v.notes.clear();
+        if (lk & UserLists::lockPhrases) return;
         if (all || action == "clear.order")
         {
             v.arrangement.clear();
@@ -1471,6 +1560,7 @@ void MainComponent::clearTracks (const std::vector<TrackInfo>& tracks, const juc
     {
         const auto id = libraryIdFor (t, true);
         if (id == 0) continue;
+        lk = UserLists::get().lockOf (id);
         editor.editLibraryTrack (id, fn);
         browser.forgetPreview (t.file.getFullPathName());
         ++n;

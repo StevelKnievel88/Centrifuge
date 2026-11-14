@@ -1,4 +1,5 @@
 #pragma once
+#include "KeySynth.h"
 #include "Deck.h"
 #include "MasterRecorder.h"
 #include <juce_audio_devices/juce_audio_devices.h>
@@ -26,6 +27,8 @@ public:
     juce::String saveDeviceState() const;
 
     juce::AudioDeviceManager& getDeviceManager() { return deviceManager; }
+    /** The PREP page's keyboard (bass sounds / your samples over the track). */
+    KeySynth& getKeySynth() { return keySynth; }
     Deck& deck (int i) { return *decks[(size_t) juce::jlimit (0, totalDecks - 1, i)]; }
     const Deck& deck (int i) const { return *decks[(size_t) juce::jlimit (0, totalDecks - 1, i)]; }
 
@@ -102,6 +105,7 @@ private:
 
     ReleasePool releasePool;
     juce::SpinLock renderLock;
+    KeySynth keySynth;
 };
 
 } // namespace orbit

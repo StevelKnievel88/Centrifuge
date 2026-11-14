@@ -16,6 +16,7 @@
 #include "../UI/CentrifugeRotor.h"
 #include "../UI/AboutView.h"
 #include "../UI/PrepView.h"
+#include "../UI/KeysWindow.h"
 #include "../UI/PhaseMeter.h"
 #include "../Library/CueStore.h"
 #include "../UI/LibraryDialogs.h"
@@ -172,7 +173,8 @@ private:   // (after the browser: it shows it)
     void zoomWaves (double steps);
     void checkAutoMaster();
     void setBrowserPoppedOut (bool out);
-    std::unique_ptr<juce::DocumentWindow> browserWindow;   // the browser popped out into its own window
+    std::unique_ptr<juce::DocumentWindow> browserWindow;
+    std::unique_ptr<juce::DocumentWindow> keysWindow;      // PREP's keyboard   // the browser popped out into its own window
     double autoMasterSince = 0.0;
     std::array<float, 2> autoMasterLevel { 0.0f, 0.0f };   // smoothed: the master deck, the other
     bool xzWasStreaming = false;

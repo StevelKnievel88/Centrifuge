@@ -30,6 +30,8 @@ public:
         std::function<juce::File (const juce::String&)> findModel;   // locates the models for higher quality levels
         int oggQualityIndex = 5;   // 160 kbps per stem
         bool lossless = false;     // keep stems as FLAC (24-bit, the track's own sample rate) instead of Ogg Vorbis
+        bool mp3 = false;          // MP3 320 kbps (needs the LAME encoder)
+        juce::File lameExe;
     };
     void setSettings (const Settings& s);
     Settings getSettings() const;

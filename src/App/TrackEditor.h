@@ -79,6 +79,8 @@ public:
     juce::String cueName (int deck, bool hotCue, int index) const;
 
     std::function<void (const juce::String&)> onMessage;
+    /** The track on a deck is locked against that kind of change (UserLists::Lock); tell = say so (onMessage). */
+    bool isLocked (int deck, int bit, bool tell = true) const;
     std::function<void (int deck, bool r, bool c)> onTargetsChanged;
 
 private:

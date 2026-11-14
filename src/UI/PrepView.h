@@ -51,6 +51,9 @@ public:
     void setOverviewGrid (bool on) { if (on != overviewGrid) { overviewGrid = on; repaint(); } }
     std::function<void()> onOverviewGridToggled;
     std::function<void (juce::Colour)> onDeckColour;
+    /** KEYS: the keyboard window (bass sounds / your samples over the track). */
+    std::function<void()> onKeysToggled;
+    bool keysShown = false;
     std::function<void (int stem, int mode)> onStemModeChanged;
 
 private:

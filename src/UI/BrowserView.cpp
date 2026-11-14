@@ -259,6 +259,7 @@ BrowserView::BrowserView (LibraryManager& lib, StemManager& stems) : library (li
     hdr.addColumn ("Comment", 14, 180, 60, 1000);
     hdr.addColumn ("Tags", 15, 160, 60, 1000);
     hdr.addColumn ("Tag List", 16, 30, 24, 60);   // a tag icon on the tracks in the Tag List
+    hdr.addColumn ("Lock", 17, 30, 24, 60);       // a padlock on locked tracks
     hdr.setStretchToFitActive (false);   // resizing a column moves the ones to its right along, keeping their widths
     table.setRowHeight (24);
     table.setMultipleSelectionEnabled (true);
@@ -652,6 +653,22 @@ void BrowserView::paintCell (juce::Graphics& g, int row, int col, int w, int h, 
         case 1: s = juce::String (numberOf (rows[(size_t) row])); g.setColour (Theme::textFaint); just = juce::Justification::centredRight; break;
         case 2: s = t.title; if (tagColourNames && ! t.colour.isTransparent()) g.setColour (t.colour); break;
         case 14: s = t.comment; g.setColour (Theme::textDim); break;
+        case 17:
+        {
+            if (const int lk = UserLists::get().lockOf (t.libraryId); lk != 0)
+            {
+                // a padlock: shackle over a body (full: everything locked; outlined: some)
+                const float bh = juce::jmin (8.0f, (float) h * 0.35f), bwid = bh * 1.3f;
+                auto body = juce::Rectangle<float> (bwid, bh).withCentre ({ w * 0.5f, h * 0.5f + bh * 0.35f });
+                juce::Path sh;
+                sh.addCentredArc (body.getCentreX(), body.getY(), bwid * 0.32f, bh * 0.6f, 0.0f, -juce::MathConstants<float>::halfPi,
+                                  juce::MathConstants<float>::halfPi, true);
+                g.setColour (Theme::warn);
+                g.strokePath (sh, juce::PathStrokeType (1.4f));
+                if (lk == (1 << UserLists::numLocks) - 1) g.fillRect (body); else g.drawRect (body, 1.2f);
+            }
+            return;
+        }
         case 16:
         {
             const auto& tl = UserLists::get().toPlay();
@@ -1030,6 +1047,7 @@ void BrowserView::showTrackMenu (int)
         tagMenu.addItem (63, "Edit tags and categories...");
         m.addSubMenu ("Tags", tagMenu);
     }
+    m.addItem (64, "Lock...  (what can't be changed: grid, cues, phrases, rating ...)");
     m.addSeparator();
     m.addItem (14, "Analyse  (waveform; grid, BPM and key where missing)");
     m.addItem (15, "Analyse again  (replace the grid, BPM and key)");
@@ -1051,6 +1069,7 @@ void BrowserView::showTrackMenu (int)
         if (r == 61) { safe->onTrackAction (tracks, "toplay.toggle"); return; }
         if (r == 62) { safe->onTrackAction (tracks, "list.remove:" + safe->currentNodeId); return; }
         if (r == 63) { safe->onTrackAction (tracks, "tags.edit"); return; }
+        if (r == 64) { safe->onTrackAction (tracks, "lock"); return; }
         const char* actions[] = { "", "load.0", "load.1", "load.2" };
         const char* clears[] = { "clear.locators", "clear.skips", "clear.hotcues", "clear.phrases", "clear.stemlocs",
                                  "clear.notes", "clear.order", "clear.editversions", "clear.all" };

@@ -82,6 +82,16 @@ public:
     juce::StringArray tagsOf (juce::int64 track) const;   // "Category/Tag"
     void setTag (juce::int64 track, const juce::String& tag, bool on);
 
+    // Locked tracks ---------------------------------------------------------------------
+    /** What can't be changed on a track (Lock...): a mask of these. */
+    enum Lock { lockGrid = 1, lockPhrases = 2, lockHotCues = 4, lockMarkers = 8, lockLoops = 16, lockSkips = 32,
+                lockStemMarkers = 64, lockNotes = 128, lockRating = 256, lockColour = 512, lockTags = 1024,
+                lockInfo = 2048, lockKey = 4096 };
+    static constexpr int numLocks = 13;
+    static const char* lockName (int bit);
+    int lockOf (juce::int64 track) const { auto it = trackLocks.find (track); return it != trackLocks.end() ? it->second : 0; }
+    void setLock (juce::int64 track, int mask) { if (mask == 0) trackLocks.erase (track); else trackLocks[track] = mask; ++changes; save(); }
+
     /** Whether a track (as shown in the browser) matches a dynamic playlist's rules. */
     bool matches (const Rules& r, const TrackInfo& t, int stemQuality) const;
 
@@ -100,6 +110,7 @@ private:
     std::vector<History> pastSessions, pastSetLists;
     std::vector<TagCategory> categories;
     std::map<juce::int64, juce::StringArray> trackTags;
+    std::map<juce::int64, int> trackLocks;
     int changes = 0;
 };
 

@@ -207,6 +207,7 @@ void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
     }
 
     const int maxBlock = juce::jmax (blockSize, 2048);
+    keySynth.prepare (sampleRate);
     scratchL.assign ((size_t) maxBlock, 0.0f);
     scratchR.assign ((size_t) maxBlock, 0.0f);
     mixL.assign ((size_t) maxBlock, 0.0f);
@@ -387,6 +388,9 @@ void AudioEngine::render (float* const* outputs, int numOutputs, int numSamples)
                     juce::FloatVectorOperations::add (outputs[ch + 1] + start, scratchR.data(), n);
                 }
             }
+            // the PREP keyboard, over the track
+            if (ch + 1 < numOutputs && outputs[ch] != nullptr && outputs[ch + 1] != nullptr)
+                keySynth.renderAdd (outputs[ch] + start, outputs[ch + 1] + start, n);
         }
     }
 

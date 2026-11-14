@@ -52,7 +52,8 @@ bool StemManager::hasCachedStems (const TrackInfo& info) const
 {
     const auto dir = cacheFolderFor (info);
     for (auto* n : cacheNames)
-        if (! dir.getChildFile (juce::String (n) + ".ogg").existsAsFile() && ! dir.getChildFile (juce::String (n) + ".flac").existsAsFile())
+        if (! dir.getChildFile (juce::String (n) + ".ogg").existsAsFile() && ! dir.getChildFile (juce::String (n) + ".flac").existsAsFile()
+            && ! dir.getChildFile (juce::String (n) + ".mp3").existsAsFile())
             return false;
     return true;
 }
@@ -366,7 +367,12 @@ bool StemManager::writeCache (const TrackInfo& info, const StemAudio& stems, Ste
     juce::OggVorbisAudioFormat ogg;
     juce::FlacAudioFormat flac;
     const bool lossless = getSettings().lossless;
-    const juce::String ext = lossless ? ".flac" : ".ogg";
+    // MP3 320 (needs lame.exe; without it the stems are kept as Ogg)
+    const bool mp3 = ! lossless && getSettings().mp3 && getSettings().lameExe.existsAsFile();
+    juce::LAMEEncoderAudioFormat lame (getSettings().lameExe);
+    int mp3Quality = 0;
+    if (mp3) { const auto opts = lame.getQualityOptions(); for (int i = 0; i < opts.size(); ++i) if (opts[i].contains ("320")) mp3Quality = i; }
+    const juce::String ext = lossless ? ".flac" : mp3 ? ".mp3" : ".ogg";
     const int quality = getSettings().oggQualityIndex;
     constexpr int block = 1 << 15;
     juce::AudioBuffer<float> buf (2, block);
@@ -379,7 +385,12 @@ bool StemManager::writeCache (const TrackInfo& info, const StemAudio& stems, Ste
         std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::FileOutputStream> (tmp);
         if (! static_cast<juce::FileOutputStream*> (stream.get())->openedOk()) return false;
 
-        auto writer = lossless ? flac.createWriterFor (stream, juce::AudioFormatWriterOptions{}
+        auto writer = mp3 ? lame.createWriterFor (stream, juce::AudioFormatWriterOptions{}
+                                                       .withSampleRate (stems.sampleRate)
+                                                       .withNumChannels (2)
+                                                       .withBitsPerSample (16)
+                                                       .withQualityOptionIndex (mp3Quality))
+                    : lossless ? flac.createWriterFor (stream, juce::AudioFormatWriterOptions{}
                                                                   .withSampleRate (stems.sampleRate)
                                                                   .withNumChannels (2)
                                                                   .withBitsPerSample (24))
@@ -402,8 +413,9 @@ bool StemManager::writeCache (const TrackInfo& info, const StemAudio& stems, Ste
             writer->writeFromAudioSampleBuffer (buf, 0, n);
         }
         writer.reset();
-        // one copy only: the other format goes
-        dir.getChildFile (juce::String (cacheNames[c]) + (lossless ? ".ogg" : ".flac")).deleteFile();
+        // one copy only: the other formats go
+        for (auto* other : { ".ogg", ".flac", ".mp3" })
+            if (ext != other) dir.getChildFile (juce::String (cacheNames[c]) + other).deleteFile();
         tmp.moveFileTo (dir.getChildFile (juce::String (cacheNames[c]) + ext));
     }
     dir.getChildFile ("quality.txt").replaceWithText (juce::String ((int) q));
@@ -431,17 +443,23 @@ StemAudio::Ptr StemManager::readCache (const TrackInfo& info, const TrackAudio& 
     {
         auto f = dir.getChildFile (juce::String (cacheNames[c]) + ".flac");
         const bool isFlac = f.existsAsFile();
-        if (! isFlac) f = dir.getChildFile (juce::String (cacheNames[c]) + ".ogg");
+        auto mp3File = dir.getChildFile (juce::String (cacheNames[c]) + ".mp3");
+        const bool isMp3 = ! isFlac && mp3File.existsAsFile();
+        if (! isFlac) f = isMp3 ? mp3File : dir.getChildFile (juce::String (cacheNames[c]) + ".ogg");
+        juce::MP3AudioFormat mp3Format;
         std::unique_ptr<juce::AudioFormatReader> reader (isFlac ? flac.createReaderFor (new juce::FileInputStream (f), true)
-                                                                : ogg.createReaderFor (new juce::FileInputStream (f), true));
+                                                         : isMp3 ? mp3Format.createReaderFor (new juce::FileInputStream (f), true)
+                                                                 : ogg.createReaderFor (new juce::FileInputStream (f), true));
         if (reader == nullptr) return {};
+        // MP3 comes back 1105 samples late (LAME's 576 + the decoder's 529): read from there so the stems line up
+        const int64_t skip = isMp3 ? 1105 : 0;
 
         const int s = cacheStemIndex[c];
-        const int64_t len = std::min<int64_t> (reader->lengthInSamples, audio.numFrames);
+        const int64_t len = std::min<int64_t> (reader->lengthInSamples - skip, audio.numFrames);
         for (int64_t pos = 0; pos < len; pos += block)
         {
             const int n = (int) std::min<int64_t> (block, len - pos);
-            reader->read (&buf, 0, n, pos, true, true);
+            reader->read (&buf, 0, n, pos + skip, true, true);
             for (int ch = 0; ch < 2; ++ch)
             {
                 const auto* src = buf.getReadPointer (juce::jmin (ch, (int) reader->numChannels - 1));

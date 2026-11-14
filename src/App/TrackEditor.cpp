@@ -1,4 +1,5 @@
 #include "TrackEditor.h"
+#include "../Library/UserLists.h"
 #include "Features.h"
 #include "../Library/GridOps.h"
 
@@ -219,6 +220,15 @@ void TrackEditor::swapDeck (int deck, const TrackVersion& v)
     s.dataVersion = -1;   // re-read the deck once it has swapped
 }
 
+bool TrackEditor::isLocked (int deck, int bit, bool tell) const
+{
+    if (deck < 0 || deck >= (int) sessions.size()) return false;
+    const auto id = sessions[(size_t) deck].libId;
+    if (id == 0 || (UserLists::get().lockOf (id) & bit) == 0) return false;
+    if (tell && onMessage) onMessage (juce::String ("Locked: ") + UserLists::lockName (bit) + " can't be changed on this track (right-click it in the browser > Lock... to change)");
+    return true;
+}
+
 void TrackEditor::poll()
 {
     const auto now = juce::Time::getMillisecondCounter();
@@ -237,7 +247,53 @@ void TrackEditor::poll()
         if (edits == s.edits) continue;
         s.edits = edits;
 
-        const auto now = snapFromDeck (d, s.track->cueShift);
+        auto now = snapFromDeck (d, s.track->cueShift);
+        // a locked track: hot cues / markers / loops / skips changed on the deck go back to how they were
+        bool revert = false;
+        if (const int lk = s.libId != 0 ? UserLists::get().lockOf (s.libId) : 0; lk != 0)
+        {
+            auto keepOld = [&] (int bit, auto& field, const auto& before)
+            {
+                if ((lk & bit) == 0 || field == before) return;
+                field = before;
+                revert = true;
+                isLocked (d, bit);
+            };
+            if (lk & UserLists::lockHotCues)
+                for (size_t i = 0; i < 8; ++i)
+                {
+                    const bool same = now.hot[i].has_value() == s.last.hot[i].has_value()
+                                      && (! now.hot[i] || (std::abs (now.hot[i]->startSec - s.last.hot[i]->startSec) < sameTime
+                                                           && now.hot[i]->colour == s.last.hot[i]->colour
+                                                           && std::abs (now.hot[i]->endSec - s.last.hot[i]->endSec) < sameTime));
+                    if (! same) { now.hot[i] = s.last.hot[i]; revert = true; }
+                }
+            if (revert) isLocked (d, UserLists::lockHotCues);
+            if (lk & (UserLists::lockMarkers | UserLists::lockLoops))
+            {
+                auto isLoop = [] (const CuePoint& c) { return c.endSec > c.startSec; };
+                auto pickLocs = [&] (const std::vector<CuePoint>& v, bool loops)
+                {
+                    std::vector<CuePoint> r;
+                    for (auto& c : v) if (isLoop (c) == loops) r.push_back (c);
+                    return r;
+                };
+                std::vector<CuePoint> merged;
+                bool changed = false;
+                for (bool loops : { false, true })
+                {
+                    const int bit = loops ? UserLists::lockLoops : UserLists::lockMarkers;
+                    auto a = pickLocs (now.locs, loops), b = pickLocs (s.last.locs, loops);
+                    bool same = a.size() == b.size();
+                    for (size_t i = 0; same && i < a.size(); ++i) same = std::abs (a[i].startSec - b[i].startSec) < sameTime && a[i].colour == b[i].colour;
+                    const auto& use = (lk & bit) && ! same ? b : a;
+                    if ((lk & bit) && ! same) { changed = true; isLocked (d, bit); }
+                    merged.insert (merged.end(), use.begin(), use.end());
+                }
+                if (changed) { now.locs = merged; revert = true; }
+            }
+            keepOld (UserLists::lockSkips, now.skips, s.last.skips);
+        }
         const bool playingCf = s.c;
         applyFull (playingCf ? s.cf : s.rb, now);
         if (playingCf && s.r)
@@ -258,6 +314,7 @@ void TrackEditor::poll()
         }
         save (s, s.r, s.c);
         if (resync) swapDeck (d, s.rb);
+        else if (revert) { swapDeck (d, playing (s)); s.last = now; }
         else s.last = now;
         syncOthers (d);
     }
@@ -333,6 +390,7 @@ std::vector<float> TrackEditor::lowOnsets (const TrackAudio& a, double& hop)
 
 void TrackEditor::gridAction (int deck, const juce::String& action)
 {
+    if (isLocked (deck, UserLists::lockGrid)) return;
     auto& s = sessions[(size_t) deck];
     if (s.track == nullptr) return;
     const auto& st = engine.deck (deck).state();
@@ -424,6 +482,7 @@ void TrackEditor::gridAction (int deck, const juce::String& action)
 
 void TrackEditor::renameCue (int deck, bool hotCue, int index, const juce::String& name)
 {
+    if (isLocked (deck, hotCue ? UserLists::lockHotCues : UserLists::lockMarkers)) return;
     auto& s = sessions[(size_t) deck];
     if (s.track == nullptr) return;
     const auto& st = engine.deck (deck).state();
@@ -457,6 +516,7 @@ const std::vector<Phrase>& TrackEditor::phrases (int deck) const
 
 void TrackEditor::editPhrases (int deck, const std::function<void (std::vector<Phrase>&)>& fn)
 {
+    if (isLocked (deck, UserLists::lockPhrases)) return;
     auto& s = sessions[(size_t) deck];
     if (s.track == nullptr) return;
     const double shift = s.track->cueShift;
@@ -475,6 +535,7 @@ void TrackEditor::editPhrases (int deck, const std::function<void (std::vector<P
 
 void TrackEditor::addPhrase (int deck, double atSec, const juce::String& name, juce::Colour colour)
 {
+    if (isLocked (deck, UserLists::lockPhrases)) return;
     const double shift = hasTrack (deck) ? sessions[(size_t) deck].track->cueShift : 0.0;
     editPhrases (deck, [=] (std::vector<Phrase>& list)
     {
@@ -490,6 +551,7 @@ void TrackEditor::addPhrase (int deck, double atSec, const juce::String& name, j
 
 void TrackEditor::setPhrase (int deck, int index, const Phrase& p)
 {
+    if (isLocked (deck, UserLists::lockPhrases)) return;
     const double shift = hasTrack (deck) ? sessions[(size_t) deck].track->cueShift : 0.0;
     editPhrases (deck, [=] (std::vector<Phrase>& list)
     {
@@ -503,6 +565,7 @@ void TrackEditor::setPhrase (int deck, int index, const Phrase& p)
 
 void TrackEditor::setPhrases (int deck, const std::vector<std::pair<int, Phrase>>& changes)
 {
+    if (isLocked (deck, UserLists::lockPhrases)) return;
     const double shift = hasTrack (deck) ? sessions[(size_t) deck].track->cueShift : 0.0;
     editPhrases (deck, [=] (std::vector<Phrase>& list)
     {
@@ -519,6 +582,7 @@ void TrackEditor::setPhrases (int deck, const std::vector<std::pair<int, Phrase>
 
 void TrackEditor::deletePhrase (int deck, int index)
 {
+    if (isLocked (deck, UserLists::lockPhrases)) return;
     editPhrases (deck, [=] (std::vector<Phrase>& list)
     {
         if (index >= 0 && index < (int) list.size()) list.erase (list.begin() + index);
@@ -581,6 +645,7 @@ void TrackEditor::editLibraryTrack (juce::int64 libId, const std::function<void 
 
 void TrackEditor::setPhraseRepeats (int deck, int index, int repeats)
 {
+    if (isLocked (deck, UserLists::lockPhrases)) return;
     if (index < 0 || index >= (int) phrases (deck).size()) return;
     auto p = phrases (deck)[(size_t) index];
     p.repeats = juce::jlimit (1, 64, repeats);
@@ -596,6 +661,7 @@ const std::vector<double>& TrackEditor::arrangement (int deck) const
 
 void TrackEditor::setArrangement (int deck, const std::vector<double>& order)
 {
+    if (isLocked (deck, UserLists::lockPhrases)) return;
     if (! hasTrack (deck)) return;
     const double shift = sessions[(size_t) deck].track->cueShift;
     editVersion (deck, [&] (TrackVersion& v)
@@ -614,6 +680,7 @@ const std::vector<StemLocator>& TrackEditor::stemLocators (int deck) const
 
 void TrackEditor::addStemLocator (int deck, const StemLocator& l)
 {
+    if (isLocked (deck, UserLists::lockStemMarkers)) return;
     if (! hasTrack (deck)) return;
     const double shift = sessions[(size_t) deck].track->cueShift;
     editVersion (deck, [&] (TrackVersion& v)
@@ -628,6 +695,7 @@ void TrackEditor::addStemLocator (int deck, const StemLocator& l)
 
 void TrackEditor::setStemLocator (int deck, int index, const StemLocator& l)
 {
+    if (isLocked (deck, UserLists::lockStemMarkers)) return;
     if (! hasTrack (deck) || index < 0 || index >= (int) stemLocators (deck).size()) return;
     const double shift = sessions[(size_t) deck].track->cueShift;
     const double was = stemLocators (deck)[(size_t) index].timeSec - shift;
@@ -641,6 +709,7 @@ void TrackEditor::setStemLocator (int deck, int index, const StemLocator& l)
 
 void TrackEditor::deleteStemLocator (int deck, int index)
 {
+    if (isLocked (deck, UserLists::lockStemMarkers)) return;
     if (! hasTrack (deck) || index < 0 || index >= (int) stemLocators (deck).size()) return;
     const double was = stemLocators (deck)[(size_t) index].timeSec - sessions[(size_t) deck].track->cueShift;
     editVersion (deck, [&] (TrackVersion& v)
@@ -658,6 +727,7 @@ const std::vector<NoteLocator>& TrackEditor::notes (int deck) const
 
 void TrackEditor::addNote (int deck, const NoteLocator& n)
 {
+    if (isLocked (deck, UserLists::lockNotes)) return;
     if (! hasTrack (deck)) return;
     const double shift = sessions[(size_t) deck].track->cueShift;
     editVersion (deck, [&] (TrackVersion& v)
@@ -671,6 +741,7 @@ void TrackEditor::addNote (int deck, const NoteLocator& n)
 
 void TrackEditor::setNote (int deck, int index, const NoteLocator& n)
 {
+    if (isLocked (deck, UserLists::lockNotes)) return;
     if (! hasTrack (deck) || index < 0 || index >= (int) notes (deck).size()) return;
     const double shift = sessions[(size_t) deck].track->cueShift;
     const auto was = notes (deck)[(size_t) index];
@@ -684,6 +755,7 @@ void TrackEditor::setNote (int deck, int index, const NoteLocator& n)
 
 void TrackEditor::deleteNote (int deck, int index)
 {
+    if (isLocked (deck, UserLists::lockNotes)) return;
     if (! hasTrack (deck) || index < 0 || index >= (int) notes (deck).size()) return;
     const double shift = sessions[(size_t) deck].track->cueShift;
     const auto was = notes (deck)[(size_t) index];

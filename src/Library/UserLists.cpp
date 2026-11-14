@@ -115,6 +115,9 @@ void UserLists::load()
             if (auto* t = x["tags"].getArray()) for (auto& s : *t) c.tags.add (s.toString());
             categories.push_back (c);
         }
+    if (auto* o = v["trackLocks"].getDynamicObject())
+        for (auto& p : o->getProperties())
+            if ((int) p.value != 0) trackLocks[p.name.toString().getLargeIntValue()] = (int) p.value;
     if (auto* o = v["trackTags"].getDynamicObject())
         for (auto& p : o->getProperties())
         {
@@ -170,6 +173,9 @@ void UserLists::save()
         tt->setProperty (juce::String (id), t);
     }
     o->setProperty ("trackTags", juce::var (tt));
+    auto* tl = new juce::DynamicObject();
+    for (auto& [id, m] : trackLocks) tl->setProperty (juce::String (id), m);
+    o->setProperty ("trackLocks", juce::var (tl));
     file().getParentDirectory().createDirectory();
     file().replaceWithText (juce::JSON::toString (juce::var (o)));
 }
@@ -297,6 +303,27 @@ void UserLists::setTagCategories (std::vector<TagCategory> c)
 {
     categories = std::move (c);
     save();
+}
+
+const char* UserLists::lockName (int bit)
+{
+    switch (bit)
+    {
+        case lockGrid: return "Beat grid";
+        case lockPhrases: return "Phrases";
+        case lockHotCues: return "Hot cues";
+        case lockMarkers: return "Markers";
+        case lockLoops: return "Loops";
+        case lockSkips: return "Skips";
+        case lockStemMarkers: return "Stem markers";
+        case lockNotes: return "Notes";
+        case lockRating: return "Rating";
+        case lockColour: return "Colour";
+        case lockTags: return "Tags";
+        case lockInfo: return "Title, artist, album, genre, label, comment";
+        case lockKey: return "Key";
+        default: return "";
+    }
 }
 
 juce::StringArray UserLists::tagsOf (juce::int64 track) const

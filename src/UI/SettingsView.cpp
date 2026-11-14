@@ -372,13 +372,31 @@ public:
         add (&stemFormat, 28, "Saved stems");
         stemFormat.addItem ("Compressed (Ogg Vorbis 160 kbps - small)", 1);
         stemFormat.addItem ("Compressed, high (Ogg Vorbis 320 kbps - about 2x bigger)", 3);
+        stemFormat.addItem ("Compressed, MP3 320 kbps (needs the LAME encoder: LOCATE LAME below)", 4);
         stemFormat.addItem ("Original quality (FLAC 24-bit, the track's own sample rate - roughly 8-10x bigger)", 2);
-        stemFormat.setSelectedId (settings.stemsLossless ? 2 : settings.stemsOgg320 ? 3 : 1, juce::dontSendNotification);
+        stemFormat.setSelectedId (settings.stemsLossless ? 2 : settings.stemsMp3 ? 4 : settings.stemsOgg320 ? 3 : 1, juce::dontSendNotification);
         stemFormat.onChange = [this]
         {
             settings.stemsLossless = stemFormat.getSelectedId() == 2;
             settings.stemsOgg320 = stemFormat.getSelectedId() == 3;
+            settings.stemsMp3 = stemFormat.getSelectedId() == 4;
             onChanged();
+        };
+        add (&locateLame, 28, "LAME encoder (MP3)");
+        locateLame.setButtonText (settings.lamePath.isNotEmpty() ? "LAME: " + juce::File (settings.lamePath).getFileName() + " - change..." : "LOCATE LAME...");
+        locateLame.setTooltip ("lame.exe, for MP3 stems and MP3 recordings (without it MP3 stems are kept as Ogg)");
+        locateLame.onClick = [this]
+        {
+            chooser = std::make_unique<juce::FileChooser> ("Find lame.exe", juce::File (settings.lamePath), "lame.exe;lame");
+            chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this] (const juce::FileChooser& fc)
+            {
+                const auto f = fc.getResult();
+                if (! f.existsAsFile()) return;
+                settings.lamePath = f.getFullPathName();
+                lamePath.setText (settings.lamePath, false);
+                locateLame.setButtonText ("LAME: " + f.getFileName() + " - change...");
+                onChanged();
+            });
         };
         add (&qualityOnLoad, 28, "Quality when loading");
         add (&qualityBatch, 28, "Quality when pre-analysing");
@@ -817,6 +835,7 @@ private:
     juce::ToggleButton throwOn, autoGain, autoMaster;
     juce::Slider throwSpeed, markerSize, longPress, xzLead;
     juce::ComboBox stemFormat;
+    juce::TextButton locateLame;
     juce::ToggleButton padColoursOn, jogScreens, xzScreenOn;
     juce::Label xzScreenNote;
     struct StatusLabel : juce::Label, juce::Timer

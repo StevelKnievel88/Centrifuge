@@ -108,7 +108,8 @@ struct AppSettings
     int stemQualityOnLoad = 0;         // 0 Fast, 1 Better, 2 High, 3 Best (see StemQuality)
     int stemQualityBatch = 1;          // for pre-analysis
     int stemThreads = 0;
-    bool stemsOgg320 = false;          // compressed stems at 320 kbps (instead of 160)
+    bool stemsOgg320 = false;
+    bool stemsMp3 = false;             // stems as MP3 320 kbps (needs lame.exe)          // compressed stems at 320 kbps (instead of 160)
     bool stemsLossless = false;        // stems kept as FLAC at the track's own sample rate (much bigger) instead of Ogg
 
     // UI

@@ -306,6 +306,8 @@ void PrepView::paint (juce::Graphics& g)
         const bool pending = st.skipPendingFrom.load() >= 0.0;
         chip (g, r.removeFromLeft (64.0f), pending ? "SKIP TO" : "SKIP", pending, skipColour, "skip.set");
         r.removeFromLeft (12.0f);
+        chip (g, r.removeFromLeft (56.0f), "KEYS", keysShown, Theme::warn, "keys");   // the keyboard, to play over the track
+        r.removeFromLeft (12.0f);
 
         auto zoom = r.removeFromRight (82.0f);
         const double vis = waves.getVisibleSeconds();
@@ -856,6 +858,7 @@ void PrepView::action (const juce::String& id, bool down)
     if (id == "editview") { if (onEditViewToggled) onEditViewToggled(); return; }
     if (id == "overviewgrid") { if (onOverviewGridToggled) onOverviewGridToggled(); return; }
     if (id == "note.add") { addNoteAtPlayhead(); return; }
+    if (id == "keys") { if (onKeysToggled) onKeysToggled(); return; }
     if (id == "looploc.add") { addLoopLocatorAtPlayhead(); return; }
 
     if (id == "play") post (C::playToggle);
