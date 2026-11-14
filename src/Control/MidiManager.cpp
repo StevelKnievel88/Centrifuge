@@ -836,6 +836,20 @@ void MidiManager::firePending (const std::vector<std::pair<const ActionDef*, Act
 
 void MidiManager::timerCallback()
 {
+    // rekordbox's "still here" to the XDJ-XZ (seen on its USB link, every 200 ms; 0C / 0D for its two ports)
+    if (keepAlive.load())
+    {
+        const double now = juce::Time::getMillisecondCounterHiRes();
+        if (now - lastKeepAlive >= 200.0)
+        {
+            lastKeepAlive = now;
+            static const juce::uint8 a[] = { 0x00, 0x40, 0x05, 0x00, 0x00, 0x02, 0x0C, 0x00, 0x50, 0x01 };
+            static const juce::uint8 b[] = { 0x00, 0x40, 0x05, 0x00, 0x00, 0x02, 0x0D, 0x00, 0x50, 0x01 };
+            sendToXdj (juce::MidiMessage::createSysExMessage (a, (int) sizeof (a)));
+            sendToXdj (juce::MidiMessage::createSysExMessage (b, (int) sizeof (b)));
+        }
+    }
+
     // Long presses: held past the long-press time
     {
         std::vector<std::vector<std::pair<const ActionDef*, ActionValue>>> fire;

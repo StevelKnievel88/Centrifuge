@@ -140,6 +140,9 @@ public:
     bool hotCuesInColour() const { return hotCueColours.load(); }
     void setHotCuesInColour (bool b) { hotCueColours = b; clearLedCache(); }
     /** Jog screens on the XDJ-XZ: the position bar turns with the track, and the cue marker shows the cue point. */
+    /** Sends the XDJ-XZ what rekordbox sends it about 5 times a second (a Pioneer SysEx "still here"): with it the
+        unit lets the computer colour its pad mode buttons, as rekordbox does. */
+    void setRekordboxKeepAlive (bool on) { keepAlive = on; }
     void setJogDisplay (bool on) { jogDisplay = on; jogCache.fill (-1); jogMsbCache.fill (-1); }
     void clearLedCache() { const juce::ScopedLock sl (bindingLock); ledCache.clear(); jogCache.fill (-1); jogMsbCache.fill (-1); }
 
@@ -185,6 +188,8 @@ private:
     std::atomic<bool> hotCueColours { true }, jogDisplay { true };
     std::array<int, 12> jogCache { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
     std::atomic<double> padModeResendUntil { 0.0 };
+    std::atomic<bool> keepAlive { true };
+    double lastKeepAlive = 0.0;
     std::array<std::atomic<int>, 2> padMode { 1, 1 };   // last pad mode button pressed on each deck (lights only)
     std::array<int, 12> jogMsbCache { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
     void sendToXdj (const juce::MidiMessage& m);
