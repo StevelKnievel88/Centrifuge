@@ -229,6 +229,7 @@ void AppSettings::load()
     boolean ("statusFolded", statusFolded);
     boolean ("artistFirst", artistFirst);
     boolean ("autoMaster", autoMaster);
+    boolean ("pcRenderGpu", pcRenderGpu);
     boolean ("tagColourNames", tagColourNames);
     num ("browserHeight", browserHeight);
 
@@ -375,6 +376,7 @@ void AppSettings::save() const
     o->setProperty ("statusFolded", statusFolded);
     o->setProperty ("artistFirst", artistFirst);
     o->setProperty ("autoMaster", autoMaster);
+    o->setProperty ("pcRenderGpu", pcRenderGpu);
     o->setProperty ("tagColourNames", tagColourNames);
     o->setProperty ("browserHeight", browserHeight);
 

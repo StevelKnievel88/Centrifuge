@@ -22,6 +22,7 @@
 #include "../UI/LibraryDialogs.h"
 #include "TrackEditor.h"
 #include "../Library/FileImporter.h"
+#include <juce_opengl/juce_opengl.h>
 
 namespace orbit
 {
@@ -132,6 +133,9 @@ private:
     // Laptop mode: the decks drawn for the XDJ-XZ's screen and sent to it over the network cable
     XzScreenLink xzLink;
     struct FnTimer : juce::Timer { std::function<void()> f; void timerCallback() override { if (f) f(); } } xzTimer;
+
+    juce::OpenGLContext pcGl;   // when on, the main window is drawn on the GPU (Settings > GPU rendering)
+    void applyGpuRendering();
     BrowserView browser { library, stems };
     XzScreenView xzView { engine, router, browser };
 public:

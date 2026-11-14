@@ -87,6 +87,7 @@ private:
     ActionRouter& router;
     BrowserView& browser;
     ScrollingWaveforms waves;
+    juce::Image frameBuf;   // reused each render() instead of allocating a new image per frame
     PhaseMeter meter;
     juce::Rectangle<int> infoArea, browserArea;
 

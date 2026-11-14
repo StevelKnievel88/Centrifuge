@@ -109,6 +109,10 @@ public:
         setupSlider (playhead, 10.0, 90.0, 1.0, settings.playheadPosition * 100.0);
         playhead.onValueChange = [this] { settings.playheadPosition = (float) playhead.getValue() / 100.0f; onChanged(); };
         add (&fps, 28, "Frame rate limit");
+        add (&gpuBox, 28, "Screen rendering");
+        gpuBox.setTooltip ("GPU (OpenGL) draws the main window on the graphics card - much lower CPU use and smoother while tracks play "
+                           "(it also frees up the CPU so the XDJ-XZ screen renders more smoothly). CPU uses the software renderer. "
+                           "Takes effect straight away; if the window ever looks wrong on your graphics card, switch back to CPU.");
         add (&zoom, 28, "Visible seconds");
 
         addSection ("BROWSER");
@@ -429,6 +433,8 @@ public:
 
         fps.addItemList ({ "30 fps", "60 fps", "120 fps", "144 fps" }, 1);
         fps.setSelectedId (settings.maxFps <= 30 ? 1 : settings.maxFps <= 60 ? 2 : settings.maxFps <= 120 ? 3 : 4, juce::dontSendNotification);
+        gpuBox.addItemList ({ "GPU (OpenGL)", "CPU (software)" }, 1);
+        gpuBox.setSelectedId (settings.pcRenderGpu ? 1 : 2, juce::dontSendNotification);
         setupSlider (zoom, 1.0, 30.0, 0.5, settings.visibleSeconds);
         setupSlider (jogTicks, 64.0, 4096.0, 1.0, settings.jogTicksPerRev);
         jogTicks.setSkewFactorFromMidPoint (720.0);
@@ -466,6 +472,7 @@ public:
         reloadDb.onClick = [this] { onReload(); };
 
         fps.onChange = [this] { const int v[] = { 30, 60, 120, 144 }; settings.maxFps = v[juce::jlimit (0, 3, fps.getSelectedId() - 1)]; onChanged(); };
+        gpuBox.onChange = [this] { settings.pcRenderGpu = gpuBox.getSelectedId() == 1; onChanged(); };
         zoom.onValueChange = [this] { settings.visibleSeconds = zoom.getValue(); onChanged(); };
         jogTicks.onValueChange = [this] { settings.jogTicksPerRev = jogTicks.getValue(); onChanged(); };
         leds.onClick = [this] { settings.ledFeedback = leds.getToggleState(); onChanged(); };
@@ -750,7 +757,7 @@ private:
     juce::Slider stemOffFade;
     PairRow overviewRow;
     juce::TextButton colourButton;
-    juce::ComboBox deck1Out, deck2Out, previewOut, fps, analysisRange, keyNotation, nameOrder;
+    juce::ComboBox deck1Out, deck2Out, previewOut, fps, gpuBox, analysisRange, keyNotation, nameOrder;
     juce::ToggleButton sumToMaster, leds, stemsOnLoad, stemsGpu, foldSkips, quantize, followDeck;
     juce::TextEditor dbPath, dbKey, usbFolder, modelPath, cachePath;
     Resizer dbButtons;

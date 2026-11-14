@@ -412,6 +412,7 @@ void MainComponent::skipSplash()
 
 MainComponent::~MainComponent()
 {
+    if (pcGl.isAttached()) pcGl.detach();
     xzTimer.stopTimer();
     SettingsView::xzScreenStatus = nullptr;
     xzLink.onTouch = nullptr;
@@ -426,8 +427,19 @@ MainComponent::~MainComponent()
     juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
 }
 
+void MainComponent::applyGpuRendering()
+{
+    // GPU: the OpenGL context takes over drawing the whole window (so the CPU / UI thread is freed up - the XZ
+    // screen's software render, on that same thread, gets smoother too). CPU: JUCE's own software renderer.
+    if (settings.pcRenderGpu && ! pcGl.isAttached())
+        pcGl.attachTo (*this);
+    else if (! settings.pcRenderGpu && pcGl.isAttached())
+        pcGl.detach();
+}
+
 void MainComponent::applySettings()
 {
+    applyGpuRendering();
     Theme::deckColours()[0] = juce::Colour (settings.deckColours[0]);
     Theme::deckColours()[1] = juce::Colour (settings.deckColours[1]);
     Theme::deckColours()[2] = juce::Colour (settings.deckColours[2]);

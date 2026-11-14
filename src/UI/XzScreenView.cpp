@@ -388,12 +388,15 @@ void XzScreenView::resized()
 
 juce::Image XzScreenView::render()
 {
-    waves.setVisible (! browserShown);
+    if (waves.isVisible() == browserShown) waves.setVisible (! browserShown);   // only when it actually changed
     waves.tick (juce::Time::getMillisecondCounterHiRes() / 1000.0);
-    juce::Image img (juce::Image::RGB, getWidth(), getHeight(), true, juce::SoftwareImageType());
-    juce::Graphics g (img);
+    // Reuse one buffer instead of allocating a fresh 800x480 image every frame; paint() fills the whole surface,
+    // so nothing stale shows through (no per-frame clear needed). submitFrame copies it before this returns.
+    if (frameBuf.getWidth() != getWidth() || frameBuf.getHeight() != getHeight())
+        frameBuf = juce::Image (juce::Image::RGB, getWidth(), getHeight(), false, juce::SoftwareImageType());
+    juce::Graphics g (frameBuf);
     paintEntireComponent (g, true);
-    return img;
+    return frameBuf;
 }
 
 void XzScreenView::paint (juce::Graphics& g)

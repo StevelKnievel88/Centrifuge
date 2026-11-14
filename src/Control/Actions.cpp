@@ -46,9 +46,6 @@ static std::vector<ActionDef> buildActions()
         add (p + "master",      "Master",                D + " - Tempo", B, d, true);
         add (p + "quantize",    "Quantize",              D + " - Tempo", B, d, true);
 
-        // The channel fader, tracked only so Centrifuge knows which deck is up in the mix (for auto-master).
-        add (p + "mix.fader",   "Channel fader (Deck " + juce::String (d + 1) + ")", "Mixer", C, d);
-
         for (int h = 0; h < 8; ++h)
         {
             const juce::String letter = juce::String::charToString ((juce::juce_wchar) ('A' + h));
@@ -132,6 +129,11 @@ static std::vector<ActionDef> buildActions()
     }
 
     const auto B = ActionKind::button, E = ActionKind::encoder;
+
+    // Mixer: both channel faders in one section, tracked so Centrifuge knows which deck is up in the mix (auto-master).
+    for (int d = 0; d < 2; ++d)
+        add ("d" + juce::String (d + 1) + ".mix.fader", "Channel fader (Deck " + juce::String (d + 1) + ")", "Mixer", ActionKind::continuous, d);
+
     add ("browse.scroll",   "Browse: scroll (zooms the waveforms while the browser is hidden / closed on the XZ)", "Browser", E, -1);
     add ("browse.enter",    "Browse: select / open",   "Browser", B, -1);
     add ("browse.back",     "Browse: back",            "Browser", B, -1);
