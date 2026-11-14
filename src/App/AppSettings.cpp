@@ -221,10 +221,12 @@ void AppSettings::load()
     num ("stemQualityBatch", stemQualityBatch);
     num ("stemThreads", stemThreads);
     boolean ("stemsLossless", stemsLossless);
+    boolean ("stemsOgg320", stemsOgg320);
 
     boolean ("showBrowser", showBrowser);
     boolean ("statusFolded", statusFolded);
     boolean ("artistFirst", artistFirst);
+    boolean ("autoMaster", autoMaster);
     boolean ("tagColourNames", tagColourNames);
     num ("browserHeight", browserHeight);
 
@@ -349,6 +351,7 @@ void AppSettings::save() const
     o->setProperty ("xzScreen", xzScreen);
     o->setProperty ("xzScreenLeadMs", xzScreenLeadMs);
     o->setProperty ("stemsLossless", stemsLossless);
+    o->setProperty ("stemsOgg320", stemsOgg320);
     o->setProperty ("markerScale", (double) markerScale);
     o->setProperty ("previewColour", (juce::int64) previewColour);
     o->setProperty ("throwSpeed", throwSpeed);
@@ -367,6 +370,7 @@ void AppSettings::save() const
     o->setProperty ("showBrowser", showBrowser);
     o->setProperty ("statusFolded", statusFolded);
     o->setProperty ("artistFirst", artistFirst);
+    o->setProperty ("autoMaster", autoMaster);
     o->setProperty ("tagColourNames", tagColourNames);
     o->setProperty ("browserHeight", browserHeight);
 

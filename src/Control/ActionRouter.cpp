@@ -181,7 +181,19 @@ void ActionRouter::perform (const ActionDef& a, const ActionValue& v)
     if      (name == "play")        { if (v.down) button (C::playToggle); }
     else if (name == "cue")         button (C::cue);
     else if (name == "shift")       button (C::shift);
-    else if (name == "eject")       { if (v.down) button (C::eject); }
+    else if (name == "eject")
+    {
+        // stopped decks only: the deck lets go of the track, then (once the audio has) the screen does too
+        if (v.down && ! deck.state().playing.load() && deck.getLoadedTrack() != nullptr)
+        {
+            button (C::eject);
+            auto* dk = &deck;
+            juce::Timer::callAfterDelay (250, [dk, was = deck.getLoadedTrack().get()]
+            {
+                if (dk->getLoadedTrack().get() == was && ! dk->state().playing.load()) dk->setLoadedTrackForUi (nullptr);
+            });
+        }
+    }
     else if (name == "needle")      deck.post (C::seekFraction, v.value);
     else if (name == "callprev")    { if (v.down) button (C::memoryCuePrev); }
     else if (name == "callnext")    { if (v.down) button (C::memoryCueNext); }

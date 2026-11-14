@@ -20,7 +20,6 @@ static std::vector<ActionDef> buildActions()
         add (p + "play",        "Play / Pause",          D + " - Transport", B, d, true);
         add (p + "cue",         "Cue",                   D + " - Transport", B, d, true);
         add (p + "shift",       "Shift",                 D + " - Transport", B, d);
-        add (p + "load",        "Load selected track",   D + " - Transport", B, d);
         add (p + "eject",       "Eject",                 D + " - Transport", B, d);
         add (p + "track.prev",  "Track skip back (previous track in the list; restart if past 3 s)", D + " - Transport", B, d);
         add (p + "track.next",  "Track skip forward (next track in the list)", D + " - Transport", B, d);
@@ -135,7 +134,6 @@ static std::vector<ActionDef> buildActions()
 
     const auto B = ActionKind::button, E = ActionKind::encoder;
     add ("browse.scroll",   "Browse: scroll (zooms the waveforms while the browser is hidden / closed on the XZ)", "Browser", E, -1);
-    add ("view.zoom",       "Waveform zoom (encoder)", "View", E, -1);
     add ("browse.enter",    "Browse: select / open",   "Browser", B, -1);
     add ("browse.back",     "Browse: back",            "Browser", B, -1);
     add ("browse.tree",     "Browse: playlists / tracks focus", "Browser", B, -1);

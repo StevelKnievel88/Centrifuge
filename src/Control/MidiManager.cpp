@@ -1,4 +1,5 @@
 #include "MidiManager.h"
+#include "../UI/ButtonStyles.h"
 
 namespace orbit
 {
@@ -794,6 +795,8 @@ void MidiManager::handleIncomingMidiMessage (juce::MidiInput* source, const juce
         {
             if (h.v.down && h.def->deck >= 0 && h.def->deck < 2) padMode[(size_t) h.def->deck] = h.def->id.getTrailingIntValue();
             clearLedCache();   // the unit lights its own pad mode buttons when pressed: put ours back on all of them
+            // ... and keep putting them back for a moment (it relights them a little after the press, over ours)
+            padModeResendUntil = juce::Time::getMillisecondCounterHiRes() + 600.0;
             continue;
         }
         if (h.def->id.startsWith ("light.")) continue;
@@ -966,6 +969,7 @@ void MidiManager::sendLeds()
         if (def == nullptr || b.type == MidiBinding::Type::pitchBend || def->kind != ActionKind::button) continue;   // buttons / pads only
 
         int value;
+        bool lit = false, ownColour = false;
         const auto name = b.actionId.fromFirstOccurrenceOf (".", false, false);
         const bool hotPad = def->deck >= 0 && def->deck < 2 && name.startsWith ("hotcue.");
         if (hotPad)
@@ -983,9 +987,15 @@ void MidiManager::sendLeds()
             value = ! set ? off : coloured > 0 ? coloured : on;
         }
         else if (name.startsWith ("padmode.") && def->deck >= 0 && def->deck < 2)
-            value = padMode[(size_t) def->deck].load() == name.getTrailingIntValue() ? b.ledOn : b.ledOff;
+        {
+            lit = padMode[(size_t) def->deck].load() == name.getTrailingIntValue();
+            value = lit ? b.ledOn : b.ledOff;
+        }
         else if (def->hasLed)
-            value = router.ledState (*def) ? b.ledOn : b.ledOff;
+        {
+            lit = router.ledState (*def);
+            value = lit ? b.ledOn : b.ledOff;
+        }
         else
         {
             // one-shot functions (beat jump, delete ...): their unlit colour, lit while pressed
@@ -993,6 +1003,7 @@ void MidiManager::sendLeds()
             bool pressed = false;
             for (auto& k : heldNow) pressed = pressed || (k.endsWith (key.fromFirstOccurrenceOf ("|", true, false)) && (b.device.isEmpty() || k.startsWith (b.device)));
             value = pressed ? b.ledOn : b.ledOff;
+            lit = pressed;
             // a deck's beat jump button with a colour of its own: its pads light in it (dim, bright while pressed)
             if (const int slot = ActionRouter::jumpSlotOf (b.actionId); slot >= 0 && def->deck >= 0 && def->deck < 2
                 && b.type == MidiBinding::Type::note && router.getJumpSlotColour (def->deck, slot) != 0)
@@ -1001,8 +1012,24 @@ void MidiManager::sendLeds()
                 int n = padWheelNumber (jc, ! pressed);
                 if (n < 0) n = getWhitePad (! pressed) > 0 ? getWhitePad (! pressed) : (pressed ? b.ledOn : b.ledOff);
                 value = n;
+                ownColour = true;
             }
         }
+
+        // A button given its own colours in Centrifuge (right-click > colours) lights its mapped pad in them: its ON
+        // colour when lit (bright), its OFF colour when not (or the ON colour dimmed). Infill first, else the outline.
+        if (! hotPad && ! ownColour && b.type == MidiBinding::Type::note)
+            if (const auto* bs = ButtonStyles::get().find (b.actionId))
+            {
+                auto pick = [bs] (int state) { auto c = bs->get (state, 1); return c.getAlpha() != 0 ? c : bs->get (state, 0); };
+                const auto on = pick (1), off = pick (0);
+                if (on.getAlpha() != 0 || off.getAlpha() != 0)
+                {
+                    const auto c = lit ? (on.getAlpha() != 0 ? on : off) : (off.getAlpha() != 0 ? off : on);
+                    const bool dim = ! lit && off.getAlpha() == 0;
+                    if (const int n = padWheelNumber (c, dim); n >= 0) value = n;
+                }
+            }
 
         // the pad's SHIFT layer (XDJ-XZ pads: note + 8), unless something is mapped there itself
         // (hot cue pads: the same as without SHIFT unless SHIFT colours are set)
@@ -1033,6 +1060,8 @@ void MidiManager::sendLeds()
         }
 
         const auto cacheKey = b.device + "|" + b.describe() + "|" + b.actionId;
+        const bool forcePadMode = name.startsWith ("padmode.") && juce::Time::getMillisecondCounterHiRes() < padModeResendUntil.load();
+        if (! forcePadMode)
         {
             const juce::ScopedLock sl (bindingLock);
             auto it = ledCache.find (cacheKey);

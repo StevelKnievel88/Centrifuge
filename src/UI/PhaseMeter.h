@@ -36,22 +36,29 @@ public:
     static constexpr float bracketStep = 4.0f;
 
     /** The meter's blocks: one per beat, the same size whatever the length (4 / 8 / 16 / 32 bars). */
-    static constexpr float blockW = 5.0f, gapUnit = 2.0f, gapBar = 5.0f, gap4 = 8.0f, gap16 = 11.0f;
-    static float gapAfterBlock (int i)
+    struct Gaps { float unit, bar, four, sixteen; };
+    static constexpr float blockW = 6.0f;
+    static constexpr Gaps desktopGaps { 2.0f, 5.0f, 14.0f, 18.0f };
+    static constexpr Gaps xzGaps32 { 2.0f, 5.0f, 8.0f, 11.0f };          // the XZ at 32 bars (shrunk to fit)
+    static constexpr Gaps xzGaps { 3.6f, 9.0f, 14.4f, 19.8f };            // the XZ at 4 / 8 / 16 bars
+    static float gapAfterBlock (int i, Gaps gp = desktopGaps)
     {
-        if ((i + 1) % 4 != 0) return gapUnit;
+        if ((i + 1) % 4 != 0) return gp.unit;
         const int barEnd = (i + 1) / 4;
-        if (barEnd % 16 == 0) return gap16;
-        if (barEnd % 4 == 0) return gap4;
-        return gapBar;
+        if (barEnd % 16 == 0) return gp.sixteen;
+        if (barEnd % 4 == 0) return gp.four;
+        return gp.bar;
     }
+    static float gapsFor (int n, Gaps gp) { float g = 0.0f; for (int i = 0; i < n - 1; ++i) g += gapAfterBlock (i, gp); return g; }
+    /** The XDJ-XZ screen's layout: 16 bars fill the width, 8 and 4 use 16's block size (centred), 32 shrinks to fit. */
+    void setXzLayout (bool b) { xzLayout = b; repaint(); }
     /** How wide the meter is for a length in bars at a height (the deck number square included). */
     static float widthFor (int bars, float height)
     {
         const float rowH = juce::jmax (4.0f, (height - 4.0f) / 2.0f);
         const int n = juce::jlimit (4, 32, bars) * 4;
         float w = rowH + 2.0f + 4.0f + (float) n * blockW;
-        for (int i = 0; i < n - 1; ++i) w += gapAfterBlock (i);
+        w += gapsFor (n, desktopGaps);
         return std::ceil (w);
     }
     int getPhraseBars() const { return juce::jlimit (4, 32, phraseBars); }
@@ -201,11 +208,21 @@ private:
         const int upb = 4;
         const int n = bars * upb;
         const int inPhrase = juce::jlimit (1, n, phrase * upb);
-        auto gapAfter = [] (int i) { return gapAfterBlock (i); };
-        float gaps = 0.0f;
-        for (int i = 0; i < n - 1; ++i) gaps += gapAfter (i);
-        // the same size on every length (smaller only when there isn't room, as on the XZ at 32 bars)
-        const float bw = juce::jmax (1.0f, juce::jmin (blockW, (r.getWidth() - gaps) / (float) n));
+        const Gaps gp = ! xzLayout ? desktopGaps : bars >= 32 ? xzGaps32 : xzGaps;
+        auto gapAfter = [gp] (int i) { return gapAfterBlock (i, gp); };
+        const float gaps = gapsFor (n, gp);
+        float bw;
+        if (! xzLayout)
+            bw = juce::jmax (1.0f, juce::jmin (blockW, (r.getWidth() - gaps) / (float) n));   // the same size on every length
+        else if (bars >= 32)
+            bw = juce::jmax (1.0f, (r.getWidth() - gaps) / (float) n);
+        else
+        {
+            // 16 bars fill the width; 8 and 4 use the same blocks, centred
+            bw = juce::jmax (1.0f, (r.getWidth() - gapsFor (64, gp)) / 64.0f);
+            const float used = (float) n * bw + gaps;
+            r.removeFromLeft (juce::jmax (0.0f, (r.getWidth() - used) * 0.5f));
+        }
         const double unitPos = b;   // a block per beat
         const int cur = unitPos < 0.0 ? -1 : (int) std::floor (unitPos) % juce::jmax (1, phrase * upb) % n;
         const double frac = b < 0.0 ? 0.0 : b - std::floor (b);   // each block flashes on its beat
@@ -253,7 +270,7 @@ public:
     std::function<const TimeFold* (int deck)> foldFor;
 private:
     std::array<int, 3> last { -2, -2, -2 }, lastFlash { -1, -1, -1 }, lastBars { 0, 0, 0 };
-    bool prepOnly = false;
+    bool xzLayout = false, prepOnly = false;
     int phraseBars = 16;
     int layoutBars = 16;   // bars the meters are laid out for (following phrases: shared by both decks)
     bool followPhrases = false, brackets = false;

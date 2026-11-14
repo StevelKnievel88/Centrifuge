@@ -123,6 +123,9 @@ public:
     /** The preview's play / stop button (also mappable: Browser > Preview play / stop): stops a playing preview,
         or plays it again from where it stopped. */
     void previewPlayStop();
+    /** POP OUT: the browser in a window of its own (the waveforms get its room); DOCK puts it back. */
+    std::function<void()> onPopToggled;
+    void setPoppedOut (bool p) { popButton.setButtonText (p ? "DOCK" : "POP OUT"); hideButton.setVisible (! p); resized(); }
     void setCollapsed (bool c) { collapsed = c; hideButton.setButtonText (c ? "SHOW" : "HIDE"); resized(); repaint(); }
     bool isCollapsed() const { return collapsed; }
     static constexpr int barHeight = 42;   // the top bar (and the browser's height while hidden)
@@ -164,7 +167,8 @@ private:
     juce::TextEditor search;
     // (right-click any of them for its colours)
     StyledTextButton load1 { "LOAD 1", "browser.load1" }, load2 { "LOAD 2", "browser.load2" }, expandButton { "EXPAND", "browser.expand" },
-                     infoButton { "INFO", "browser.info" }, hideButton { "HIDE", "browser.hide" };
+                     infoButton { "INFO", "browser.info" }, hideButton { "HIDE", "browser.hide" },
+                     popButton { "POP OUT", "browser.popout" };
     StyledTextButton filterButton { "FILTER", "browser.filter" }, rowsSmaller { "-", "browser.rows" }, rowsBigger { "+", "browser.rows" },
                      setListButton { "SET LIST", "browser.setlist" };
     void showFilterPanel();

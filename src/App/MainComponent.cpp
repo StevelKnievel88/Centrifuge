@@ -187,6 +187,7 @@ MainComponent::MainComponent()
     browser.setTagColourNames (settings.tagColourNames);
     browser.onTagColourNames = [this] (bool on) { settings.tagColourNames = on; settings.save(); };
     browser.onHideToggled = [this] { settings.showBrowser = ! settings.showBrowser; settings.save(); resized(); };
+    browser.onPopToggled = [this] { setBrowserPoppedOut (browserWindow == nullptr); };
     browser.onColumnsChanged = [this] (const juce::String& cols) { settings.browserColumns = cols; settings.save(); };
     waves.onTrackDropped = [this] (int d) { loadDragged (d); };
     prepView.onTrackDropped = [this] { loadDragged (AudioEngine::prepDeck); };
@@ -538,6 +539,7 @@ void MainComponent::applySettings()
     ss.qualityOnLoad = (StemQuality) juce::jlimit (0, 3, settings.stemQualityOnLoad);
     ss.qualityBatch = (StemQuality) juce::jlimit (0, 3, settings.stemQualityBatch);
     ss.lossless = settings.stemsLossless;
+    ss.oggQualityIndex = settings.stemsOgg320 ? 9 : 5;   // 320 / 160 kbps
     ss.findModel = [s = settings] (const juce::String& n) { return s.findModel (n); };
     stems.setSettings (ss);
 
@@ -651,7 +653,7 @@ void MainComponent::showPage (int p)
     deck1.setVisible (p == 0 && ! browserExpanded);
     deck2.setVisible (p == 0 && ! browserExpanded);
     waves.setVisible (p == 0 && ! browserExpanded);
-    browser.setVisible ((p == 0 && (settings.showBrowser || browserExpanded)) || p == 4);
+    browser.setVisible ((p == 0 && (settings.showBrowser || browserExpanded)) || p == 4 || browserWindow != nullptr);
     prepView.setVisible (p == 4 && ! browserExpanded);
     phaseMeter.setPrepOnly (p == 4);
     mapping.setVisible (p == 1);
@@ -665,6 +667,7 @@ void MainComponent::timerCallback()
     engine.getReleasePool().collect();
     editor.poll();
     countPlays();
+    if (settings.autoMaster) checkAutoMaster();
 
     // Cue / locator / phrase edits show in the browser's preview straight away
     for (int d = 0; d < AudioEngine::totalDecks; ++d)
@@ -903,6 +906,22 @@ void MainComponent::resized()
         browser.setVisible (true);
         browser.setCollapsed (false);
         browser.setBounds (r);
+    }
+    else if (browserWindow != nullptr && (page == 0 || page == 4))
+    {
+        // the browser is in its own window: the decks / PREP and the waveforms take all the room
+        dividerDecks = dividerBrowser = {};
+        if (page == 0)
+        {
+            const int deckH = juce::jlimit (150, juce::jmax (150, r.getHeight() / 2), settings.deckPanelHeight) + (int) DeckPanel::gridStripH + 1;
+            auto decks = r.removeFromTop (deckH);
+            deck1.setBounds (decks.removeFromLeft (decks.getWidth() / 2).withTrimmedRight (1));
+            deck2.setBounds (decks);
+            r.removeFromTop (4);
+            waves.setBounds (r);
+        }
+        else
+            prepView.setBounds (r);
     }
     else if (page == 0)
     {
@@ -1786,6 +1805,68 @@ void MainComponent::stopRecording()
         flash ("Saved " + made);
     }), true);
     recText = {};
+}
+
+void MainComponent::setBrowserPoppedOut (bool out)
+{
+    if (out == (browserWindow != nullptr)) return;
+    browserExpanded = false;
+    if (out)
+    {
+        struct Window : juce::DocumentWindow
+        {
+            Window (MainComponent& m) : juce::DocumentWindow ("Centrifuge - Browser", Theme::bg, juce::DocumentWindow::allButtons), owner (m) {}
+            void closeButtonPressed() override { juce::MessageManager::callAsync ([&o = owner] { o.setBrowserPoppedOut (false); }); }
+            MainComponent& owner;
+        };
+        removeChildComponent (&browser);
+        auto w = std::make_unique<Window> (*this);
+        w->setUsingNativeTitleBar (true);
+        w->setResizable (true, false);
+        browser.setCollapsed (false);
+        browser.setVisible (true);
+        w->setContentNonOwned (&browser, false);
+        w->centreWithSize (juce::jmax (900, getWidth() * 2 / 3), juce::jmax (400, getHeight() / 2));
+        w->setVisible (true);
+        browserWindow = std::move (w);
+    }
+    else
+    {
+        browserWindow->clearContentComponent();
+        browserWindow = nullptr;
+        addAndMakeVisible (browser);
+    }
+    browser.setPoppedOut (out);
+    resized();
+}
+
+void MainComponent::checkAutoMaster()
+{
+    // Both decks playing, the master track near its end (last minute, or into its last phrase), the other deck with
+    // at least as many stems playing and about as loud for a couple of seconds: it becomes MASTER
+    const auto& a = engine.deck (0).state();
+    const auto& b = engine.deck (1).state();
+    if (! a.playing.load() || ! b.playing.load()) { autoMasterSince = 0.0; return; }
+    const int m = a.master.load() ? 0 : b.master.load() ? 1 : -1;
+    if (m < 0) return;
+    const auto& ms = m == 0 ? a : b;
+    const auto& os = m == 0 ? b : a;
+    const double left = ms.lengthSec.load() - ms.positionSec.load();
+    bool lastPhrase = false;
+    if (auto t = engine.deck (m).getLoadedTrack(); t != nullptr && ! t->phrases.empty())
+        lastPhrase = ms.positionSec.load() >= t->phrases.back().startSec;
+    auto stemsOn = [] (const Deck::Published& s) { int n = 0; for (int i = 0; i < 4; ++i) n += s.stemGain[(size_t) i].load() > 0.5f ? 1 : 0; return n; };
+    auto level = [] (const Deck::Published& s) { return juce::jmax (s.peakL.load(), s.peakR.load()); };
+    autoMasterLevel[0] = autoMasterLevel[0] * 0.9f + level (ms) * 0.1f;
+    autoMasterLevel[1] = autoMasterLevel[1] * 0.9f + level (os) * 0.1f;
+    const bool takingOver = (left < 60.0 || lastPhrase) && stemsOn (os) >= stemsOn (ms) && autoMasterLevel[1] >= autoMasterLevel[0] * 0.9f;
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    if (! takingOver) { autoMasterSince = 0.0; return; }
+    if (autoMasterSince == 0.0) { autoMasterSince = now; return; }
+    if (now - autoMasterSince < 2000.0) return;
+    autoMasterSince = 0.0;
+    ActionValue v; v.down = true;
+    router.perform ("d" + juce::String (2 - m) + ".master", v);
 }
 
 void MainComponent::zoomWaves (double steps)

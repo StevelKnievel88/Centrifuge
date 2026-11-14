@@ -357,6 +357,12 @@ public:
         autoGain.setButtonText ("Auto gain: match each loaded track's loudness to the master deck");
         autoGain.setToggleState (settings.autoGain, juce::dontSendNotification);
         autoGain.onClick = [this] { settings.autoGain = autoGain.getToggleState(); onChanged(); };
+        add (&autoMaster, 28, {});
+        autoMaster.setButtonText ("Auto master: the incoming track becomes MASTER once it takes over");
+        autoMaster.setTooltip ("While both decks play: when the master track is in its last minute (or its last phrase) and the other "
+                               "deck has at least as many stems playing and is as loud, the other deck becomes MASTER");
+        autoMaster.setToggleState (settings.autoMaster, juce::dontSendNotification);
+        autoMaster.onClick = [this] { settings.autoMaster = autoMaster.getToggleState(); onChanged(); };
 
         addSection ("STEMS");
         add (&stemsOnLoad, 28, {});
@@ -365,9 +371,15 @@ public:
         stemsGpu.setButtonText ("Use the graphics card (DirectML) - much lower CPU use");
         add (&stemFormat, 28, "Saved stems");
         stemFormat.addItem ("Compressed (Ogg Vorbis 160 kbps - small)", 1);
+        stemFormat.addItem ("Compressed, high (Ogg Vorbis 320 kbps - about 2x bigger)", 3);
         stemFormat.addItem ("Original quality (FLAC 24-bit, the track's own sample rate - roughly 8-10x bigger)", 2);
-        stemFormat.setSelectedId (settings.stemsLossless ? 2 : 1, juce::dontSendNotification);
-        stemFormat.onChange = [this] { settings.stemsLossless = stemFormat.getSelectedId() == 2; onChanged(); };
+        stemFormat.setSelectedId (settings.stemsLossless ? 2 : settings.stemsOgg320 ? 3 : 1, juce::dontSendNotification);
+        stemFormat.onChange = [this]
+        {
+            settings.stemsLossless = stemFormat.getSelectedId() == 2;
+            settings.stemsOgg320 = stemFormat.getSelectedId() == 3;
+            onChanged();
+        };
         add (&qualityOnLoad, 28, "Quality when loading");
         add (&qualityBatch, 28, "Quality when pre-analysing");
         for (auto* q : { &qualityOnLoad, &qualityBatch })
@@ -802,7 +814,7 @@ private:
     juce::Slider zoom, jogTicks, stemThreads, mp3Offset, playhead;
     struct VinylRow { juce::ToggleButton brakeOn, startOn; juce::Slider brake, start, release; };
     std::array<VinylRow, 2> vinyl;
-    juce::ToggleButton throwOn, autoGain;
+    juce::ToggleButton throwOn, autoGain, autoMaster;
     juce::Slider throwSpeed, markerSize, longPress, xzLead;
     juce::ComboBox stemFormat;
     juce::ToggleButton padColoursOn, jogScreens, xzScreenOn;

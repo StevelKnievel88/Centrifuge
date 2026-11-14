@@ -108,12 +108,14 @@ struct AppSettings
     int stemQualityOnLoad = 0;         // 0 Fast, 1 Better, 2 High, 3 Best (see StemQuality)
     int stemQualityBatch = 1;          // for pre-analysis
     int stemThreads = 0;
+    bool stemsOgg320 = false;          // compressed stems at 320 kbps (instead of 160)
     bool stemsLossless = false;        // stems kept as FLAC at the track's own sample rate (much bigger) instead of Ogg
 
     // UI
     bool showBrowser = true;
     bool statusFolded = false;     // top bar: status boxes folded away
-    bool artistFirst = false;      // decks: artist left of the title
+    bool artistFirst = false;
+    bool autoMaster = true;        // the incoming track becomes MASTER once it takes over      // decks: artist left of the title
     bool tagColourNames = false;   // browser: title and artist in the track's tag colour
     int browserHeight = 300;
     int browserRowHeight = 24;

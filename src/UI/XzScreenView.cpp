@@ -31,6 +31,7 @@ XzScreenView::XzScreenView (AudioEngine& e, ActionRouter& r, BrowserView& b)
     addAndMakeVisible (waves);
     addAndMakeVisible (meter);
     meter.setInterceptsMouseClicks (false, false);
+    meter.setXzLayout (true);
     // a finger on the screen never scrubs (the jog wheels do); the lane names open a menu drawn on the screen
     waves.touchMode = true;
     waves.onLaneLabelTapped = [this] (int slot, int lane, juce::Rectangle<int> label) { showLaneMenu (slot, lane, label); };

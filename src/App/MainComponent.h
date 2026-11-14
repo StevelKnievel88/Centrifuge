@@ -170,6 +170,11 @@ private:   // (after the browser: it shows it)
     void toggleSetList();
     void startSetList (bool record);
     void zoomWaves (double steps);
+    void checkAutoMaster();
+    void setBrowserPoppedOut (bool out);
+    std::unique_ptr<juce::DocumentWindow> browserWindow;   // the browser popped out into its own window
+    double autoMasterSince = 0.0;
+    std::array<float, 2> autoMasterLevel { 0.0f, 0.0f };   // smoothed: the master deck, the other
     bool xzWasStreaming = false;
     bool statusCompact = false;          // the status boxes folded into one STATUS menu (no room beside the phrase meter)
     juce::Rectangle<int> statusMenuRect;

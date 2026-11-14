@@ -740,22 +740,12 @@ void MappingView::startGuided()
     pausedGuided = -1;
     const auto skip = midi.getNoMap();
     bool anyMapped = false;
-    // Every control the XDJ-XZ has for a deck (and the browser), in the same order as the list on screen
-    static const juce::StringArray wanted { "play", "cue", "shift", "load", "jog.touch", "jog.turn", "jog.side", "jog.vinyl", "slip",
-                                            "pitch", "pitchrange", "tempo.reset", "keylock", "sync", "master", "quantize",
-                                            "hotcue.1", "hotcue.2", "hotcue.3", "hotcue.4", "hotcue.5", "hotcue.6", "hotcue.7", "hotcue.8",
-                                            "callprev", "callnext", "loop.in", "loop.out", "loop.reloop", "beatloop.4",
-                                            "beatjump.back", "beatjump.fwd", "stemctl.A.volume", "stemctl.B.volume", "stemctl.C.volume",
-                                            "stemctl.D.volume", "padmode.1", "padmode.2", "padmode.3", "padmode.4" };
-    static const juce::StringArray browseWanted { "browse.scroll", "browse.enter", "browse.back", "browse.tree", "browse.load1",
-                                                  "browse.load2", "browse.tag", "view.browser" };
     guidedSteps.clear();
-    // in the same order as the list on screen (deck 1 from top to bottom, then deck 2, then the browser)
+    // Every function in the list, from the top down in the order it's shown (the "don't map" ticks are passed over;
+    // so are the spare "Light only" rows, which aren't a control on the XZ)
     for (auto& a : allActions())
     {
-        const bool deckStep = a.deck >= 0 && a.deck < 2 && wanted.contains (a.id.fromFirstOccurrenceOf (".", false, false));
-        const bool browseStep = browseWanted.contains (a.id);
-        if (! (deckStep || browseStep) || skip.count (a.id)) continue;
+        if (a.id.startsWith ("light.") || skip.count (a.id)) continue;
         guidedSteps.push_back (a.id);
         anyMapped = anyMapped || ! midi.getBindingsFor (a.id).empty();
     }

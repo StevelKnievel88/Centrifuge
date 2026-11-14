@@ -258,6 +258,7 @@ BrowserView::BrowserView (LibraryManager& lib, StemManager& stems) : library (li
     hdr.addColumn ("Plays", 13, 48, 40, 80);
     hdr.addColumn ("Comment", 14, 180, 60, 1000);
     hdr.addColumn ("Tags", 15, 160, 60, 1000);
+    hdr.addColumn ("Tag List", 16, 30, 24, 60);   // a tag icon on the tracks in the Tag List
     hdr.setStretchToFitActive (false);   // resizing a column moves the ones to its right along, keeping their widths
     table.setRowHeight (24);
     table.setMultipleSelectionEnabled (true);
@@ -285,6 +286,9 @@ BrowserView::BrowserView (LibraryManager& lib, StemManager& stems) : library (li
     infoPanel.setTagColourNames (tagColourNames);
     infoPanel.onTagColourNames = [this] (bool on) { tagColourNames = on; table.repaint(); if (onTagColourNames) onTagColourNames (on); };
     addAndMakeVisible (hideButton);
+    addAndMakeVisible (popButton);
+    popButton.setTooltip ("The browser in a window of its own (put it on another screen); the waveforms take its room");
+    popButton.onClick = [this] { if (onPopToggled) onPopToggled(); };
     hideButton.setTooltip ("Hide the browser (only this bar stays) / show it again");
     hideButton.onClick = [this] { if (onHideToggled) onHideToggled(); };
     addAndMakeVisible (expandButton);
@@ -394,7 +398,8 @@ void BrowserView::resized()
     r.removeFromLeft (1);
     // the buttons sit in the middle of their bar, clear of the line
     auto top = r.removeFromTop (barHeight - 3).withSizeKeepingCentre (r.getWidth(), 28).reduced (6, 0);
-    hideButton.setBounds (top.removeFromRight (64));
+    if (hideButton.isVisible()) { hideButton.setBounds (top.removeFromRight (64)); top.removeFromRight (6); }
+    popButton.setBounds (top.removeFromRight (76));
     top.removeFromRight (6);
     importButton.setBounds (top.removeFromLeft (76));
     top.removeFromLeft (6);
@@ -647,6 +652,28 @@ void BrowserView::paintCell (juce::Graphics& g, int row, int col, int w, int h, 
         case 1: s = juce::String (numberOf (rows[(size_t) row])); g.setColour (Theme::textFaint); just = juce::Justification::centredRight; break;
         case 2: s = t.title; if (tagColourNames && ! t.colour.isTransparent()) g.setColour (t.colour); break;
         case 14: s = t.comment; g.setColour (Theme::textDim); break;
+        case 16:
+        {
+            const auto& tl = UserLists::get().toPlay();
+            if (std::find (tl.begin(), tl.end(), t.libraryId) != tl.end())
+            {
+                // a little price-tag shape
+                const float th = juce::jmin (12.0f, (float) h - 6.0f), tw = th * 1.3f;
+                auto r = juce::Rectangle<float> (tw, th).withCentre ({ w * 0.5f, h * 0.5f });
+                juce::Path p;
+                p.startNewSubPath (r.getX(), r.getY());
+                p.lineTo (r.getRight() - th * 0.45f, r.getY());
+                p.lineTo (r.getRight(), r.getCentreY());
+                p.lineTo (r.getRight() - th * 0.45f, r.getBottom());
+                p.lineTo (r.getX(), r.getBottom());
+                p.closeSubPath();
+                g.setColour (Theme::warn);
+                g.fillPath (p);
+                g.setColour (juce::Colours::black);
+                g.fillEllipse (r.getRight() - th * 0.55f, r.getCentreY() - 1.5f, 3.0f, 3.0f);
+            }
+            return;
+        }
         case 15:
         {
             juce::StringArray names;
