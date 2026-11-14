@@ -1004,7 +1004,10 @@ void MidiManager::sendLeds()
 
         // A button given its own colours in Centrifuge (right-click > colours) lights its mapped pad in them: its ON
         // colour when lit (bright), its OFF colour when not (or the ON colour dimmed). Infill first, else the outline.
-        if (! hotPad && ! ownColour && b.type == MidiBinding::Type::note)
+        // Only the RGB performance pads (XDJ-XZ channels 6-9) can show a colour; a plain on / off LED button (SLIP,
+        // VINYL, etc. on the deck channels) just lights fully when on, so skip the colour-wheel conversion for it.
+        const bool isPad = b.channel >= 6 && b.channel <= 9;
+        if (isPad && ! hotPad && ! ownColour && b.type == MidiBinding::Type::note)
             if (const auto* bs = ButtonStyles::get().find (b.actionId))
             {
                 auto pick = [bs] (int state) { auto c = bs->get (state, 1); return c.getAlpha() != 0 ? c : bs->get (state, 0); };
