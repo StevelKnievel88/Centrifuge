@@ -23,6 +23,8 @@ struct MidiBinding
     double sensitivity = 1.0;   // encoders: multiplier on steps
     int ledOn = 127, ledOff = 0;  // values sent to light the button (pads that take a colour from the value)
     int shiftOn = -1, shiftOff = -1;   // the pad's SHIFT layer (XDJ-XZ: its note + 8) while SHIFT is held; -1 = not set
+    int ledChannel = -1;        // the MIDI channel its light is sent on (-1 = the channel the button sends on)
+    int lightChannel() const noexcept { return ledChannel >= 1 && ledChannel <= 16 ? ledChannel : channel; }
 
     // Combo: only while this other button is held (e.g. SHIFT + LOAD = eject). modNumber < 0 = no combo.
     Type modType = Type::note;

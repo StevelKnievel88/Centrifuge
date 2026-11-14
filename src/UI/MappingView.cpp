@@ -4,10 +4,18 @@
 namespace orbit
 {
 
-struct MappingView::LedPanel : juce::Component
+struct MappingView::LedPanel : juce::Component, private juce::Timer
 {
     explicit LedPanel (MappingView& v) : view (v)
     {
+        // which MIDI channel the light goes to (some buttons light on a channel of their own), and the finder that
+        // tries each channel in turn with the Lit value while you watch the button
+        addAndMakeVisible (lightChannel);
+        lightChannel.onChange = [this] { channelChosen(); };
+        addAndMakeVisible (findButton);
+        findButton.setTooltip ("Tries the light on each MIDI channel (1-16) in turn with the Lit value. Watch the button: "
+                               "press THAT ONE when its light changes - it's kept as this button's light channel");
+        findButton.onClick = [this] { toggleFind(); };
         for (int r = 0; r < 4; ++r)
         {
             auto& row = rows[(size_t) r];
@@ -118,6 +126,13 @@ struct MappingView::LedPanel : juce::Component
         }
         useShift.setToggleState (ok && (binding.shiftOn >= 0 || binding.shiftOff >= 0), juce::dontSendNotification);
         useShift.setEnabled (pad);
+        stopFind (false);
+        lightChannel.clear (juce::dontSendNotification);
+        lightChannel.addItem ("Light on: the button's own channel" + (ok ? " (" + juce::String (binding.channel) + ")" : juce::String()), 100);
+        for (int c = 1; c <= 16; ++c) lightChannel.addItem ("Light on: channel " + juce::String (c), c);
+        lightChannel.setSelectedId (ok && binding.ledChannel >= 1 ? binding.ledChannel : 100, juce::dontSendNotification);
+        lightChannel.setEnabled (ok);
+        findButton.setEnabled (ok);
         loading = false;
         repaint();
     }
@@ -130,6 +145,57 @@ struct MappingView::LedPanel : juce::Component
         auto test = binding;
         if (r >= 2) test.number = binding.number + 8;   // the SHIFT layer: the pad's note + 8
         view.midi.sendTestLed (test, (int) rows[(size_t) r].slider.getValue());
+    }
+
+    void channelChosen()
+    {
+        if (loading || actionId.isEmpty()) return;
+        const int id = lightChannel.getSelectedId();
+        setLightChannel (id >= 1 && id <= 16 ? id : -1);
+        auto test = binding;
+        view.midi.sendTestLed (test, (int) rows[hotCue ? 1 : 0].slider.getValue());
+    }
+
+    void setLightChannel (int ch)
+    {
+        auto all = view.midi.getBindings();
+        for (int i = 0; i < (int) all.size(); ++i)
+            if (all[(size_t) i].actionId == actionId) { all[(size_t) i].ledChannel = ch; view.midi.updateBinding (i, all[(size_t) i]); }
+        binding.ledChannel = ch;
+        view.midi.clearLedCache();
+        view.save();
+    }
+
+    // The finder: channel 1, 2 ... 16, about a second each, the light sent there with the Lit value (the last one off)
+    void toggleFind() { if (findChannel > 0) stopFind (true); else { findChannel = 0; findStep(); startTimer (1100); findButton.setButtonText ("THAT ONE"); } }
+    void findStep()
+    {
+        auto t = binding;
+        if (findChannel >= 1) { t.ledChannel = findChannel; view.midi.sendTestLed (t, 0); }
+        findChannel = findChannel % 16 + 1;
+        t.ledChannel = findChannel;
+        view.midi.sendTestLed (t, juce::jmax (1, (int) rows[hotCue ? 1 : 0].slider.getValue()));
+        view.banner.setText ("LIGHT FINDER: trying channel " + juce::String (findChannel) + " - press THAT ONE when the button's light changes",
+                             juce::dontSendNotification);
+        repaint();
+    }
+    void timerCallback() override { findStep(); }
+    void stopFind (bool keep)
+    {
+        if (findChannel <= 0) { findButton.setButtonText ("FIND..."); return; }
+        stopTimer();
+        const int ch = findChannel;
+        findChannel = -1;
+        findButton.setButtonText ("FIND...");
+        if (keep)
+        {
+            setLightChannel (ch);
+            loading = true;
+            lightChannel.setSelectedId (ch, juce::dontSendNotification);
+            loading = false;
+            view.banner.setText ("Light channel " + juce::String (ch) + " kept for this button. Now try the Lit / Unlit numbers to find its colours",
+                                 juce::dontSendNotification);
+        }
     }
 
     void apply()
@@ -178,7 +244,13 @@ struct MappingView::LedPanel : juce::Component
 
     void resized() override
     {
-        useShift.setBounds (10, 44, juce::jmin (300, getWidth() - 20), 22);
+        useShift.setBounds (10, 44, juce::jmin (260, getWidth() - 20), 22);
+        {
+            auto top = juce::Rectangle<int> (getWidth() - 10 - 330, 44, 330, 22);
+            findButton.setBounds (top.removeFromRight (84));
+            top.removeFromRight (6);
+            lightChannel.setBounds (top);
+        }
         for (int r = 0; r < 4; ++r)
         {
             auto& row = rows[(size_t) r];
@@ -203,6 +275,9 @@ struct MappingView::LedPanel : juce::Component
     bool hotCue = false, loading = false;
     std::array<Row, 4> rows;
     juce::ToggleButton useShift;
+    juce::ComboBox lightChannel;
+    juce::TextButton findButton { "FIND..." };
+    int findChannel = -1;   // the finder's channel (-1 = not running)
 };
 
 MappingView::MappingView (MidiManager& m, std::function<void()> saveFn) : midi (m), save (std::move (saveFn))

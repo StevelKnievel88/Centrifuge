@@ -49,6 +49,7 @@ juce::var MidiBinding::toVar() const
     if (ledOn != 127) o->setProperty ("ledOn", ledOn);
     if (ledOff != 0) o->setProperty ("ledOff", ledOff);
     if (shiftOn >= 0) o->setProperty ("shiftOn", shiftOn);
+    if (ledChannel >= 1) o->setProperty ("ledChannel", ledChannel);
     if (shiftOff >= 0) o->setProperty ("shiftOff", shiftOff);
     if (press != 0) o->setProperty ("press", press);
     if (hasModifier())
@@ -78,6 +79,7 @@ MidiBinding MidiBinding::fromVar (const juce::var& v)
     b.ledOn = v.hasProperty ("ledOn") ? juce::jlimit (0, 127, (int) v["ledOn"]) : 127;
     b.ledOff = v.hasProperty ("ledOff") ? juce::jlimit (0, 127, (int) v["ledOff"]) : 0;
     b.shiftOn = v.hasProperty ("shiftOn") ? juce::jlimit (0, 127, (int) v["shiftOn"]) : -1;
+    b.ledChannel = v.hasProperty ("ledChannel") ? juce::jlimit (1, 16, (int) v["ledChannel"]) : -1;
     b.shiftOff = v.hasProperty ("shiftOff") ? juce::jlimit (0, 127, (int) v["shiftOff"]) : -1;
     b.press = juce::jlimit (0, 2, (int) v.getProperty ("press", 0));
     if (v.hasProperty ("modNumber"))
@@ -192,8 +194,8 @@ void MidiManager::setNoMap (const juce::String& id, bool on)
 void MidiManager::sendTestLed (const MidiBinding& b, int value)
 {
     if (b.type == MidiBinding::Type::pitchBend) return;
-    const auto msg = b.type == MidiBinding::Type::note ? juce::MidiMessage::noteOn (b.channel, b.number, (juce::uint8) juce::jlimit (0, 127, value))
-                                                       : juce::MidiMessage::controllerEvent (b.channel, b.number, juce::jlimit (0, 127, value));
+    const auto msg = b.type == MidiBinding::Type::note ? juce::MidiMessage::noteOn (b.lightChannel(), b.number, (juce::uint8) juce::jlimit (0, 127, value))
+                                                       : juce::MidiMessage::controllerEvent (b.lightChannel(), b.number, juce::jlimit (0, 127, value));
     for (auto& [name, out] : outputs)
         if (b.device.isEmpty() || name == b.device)
             out->sendMessageNow (msg);
@@ -1055,11 +1057,11 @@ void MidiManager::sendLeds()
                 if (send)
                     for (auto& [nm, out] : outputs)
                         if (b.device.isEmpty() || nm == b.device)
-                            out->sendMessageNow (juce::MidiMessage::noteOn (b.channel, b.number + 8, (juce::uint8) sv));
+                            out->sendMessageNow (juce::MidiMessage::noteOn (b.lightChannel(), b.number + 8, (juce::uint8) sv));
             }
         }
 
-        const auto cacheKey = b.device + "|" + b.describe() + "|" + b.actionId;
+        const auto cacheKey = b.device + "|" + b.describe() + "|" + b.actionId + "|" + juce::String (b.ledChannel);
         const bool forcePadMode = name.startsWith ("padmode.") && juce::Time::getMillisecondCounterHiRes() < padModeResendUntil.load();
         if (! forcePadMode)
         {
@@ -1069,8 +1071,8 @@ void MidiManager::sendLeds()
             ledCache[cacheKey] = value;
         }
         const auto msg = b.type == MidiBinding::Type::note
-                           ? juce::MidiMessage::noteOn (b.channel, b.number, (juce::uint8) value)
-                           : juce::MidiMessage::controllerEvent (b.channel, b.number, value);
+                           ? juce::MidiMessage::noteOn (b.lightChannel(), b.number, (juce::uint8) value)
+                           : juce::MidiMessage::controllerEvent (b.lightChannel(), b.number, value);
 
         for (auto& [nm, out] : outputs)
             if (b.device.isEmpty() || nm == b.device)
