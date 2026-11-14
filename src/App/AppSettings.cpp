@@ -199,7 +199,6 @@ void AppSettings::load()
     num ("longPressSec", longPressSec);
     boolean ("hotCuePadColours", hotCuePadColours);
     boolean ("jogDisplay", jogDisplay);
-    boolean ("rbKeepAlive", rbKeepAlive);
     boolean ("xzScreen", xzScreen);
     num ("xzScreenLeadMs", xzScreenLeadMs);
     xzScreenLeadMs = juce::jlimit (0.0, 400.0, xzScreenLeadMs);
@@ -350,7 +349,6 @@ void AppSettings::save() const
     o->setProperty ("longPressSec", longPressSec);
     o->setProperty ("hotCuePadColours", hotCuePadColours);
     o->setProperty ("jogDisplay", jogDisplay);
-    o->setProperty ("rbKeepAlive", rbKeepAlive);
     o->setProperty ("xzScreen", xzScreen);
     o->setProperty ("xzScreenLeadMs", xzScreenLeadMs);
     o->setProperty ("stemsLossless", stemsLossless);

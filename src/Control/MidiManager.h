@@ -23,8 +23,6 @@ struct MidiBinding
     double sensitivity = 1.0;   // encoders: multiplier on steps
     int ledOn = 127, ledOff = 0;  // values sent to light the button (pads that take a colour from the value)
     int shiftOn = -1, shiftOff = -1;   // the pad's SHIFT layer (XDJ-XZ: its note + 8) while SHIFT is held; -1 = not set
-    int ledChannel = -1;        // the MIDI channel its light is sent on (-1 = the channel the button sends on)
-    int lightChannel() const noexcept { return ledChannel >= 1 && ledChannel <= 16 ? ledChannel : channel; }
 
     // Combo: only while this other button is held (e.g. SHIFT + LOAD = eject). modNumber < 0 = no combo.
     Type modType = Type::note;
@@ -140,9 +138,6 @@ public:
     bool hotCuesInColour() const { return hotCueColours.load(); }
     void setHotCuesInColour (bool b) { hotCueColours = b; clearLedCache(); }
     /** Jog screens on the XDJ-XZ: the position bar turns with the track, and the cue marker shows the cue point. */
-    /** Sends the XDJ-XZ what rekordbox sends it about 5 times a second (a Pioneer SysEx "still here"): with it the
-        unit lets the computer colour its pad mode buttons, as rekordbox does. */
-    void setRekordboxKeepAlive (bool on) { keepAlive = on; }
     void setJogDisplay (bool on) { jogDisplay = on; jogCache.fill (-1); jogMsbCache.fill (-1); }
     void clearLedCache() { const juce::ScopedLock sl (bindingLock); ledCache.clear(); jogCache.fill (-1); jogMsbCache.fill (-1); }
 
@@ -187,10 +182,6 @@ private:
     std::array<std::atomic<int>, 2> whitePad {};
     std::atomic<bool> hotCueColours { true }, jogDisplay { true };
     std::array<int, 12> jogCache { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
-    std::atomic<double> padModeResendUntil { 0.0 };
-    std::atomic<bool> keepAlive { true };
-    double lastKeepAlive = 0.0;
-    std::array<std::atomic<int>, 2> padMode { 1, 1 };   // last pad mode button pressed on each deck (lights only)
     std::array<int, 12> jogMsbCache { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
     void sendToXdj (const juce::MidiMessage& m);
     void sendJogDisplays();

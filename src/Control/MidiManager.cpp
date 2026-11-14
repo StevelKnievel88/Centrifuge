@@ -49,7 +49,6 @@ juce::var MidiBinding::toVar() const
     if (ledOn != 127) o->setProperty ("ledOn", ledOn);
     if (ledOff != 0) o->setProperty ("ledOff", ledOff);
     if (shiftOn >= 0) o->setProperty ("shiftOn", shiftOn);
-    if (ledChannel >= 1) o->setProperty ("ledChannel", ledChannel);
     if (shiftOff >= 0) o->setProperty ("shiftOff", shiftOff);
     if (press != 0) o->setProperty ("press", press);
     if (hasModifier())
@@ -79,7 +78,6 @@ MidiBinding MidiBinding::fromVar (const juce::var& v)
     b.ledOn = v.hasProperty ("ledOn") ? juce::jlimit (0, 127, (int) v["ledOn"]) : 127;
     b.ledOff = v.hasProperty ("ledOff") ? juce::jlimit (0, 127, (int) v["ledOff"]) : 0;
     b.shiftOn = v.hasProperty ("shiftOn") ? juce::jlimit (0, 127, (int) v["shiftOn"]) : -1;
-    b.ledChannel = v.hasProperty ("ledChannel") ? juce::jlimit (1, 16, (int) v["ledChannel"]) : -1;
     b.shiftOff = v.hasProperty ("shiftOff") ? juce::jlimit (0, 127, (int) v["shiftOff"]) : -1;
     b.press = juce::jlimit (0, 2, (int) v.getProperty ("press", 0));
     if (v.hasProperty ("modNumber"))
@@ -194,8 +192,8 @@ void MidiManager::setNoMap (const juce::String& id, bool on)
 void MidiManager::sendTestLed (const MidiBinding& b, int value)
 {
     if (b.type == MidiBinding::Type::pitchBend) return;
-    const auto msg = b.type == MidiBinding::Type::note ? juce::MidiMessage::noteOn (b.lightChannel(), b.number, (juce::uint8) juce::jlimit (0, 127, value))
-                                                       : juce::MidiMessage::controllerEvent (b.lightChannel(), b.number, juce::jlimit (0, 127, value));
+    const auto msg = b.type == MidiBinding::Type::note ? juce::MidiMessage::noteOn (b.channel, b.number, (juce::uint8) juce::jlimit (0, 127, value))
+                                                       : juce::MidiMessage::controllerEvent (b.channel, b.number, juce::jlimit (0, 127, value));
     for (auto& [name, out] : outputs)
         if (b.device.isEmpty() || name == b.device)
             out->sendMessageNow (msg);
@@ -792,16 +790,7 @@ void MidiManager::handleIncomingMidiMessage (juce::MidiInput* source, const juce
 
     for (auto& h : hits)
     {
-        // lights-only buttons do nothing in Centrifuge; a pad mode button remembers it's the one selected
-        if (h.def->id.contains (".padmode."))
-        {
-            if (h.v.down && h.def->deck >= 0 && h.def->deck < 2) padMode[(size_t) h.def->deck] = h.def->id.getTrailingIntValue();
-            clearLedCache();   // the unit lights its own pad mode buttons when pressed: put ours back on all of them
-            // ... and keep putting them back for a moment (it relights them a little after the press, over ours)
-            padModeResendUntil = juce::Time::getMillisecondCounterHiRes() + 600.0;
-            continue;
-        }
-        if (h.def->id.startsWith ("light.")) continue;
+        if (h.def->id.startsWith ("light.")) continue;   // lights-only buttons do nothing in Centrifuge
         router.perform (*h.def, h.v);
     }
 }
@@ -836,20 +825,6 @@ void MidiManager::firePending (const std::vector<std::pair<const ActionDef*, Act
 
 void MidiManager::timerCallback()
 {
-    // rekordbox's "still here" to the XDJ-XZ (seen on its USB link, every 200 ms; 0C / 0D for its two ports)
-    if (keepAlive.load())
-    {
-        const double now = juce::Time::getMillisecondCounterHiRes();
-        if (now - lastKeepAlive >= 200.0)
-        {
-            lastKeepAlive = now;
-            static const juce::uint8 a[] = { 0x00, 0x40, 0x05, 0x00, 0x00, 0x02, 0x0C, 0x00, 0x50, 0x01 };
-            static const juce::uint8 b[] = { 0x00, 0x40, 0x05, 0x00, 0x00, 0x02, 0x0D, 0x00, 0x50, 0x01 };
-            sendToXdj (juce::MidiMessage::createSysExMessage (a, (int) sizeof (a)));
-            sendToXdj (juce::MidiMessage::createSysExMessage (b, (int) sizeof (b)));
-        }
-    }
-
     // Long presses: held past the long-press time
     {
         std::vector<std::vector<std::pair<const ActionDef*, ActionValue>>> fire;
@@ -1002,11 +977,6 @@ void MidiManager::sendLeds()
             const int coloured = set && hotCueColours.load() ? padNumberFor (juce::Colour (st.hotColour[(size_t) idx].load())) : -1;
             value = ! set ? off : coloured > 0 ? coloured : on;
         }
-        else if (name.startsWith ("padmode.") && def->deck >= 0 && def->deck < 2)
-        {
-            lit = padMode[(size_t) def->deck].load() == name.getTrailingIntValue();
-            value = lit ? b.ledOn : b.ledOff;
-        }
         else if (def->hasLed)
         {
             lit = router.ledState (*def);
@@ -1071,13 +1041,11 @@ void MidiManager::sendLeds()
                 if (send)
                     for (auto& [nm, out] : outputs)
                         if (b.device.isEmpty() || nm == b.device)
-                            out->sendMessageNow (juce::MidiMessage::noteOn (b.lightChannel(), b.number + 8, (juce::uint8) sv));
+                            out->sendMessageNow (juce::MidiMessage::noteOn (b.channel, b.number + 8, (juce::uint8) sv));
             }
         }
 
-        const auto cacheKey = b.device + "|" + b.describe() + "|" + b.actionId + "|" + juce::String (b.ledChannel);
-        const bool forcePadMode = name.startsWith ("padmode.") && juce::Time::getMillisecondCounterHiRes() < padModeResendUntil.load();
-        if (! forcePadMode)
+        const auto cacheKey = b.device + "|" + b.describe() + "|" + b.actionId;
         {
             const juce::ScopedLock sl (bindingLock);
             auto it = ledCache.find (cacheKey);
@@ -1085,8 +1053,8 @@ void MidiManager::sendLeds()
             ledCache[cacheKey] = value;
         }
         const auto msg = b.type == MidiBinding::Type::note
-                           ? juce::MidiMessage::noteOn (b.lightChannel(), b.number, (juce::uint8) value)
-                           : juce::MidiMessage::controllerEvent (b.lightChannel(), b.number, value);
+                           ? juce::MidiMessage::noteOn (b.channel, b.number, (juce::uint8) value)
+                           : juce::MidiMessage::controllerEvent (b.channel, b.number, value);
 
         for (auto& [nm, out] : outputs)
             if (b.device.isEmpty() || nm == b.device)

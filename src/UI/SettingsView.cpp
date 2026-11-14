@@ -300,11 +300,6 @@ public:
         jogScreens.setButtonText ("XDJ-XZ jog screens show the track turning and the cue point; LOAD lights on decks that aren't playing");
         jogScreens.setToggleState (settings.jogDisplay, juce::dontSendNotification);
         jogScreens.onClick = [this] { settings.jogDisplay = jogScreens.getToggleState(); onChanged(); };
-        add (&rbKeepAlive, 28, {});
-        rbKeepAlive.setButtonText ("Talk to the XDJ-XZ like rekordbox (so the pad mode buttons take Centrifuge's colours)");
-        rbKeepAlive.setTooltip ("Sends the unit the same 'still here' message rekordbox does. Turn off if the XZ behaves oddly");
-        rbKeepAlive.setToggleState (settings.rbKeepAlive, juce::dontSendNotification);
-        rbKeepAlive.onClick = [this] { settings.rbKeepAlive = rbKeepAlive.getToggleState(); onChanged(); };
         add (&longPress, 28, "Long press time (s)");
         setupSlider (longPress, 0.25, 1.0, 0.05, settings.longPressSec);
         longPress.onValueChange = [this] { settings.longPressSec = longPress.getValue(); onChanged(); };
@@ -837,7 +832,7 @@ private:
     juce::Slider zoom, jogTicks, stemThreads, mp3Offset, playhead;
     struct VinylRow { juce::ToggleButton brakeOn, startOn; juce::Slider brake, start, release; };
     std::array<VinylRow, 2> vinyl;
-    juce::ToggleButton throwOn, autoGain, autoMaster, rbKeepAlive;
+    juce::ToggleButton throwOn, autoGain, autoMaster;
     juce::Slider throwSpeed, markerSize, longPress, xzLead;
     juce::ComboBox stemFormat;
     juce::TextButton locateLame;

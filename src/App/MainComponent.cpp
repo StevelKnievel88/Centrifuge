@@ -459,7 +459,6 @@ void MainComponent::applySettings()
     midi.setLongPressSeconds (settings.longPressSec);
     midi.setHotCuesInColour (settings.hotCuePadColours);
     midi.setJogDisplay (settings.jogDisplay);
-    midi.setRekordboxKeepAlive (settings.rbKeepAlive);
     waves.setVisibleSeconds (settings.visibleSeconds);
     waves.setMaxFps (settings.maxFps);
     for (int d = 0; d < 2; ++d)
