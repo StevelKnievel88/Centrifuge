@@ -93,7 +93,7 @@ void DeckPanel::timerCallback()
     auto mix = [&h] (double v) { h ^= (juce::uint64) std::llround (v * 100.0); h *= 1099511628211ull; };
     mix (std::floor (st.positionSec.load() * 10.0)); mix (st.bpm.load()); mix (st.playing.load()); mix (st.sync.load());
     mix (st.master.load()); mix (st.keyLock.load()); mix (st.quantize.load()); mix (st.loopActive.load());
-    mix (st.tempoRatio.load() * 100.0); mix (st.stemsReady.load()); mix (std::floor (st.stemsProgress.load() * 100.0f));
+    mix (st.displayRatio.load() * 100.0); mix (st.stemsReady.load()); mix (std::floor (st.stemsProgress.load() * 100.0f));
     mix (router.isStemCtlFilterMode (deck));
     mix (st.cuePointSec.load()); mix (st.endWarning.load() ? std::floor (juce::Time::getMillisecondCounter() / 400.0) : 0.0);
     for (size_t i = 0; i < 8; ++i) mix (st.hotStart[i].load());
@@ -231,7 +231,7 @@ void DeckPanel::paint (juce::Graphics& g)
         // (The phase meter for both decks is in the top bar.)
 
         // Tempo + range on the right (under the BPM)
-        const double pct = (st.tempoRatio.load() - 1.0) * 100.0;
+        const double pct = (st.displayRatio.load() - 1.0) * 100.0;
         auto tempo = r.removeFromRight (r.getWidth() < 560.0f ? 80.0f : 100.0f);
         g.setColour (Theme::text);
         g.setFont (Theme::font (14.0f, true));

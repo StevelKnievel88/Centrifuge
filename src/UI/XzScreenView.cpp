@@ -723,7 +723,7 @@ void XzScreenView::paintInfo (juce::Graphics& g, int deck, juce::Rectangle<float
                     range, juce::Justification::centredRight);
     }
     auto tempo = second.removeFromRight (80.0f);
-    const double pct = (st.tempoRatio.load() - 1.0) * 100.0;
+    const double pct = (st.displayRatio.load() - 1.0) * 100.0;
     g.setColour (std::abs (pct) < 0.005 ? Theme::textDim : Theme::text);
     g.setFont (Theme::mono (16.0f, true));
     g.drawText ((pct >= 0 ? "+" : "") + juce::String (pct, 2) + "%", tempo, juce::Justification::centredRight);

@@ -63,6 +63,25 @@ public:
         return dt > 1.0e-6 ? 60.0 * span / dt : bpmAt (t);
     }
 
+    /** The grid's tempo at t from its STORED per-beat BPM (rekordbox keeps each beat's tempo to 0.01 BPM), averaged
+        over a span of beats so a grid that follows the kicks moves smoothly. For a straight grid this is exactly the
+        track's BPM and never moves - unlike the beat-time gaps, which are rounded to whole milliseconds. Falls back
+        to the gap average when the grid has no stored tempo. Sync and the BPM display both use this. */
+    double nominalBpmAt (double t, int span = 8) const noexcept
+    {
+        if (! isValid()) return 0.0;
+        const int n = (int) beats.size();
+        const int c = juce::jlimit (0, n - 1, beatIndexAt (t));
+        const int a = juce::jmax (0, c - span / 2), b = juce::jmin (n - 1, a + span - 1);
+        double sum = 0.0;
+        for (int i = a; i <= b; ++i)
+        {
+            if (! (beats[(size_t) i].bpm > 20.0f)) return smoothedBpmAt (t);
+            sum += beats[(size_t) i].bpm;
+        }
+        return sum / (double) (b - a + 1);
+    }
+
     /** Continuous beat number at t (e.g. 12.25 = a quarter of the way through beat 12). Extrapolates outside the grid. */
     double beatPosition (double t) const noexcept
     {

@@ -142,6 +142,8 @@ public:
     const BeatGrid* grid() const noexcept { return track != nullptr ? &track->grid : nullptr; }
     void setSyncTarget (double ratio, double phaseErrorBeats, bool snapPhase);
     void clearSyncTarget() noexcept { syncRatio = 0.0; }
+    /** The tempo ratio without the momentary phase nudge: the synced ratio, or the deck's own tempo. */
+    double cleanRatio() const noexcept { return (syncOn && syncRatio > 0.0) ? syncRatio : tempoRatio; }
     bool takeSyncSnapRequest() noexcept { const bool r = syncSnapRequested; syncSnapRequested = false; return r; }
     bool takeMasterRequest() noexcept { const bool r = masterRequested; masterRequested = false; return r; }
     void setIsMaster (bool m) noexcept { pub.master = m; }
@@ -153,7 +155,7 @@ public:
     {
         if (syncOn)
         {
-            heldRatio = tempoRatio;
+            heldRatio = cleanRatio();   // exactly the master's tempo it was following (not the phase nudge on top)
             pitchPickup = true;
             syncOn = false;
             syncRatio = 0.0;

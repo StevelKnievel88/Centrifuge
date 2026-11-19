@@ -118,7 +118,7 @@ juce::String ActionRouter::effectiveKeyText (int d) const
     auto key = MusicalKey::parse (t->info.key);
     if (! key.isValid()) return t->info.key;
     double offset = st.keyShift.load();
-    if (! st.keyLock.load()) offset += 12.0 * std::log2 (juce::jmax (0.05, st.tempoRatio.load()));
+    if (! st.keyLock.load()) offset += 12.0 * std::log2 (juce::jmax (0.05, st.displayRatio.load()));
     return key.shifted ((int) std::lround (offset)).toString();
 }
 
@@ -421,7 +421,7 @@ bool ActionRouter::ledState (const ActionDef& a) const
     if (name.startsWith ("beatloop."))
     {
         if (! st.loopActive.load()) return false;
-        const double bpm = st.bpm.load() / juce::jmax (0.01, st.tempoRatio.load());
+        const double bpm = st.bpm.load() / juce::jmax (0.01, st.displayRatio.load());
         if (bpm <= 0) return false;
         const double beats = (st.loopOutSec.load() - st.loopInSec.load()) * bpm / 60.0;
         return std::abs (beats - parseBeats (name.fromFirstOccurrenceOf (".", false, false))) < 0.05;

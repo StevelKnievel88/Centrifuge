@@ -143,7 +143,7 @@ double Deck::heardPositionSec() const noexcept
 double Deck::baseBpmAtPosition() const noexcept
 {
     if (track == nullptr) return 0.0;
-    if (track->grid.isValid()) return track->grid.smoothedBpmAt (heardPositionSec());
+    if (track->grid.isValid()) return track->grid.nominalBpmAt (heardPositionSec());
     return track->info.bpm;
 }
 
@@ -934,7 +934,7 @@ void Deck::apply (const Command& c)
                 syncSnapRequested = true;
             if (! newSync && syncOn)
             {
-                heldRatio = tempoRatio;
+                heldRatio = cleanRatio();   // the tempo it was following, without the momentary phase nudge
                 pitchPickup = true;
                 syncRatio = 0.0;
                 phaseNudge = 0.0;
@@ -1619,8 +1619,9 @@ void Deck::publish()
     // Displayed BPM must sit still. Use the track's one analysed BPM (not the position-dependent grid value, whose
     // millisecond-rounded beat gaps make a sliding average wander), and the clean sync ratio rather than the tiny
     // per-block phase nudge. Fall back to the grid only when the track has no analysed BPM.
-    const double dispBase = (track->info.bpm > 0.0) ? track->info.bpm : baseBpmAtPosition();
-    pub.bpm = dispBase * ((syncOn && syncRatio > 0.0) ? syncRatio : tempoRatio);
+    // The same base the sync uses, so a synced deck shows exactly the master's BPM (its ratio is master / this base).
+    const double dispBase = baseBpmAtPosition() > 0.0 ? baseBpmAtPosition() : track->info.bpm;
+    pub.bpm = dispBase * cleanRatio();
     pub.pitchRange = pitchRange;
     // Catch-up: while holding a tempo (sync off, or just became master) the slider must be moved to meet the
     // current tempo before it takes over. Publish where the slider points so the UI can show it to chase.
@@ -1628,7 +1629,7 @@ void Deck::publish()
     pub.faderTargetPct = pitchFader * pitchRange * 100.0;
     // The clean tempo ratio (no per-block phase nudge), used to scale the waveform zoom so a pitched deck's grid
     // lines up with the master's; a stable value keeps the waveform tile cache from re-rendering every frame.
-    pub.displayRatio = (syncOn && syncRatio > 0.0) ? syncRatio : tempoRatio;
+    pub.displayRatio = cleanRatio();
     pub.cuePointSec = cuePoint;
     pub.loopInSec = loopIn;
     pub.loopOutSec = loopOut;
