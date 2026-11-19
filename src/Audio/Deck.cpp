@@ -1616,8 +1616,11 @@ void Deck::publish()
     pub.positionSec = heard;
     pub.lengthSec = len;
     pub.tempoRatio = tempoRatio;
-    // When synced, show the clean target tempo, not the tiny per-block phase nudge, so the BPM reads steady.
-    pub.bpm = baseBpmAtPosition() * ((syncOn && syncRatio > 0.0) ? syncRatio : tempoRatio);
+    // Displayed BPM must sit still. Use the track's one analysed BPM (not the position-dependent grid value, whose
+    // millisecond-rounded beat gaps make a sliding average wander), and the clean sync ratio rather than the tiny
+    // per-block phase nudge. Fall back to the grid only when the track has no analysed BPM.
+    const double dispBase = (track->info.bpm > 0.0) ? track->info.bpm : baseBpmAtPosition();
+    pub.bpm = dispBase * ((syncOn && syncRatio > 0.0) ? syncRatio : tempoRatio);
     pub.pitchRange = pitchRange;
     // Catch-up: while holding a tempo (sync off, or just became master) the slider must be moved to meet the
     // current tempo before it takes over. Publish where the slider points so the UI can show it to chase.

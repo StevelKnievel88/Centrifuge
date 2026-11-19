@@ -171,10 +171,14 @@ void ScrollingWaveforms::onVBlank (double t)
 
         const bool playing = st.playing.load();
         const double rate = st.tempoRatio.load();
+        // While the platter is held (scratch / nudge) the position moves erratically, so the latency look-ahead -
+        // which is scaled by the (now jumpy) play rate - throws the waveform around. Drop the look-ahead and the
+        // velocity prediction then, and just follow the reported position directly.
+        const bool predict = playing && ! st.jogTouched.load();
         dv.fold.reference = dv.shownPos;
-        const double raw = dv.fold.toDisplay (st.positionSec.load() - (playing ? (latency - extraLead) * rate : 0.0), st.playSegment.load());
+        const double raw = dv.fold.toDisplay (st.positionSec.load() - (predict ? (latency - extraLead) * rate : 0.0), st.playSegment.load());
         const double prev = dv.shownPos;
-        dv.shownPos = dv.smoother.update (raw, playing, rate, t);
+        dv.shownPos = dv.smoother.update (raw, predict, rate, t);
         if (std::abs (dv.shownPos - prev) > 1.0e-6) moving = true;
 
         const auto h = stateHash (st);
@@ -183,6 +187,11 @@ void ScrollingWaveforms::onVBlank (double t)
 
     if ((moving || needsRedraw) && t - lastPaintTime >= 1.0 / maxFps - 0.002)
     {
+        if (showPerf && lastPaintTime > 0.0)
+        {
+            const double dt = t - lastPaintTime;
+            if (dt > 1.0e-4) perfFps = perfFps * 0.85 + (1.0 / dt) * 0.15;
+        }
         lastPaintTime = t;
         needsRedraw = false;
         repaint();
@@ -269,10 +278,24 @@ juce::String ScrollingWaveforms::laneName (int deck, int lane) const
 
 void ScrollingWaveforms::paint (juce::Graphics& g)
 {
+    const double t0 = showPerf ? juce::Time::getMillisecondCounterHiRes() : 0.0;
     markers.clear();
     g.fillAll (Theme::line);
     for (int d = 0; d < numSlots(); ++d)
         paintDeck (g, d, deckBounds (d));
+
+    if (showPerf)
+    {
+        // rolling average of how long this view takes to paint, plus the actual repaint rate (frames per second)
+        perfPaintMs = perfPaintMs * 0.85 + (juce::Time::getMillisecondCounterHiRes() - t0) * 0.15;
+        auto box = juce::Rectangle<int> (getWidth() - 150, 2, 148, 18);
+        g.setColour (juce::Colours::black.withAlpha (0.6f));
+        g.fillRect (box);
+        g.setColour (perfPaintMs > 12.0 ? juce::Colours::orangered : perfPaintMs > 7.0 ? juce::Colours::yellow : juce::Colours::lime);
+        g.setFont (psyched::Fonts::mono (11.0f));
+        g.drawText (juce::String (perfPaintMs, 1) + " ms   " + juce::String ((int) std::round (perfFps)) + " fps",
+                    box.reduced (5, 0), juce::Justification::centredLeft);
+    }
 }
 
 juce::Rectangle<int> ScrollingWaveforms::drawLabel (juce::Graphics& g, juce::Rectangle<int> lane, const juce::String& text, bool atTop)
@@ -415,7 +438,9 @@ void ScrollingWaveforms::paintLane (juce::Graphics& g, int d, int lane, juce::Re
     const float playX = playheadX (r);
     const double pps = (double) r.getWidth() / visibleSeconds;
     auto wave = flags ? r.withTrimmedTop (markerBand).withTrimmedBottom (3) : r.reduced (0, 2);
-    const float scale = g.getInternalContext().getPhysicalPixelScaleFactor();
+    // Tiles are rendered at the physical pixel scale for sharpness, but that squares the work on a high-DPI (4K)
+    // screen; the cap trades a little sharpness for a much cheaper render (Settings > Waveform detail).
+    const float scale = juce::jmin (scaleCap, g.getInternalContext().getPhysicalPixelScaleFactor());
 
     // Baseline
     g.setColour (Theme::line.withAlpha (0.6f));

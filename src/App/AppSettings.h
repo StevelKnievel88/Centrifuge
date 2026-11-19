@@ -70,6 +70,8 @@ struct AppSettings
     std::array<float, 4> stemOpacity { 1.0f, 1.0f, 1.0f, 1.0f }; // per stem (drums, bass, inst, vocals)
     float stemOffFade = 0.28f;          // how bright a turned-off stem stays as a ghost on the waveform (0..0.8)
     bool pcRenderGpu = true;            // draw the main window on the GPU (OpenGL) instead of the CPU
+    float waveformScaleCap = 1.5f;      // cap tile render resolution (1 cheapest .. 4 full high-DPI sharpness)
+    bool showFrameTime = false;         // show a paint-time / fps readout on the waveforms
     bool foldSkips = true;             // fold skipped sections out of the scrolling waveform
     float playheadPosition = 0.5f;     // across the scrolling waveform (0.5 = centre)
     std::array<float, 2> laneSplit { 0.5f, 0.5f };   // top lane share of each deck's waveform area

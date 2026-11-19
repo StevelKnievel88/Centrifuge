@@ -484,6 +484,8 @@ void MainComponent::applySettings()
     waves.setSingleColour (juce::Colour (settings.singleColour), settings.singleFollowsDeck);
     waves.setStemLayers (settings.stemLayerOrder, settings.stemOpacity);
     waves.setStemOffFade (settings.stemOffFade);
+    waves.setScaleCap (settings.waveformScaleCap);
+    waves.setShowPerf (settings.showFrameTime);
     for (int d = 0; d < 2; ++d) waves.setEditView (d, settings.editView[(size_t) d]);
     waves.forceRedraw();
     {
@@ -495,6 +497,8 @@ void MainComponent::applySettings()
         pw.setSingleColour (juce::Colour (settings.singleColour), settings.singleFollowsDeck);
         pw.setStemLayers (settings.stemLayerOrder, settings.stemOpacity);
         pw.setStemOffFade (settings.stemOffFade);
+        pw.setScaleCap (settings.waveformScaleCap);
+        pw.setShowPerf (settings.showFrameTime);
         pw.setEditView (0, settings.editView[2]);
         pw.setVisibleSeconds (settings.prepVisibleSeconds);
         pw.forceRedraw();
@@ -528,6 +532,7 @@ void MainComponent::applySettings()
         xw.setSingleColour (juce::Colour (settings.singleColour), settings.singleFollowsDeck);
         xw.setStemLayers (settings.stemLayerOrder, settings.stemOpacity);
         xw.setStemOffFade (settings.stemOffFade);
+        xw.setScaleCap (settings.waveformScaleCap);
         xw.setPlayheadPosition (settings.playheadPosition);
         xw.extraLead = settings.xzScreenLeadMs / 1000.0;
         xw.forceRedraw();

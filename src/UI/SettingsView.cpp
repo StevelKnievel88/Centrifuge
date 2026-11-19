@@ -113,6 +113,12 @@ public:
         gpuBox.setTooltip ("GPU (OpenGL) draws the main window on the graphics card - much lower CPU use and smoother while tracks play "
                            "(it also frees up the CPU so the XDJ-XZ screen renders more smoothly). CPU uses the software renderer. "
                            "Takes effect straight away; if the window ever looks wrong on your graphics card, switch back to CPU.");
+        add (&waveDetail, 28, "Waveform detail");
+        waveDetail.setTooltip ("How sharply the waveforms are rendered. On a high-DPI / 4K screen the sharpest setting does a lot more "
+                               "pixel work each frame - the main cause of graphical lag. Balanced or Fast render cheaper (a touch softer) "
+                               "and are much smoother. Watch the ms readout (Show frame time) and pick the lowest number that still looks good.");
+        add (&frameTime, 28, "Show frame time");
+        frameTime.setTooltip ("Shows a paint-time (ms) and frames-per-second readout in the top corner of the waveforms, to measure smoothness.");
         add (&zoom, 28, "Visible seconds");
 
         addSection ("BROWSER");
@@ -435,6 +441,9 @@ public:
         fps.setSelectedId (settings.maxFps <= 30 ? 1 : settings.maxFps <= 60 ? 2 : settings.maxFps <= 120 ? 3 : 4, juce::dontSendNotification);
         gpuBox.addItemList ({ "GPU (OpenGL)", "CPU (software)" }, 1);
         gpuBox.setSelectedId (settings.pcRenderGpu ? 1 : 2, juce::dontSendNotification);
+        waveDetail.addItemList ({ "Sharp (full)", "Balanced", "Fast (smoothest)" }, 1);
+        waveDetail.setSelectedId (settings.waveformScaleCap >= 3.0f ? 1 : settings.waveformScaleCap >= 1.3f ? 2 : 3, juce::dontSendNotification);
+        frameTime.setToggleState (settings.showFrameTime, juce::dontSendNotification);
         setupSlider (zoom, 1.0, 30.0, 0.5, settings.visibleSeconds);
         setupSlider (jogTicks, 64.0, 4096.0, 1.0, settings.jogTicksPerRev);
         jogTicks.setSkewFactorFromMidPoint (720.0);
@@ -473,6 +482,8 @@ public:
 
         fps.onChange = [this] { const int v[] = { 30, 60, 120, 144 }; settings.maxFps = v[juce::jlimit (0, 3, fps.getSelectedId() - 1)]; onChanged(); };
         gpuBox.onChange = [this] { settings.pcRenderGpu = gpuBox.getSelectedId() == 1; onChanged(); };
+        waveDetail.onChange = [this] { const float v[] = { 4.0f, 1.5f, 1.0f }; settings.waveformScaleCap = v[juce::jlimit (0, 2, waveDetail.getSelectedId() - 1)]; onChanged(); };
+        frameTime.onClick = [this] { settings.showFrameTime = frameTime.getToggleState(); onChanged(); };
         zoom.onValueChange = [this] { settings.visibleSeconds = zoom.getValue(); onChanged(); };
         jogTicks.onValueChange = [this] { settings.jogTicksPerRev = jogTicks.getValue(); onChanged(); };
         leds.onClick = [this] { settings.ledFeedback = leds.getToggleState(); onChanged(); };
@@ -757,8 +768,8 @@ private:
     juce::Slider stemOffFade;
     PairRow overviewRow;
     juce::TextButton colourButton;
-    juce::ComboBox deck1Out, deck2Out, previewOut, fps, gpuBox, analysisRange, keyNotation, nameOrder;
-    juce::ToggleButton sumToMaster, leds, stemsOnLoad, stemsGpu, foldSkips, quantize, followDeck;
+    juce::ComboBox deck1Out, deck2Out, previewOut, fps, gpuBox, waveDetail, analysisRange, keyNotation, nameOrder;
+    juce::ToggleButton sumToMaster, leds, stemsOnLoad, stemsGpu, foldSkips, quantize, followDeck, frameTime;
     juce::TextEditor dbPath, dbKey, usbFolder, modelPath, cachePath;
     Resizer dbButtons;
     juce::ComboBox qualityOnLoad, qualityBatch;

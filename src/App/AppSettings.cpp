@@ -230,6 +230,8 @@ void AppSettings::load()
     boolean ("artistFirst", artistFirst);
     boolean ("autoMaster", autoMaster);
     boolean ("pcRenderGpu", pcRenderGpu);
+    boolean ("showFrameTime", showFrameTime);
+    waveformScaleCap = juce::jlimit (1.0f, 4.0f, (float) (double) v.getProperty ("waveformScaleCap", waveformScaleCap));
     boolean ("tagColourNames", tagColourNames);
     num ("browserHeight", browserHeight);
 
@@ -377,6 +379,8 @@ void AppSettings::save() const
     o->setProperty ("artistFirst", artistFirst);
     o->setProperty ("autoMaster", autoMaster);
     o->setProperty ("pcRenderGpu", pcRenderGpu);
+    o->setProperty ("waveformScaleCap", waveformScaleCap);
+    o->setProperty ("showFrameTime", showFrameTime);
     o->setProperty ("tagColourNames", tagColourNames);
     o->setProperty ("browserHeight", browserHeight);
 

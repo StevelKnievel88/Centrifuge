@@ -56,6 +56,10 @@ public:
     std::function<double()> loopBeatsForMenu;
     double getVisibleSeconds() const { return visibleSeconds; }
     void setMaxFps (int fps) { maxFps = juce::jlimit (15, 240, fps); }
+    /** Cap the tile render resolution (1 = logical pixels, cheapest; up to 4 = full high-DPI sharpness). */
+    void setScaleCap (float c) { scaleCap = juce::jlimit (1.0f, 4.0f, c); needsRedraw = true; }
+    /** Show a little paint-time / fps readout in the corner (Settings > show frame time). */
+    void setShowPerf (bool b) { showPerf = b; needsRedraw = true; }
     void setLanes (int deck, LaneConfig top, LaneConfig bottom);
     void setSingleColour (juce::Colour c, bool followDeck = false) { singleTint = c; singleFollowsDeck = followDeck; needsRedraw = true; }
     /** Stem layers from back to front, and each stem's opacity (0..1). */
@@ -171,6 +175,9 @@ private:
 
     double visibleSeconds = 10.0;
     int maxFps = 60;
+    float scaleCap = 4.0f;
+    bool showPerf = false;
+    double perfPaintMs = 0.0, perfFps = 0.0;
     std::array<std::array<LaneConfig, 2>, 2> lanes { { { LaneConfig { stems, 0 }, LaneConfig { threeBand, 0 } },
                                                        { LaneConfig { stems, 0 }, LaneConfig { threeBand, 0 } } } };
     juce::Colour singleTint { 0xff3d9bff };
