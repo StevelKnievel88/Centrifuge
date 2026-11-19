@@ -197,6 +197,9 @@ private:
     bool needsRedraw = true;
 
     std::vector<Marker> markers;
+    // How much to scale a deck's waveform zoom by its pitch, so beats keep a constant screen width and two synced
+    // decks' grids line up (a pitched-up deck shows more of its track, compressed, like rekordbox). 1.0 = no track.
+    double dispRatio (int d) const;
     int dragDeck = -1, dragDivider = -1, dragSeek = -1;
     bool dragPlayhead = false;
     double dragStartPos = 0.0;

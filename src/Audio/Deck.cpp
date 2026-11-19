@@ -1626,6 +1626,9 @@ void Deck::publish()
     // current tempo before it takes over. Publish where the slider points so the UI can show it to chase.
     pub.pickup = pitchPickup;
     pub.faderTargetPct = pitchFader * pitchRange * 100.0;
+    // The clean tempo ratio (no per-block phase nudge), used to scale the waveform zoom so a pitched deck's grid
+    // lines up with the master's; a stable value keeps the waveform tile cache from re-rendering every frame.
+    pub.displayRatio = (syncOn && syncRatio > 0.0) ? syncRatio : tempoRatio;
     pub.cuePointSec = cuePoint;
     pub.loopInSec = loopIn;
     pub.loopOutSec = loopOut;

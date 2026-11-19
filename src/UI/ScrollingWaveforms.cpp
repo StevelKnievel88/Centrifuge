@@ -250,10 +250,18 @@ bool ScrollingWaveforms::nearPlayhead (juce::Point<int> p) const
     return std::abs ((float) p.x - playheadX (getLocalBounds())) <= (touchMode ? 18.0f : 5.0f) && dividerAt (p) < 0;
 }
 
+double ScrollingWaveforms::dispRatio (int d) const
+{
+    if (d < 0 || d >= (int) decks.size() || decks[(size_t) d].track == nullptr) return 1.0;
+    const double r = engine.deck (engineDeck (d)).state().displayRatio.load();
+    if (! (r > 0.05 && r < 20.0)) return 1.0;
+    return std::round (r * 500.0) / 500.0;   // quantise to 0.2% so tiny sync drift doesn't re-render tiles each frame
+}
+
 double ScrollingWaveforms::sourceTimeAt (int deck, float x) const
 {
     const auto r = deckBounds (deck);
-    const double pps = (double) r.getWidth() / visibleSeconds;
+    const double pps = (double) r.getWidth() / visibleSeconds / dispRatio (deck);
     const auto& dv = decks[(size_t) deck];
     return juce::jmax (0.0, dv.fold.toSource (dv.shownPos + (x - playheadX (r)) / pps));
 }
@@ -364,7 +372,7 @@ void ScrollingWaveforms::paintDeck (juce::Graphics& g, int d, juce::Rectangle<in
     if (auto& tr = decks[(size_t) d].track; tr != nullptr && ! tr->phrases.empty() && phraseStripHeight (d) > 0)
     {
         const auto& dv = decks[(size_t) d];
-        const double pps = (double) r.getWidth() / visibleSeconds;
+        const double pps = (double) r.getWidth() / visibleSeconds / dispRatio (d);
         const float px0 = playheadX (r);
         g.setColour (juce::Colours::black);
         g.fillRect (phraseStripArea (d));
@@ -436,7 +444,7 @@ void ScrollingWaveforms::paintLane (juce::Graphics& g, int d, int lane, juce::Re
     const bool stemsSeparate = cfg.style == stemsSplit;
     const bool flags = lane == 0;
     const float playX = playheadX (r);
-    const double pps = (double) r.getWidth() / visibleSeconds;
+    const double pps = (double) r.getWidth() / visibleSeconds / dispRatio (d);
     auto wave = flags ? r.withTrimmedTop (markerBand).withTrimmedBottom (3) : r.reduced (0, 2);
     // Tiles are rendered at the physical pixel scale for sharpness, but that squares the work on a high-DPI (4K)
     // screen; the cap trades a little sharpness for a much cheaper render (Settings > Waveform detail).
@@ -616,7 +624,7 @@ void ScrollingWaveforms::paintOverlays (juce::Graphics& g, int d, juce::Rectangl
     auto& dv = decks[(size_t) d];
     const auto& st = engine.deck (engineDeck (d)).state();
     const float playX = playheadX (r);
-    const double pps = (double) r.getWidth() / visibleSeconds;
+    const double pps = (double) r.getWidth() / visibleSeconds / dispRatio (d);
     const double t = dv.shownPos;
     const auto& fold = dv.fold;
     const double tStart = t - (playX - (float) r.getX()) / pps;
@@ -1106,13 +1114,13 @@ void ScrollingWaveforms::mouseDrag (const juce::MouseEvent& e)
     if (dragScrub)
     {
         // waveform moved by dx pixels = that much of the track, as scrub clicks (1/40 of a platter turn each)
-        const double pps = (double) getWidth() / visibleSeconds;
+        const double pps = (double) getWidth() / visibleSeconds / dispRatio (dragDeck);
         const double dsec = -(e.position.x - dragLastX) / pps;
         dragLastX = e.position.x;
         if (dsec != 0.0) deck.post (Deck::Cmd::scrub, dsec * 40.0 / Deck::secondsPerRevolution);
         return;
     }
-    const double pps = (double) getWidth() / visibleSeconds;
+    const double pps = (double) getWidth() / visibleSeconds / dispRatio (dragDeck);
     const double disp = juce::jmax (0.0, dragStartPos - e.getDistanceFromDragStartX() / pps);
     deck.post (Deck::Cmd::seekSeconds, decks[(size_t) dragDeck].fold.toSource (disp));
 }

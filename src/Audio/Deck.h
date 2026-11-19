@@ -180,6 +180,7 @@ public:
         std::atomic<int> keyShift { 0 };          // semitones
         std::atomic<bool> pickup { false };         // holding tempo, waiting for the slider to catch up
         std::atomic<double> faderTargetPct { 0.0 }; // where the pitch slider currently points (for the catch-up readout)
+        std::atomic<double> displayRatio { 1.0 };   // clean (un-nudged) tempo ratio, for scaling the waveform zoom to pitch
         std::atomic<bool> vinylMode { true }, jogTouched { false }, stemsReady { false };
         std::atomic<float> stemsProgress { 0.0f };   // 0..1 while separating
         std::array<std::atomic<double>, 8> hotStart, hotEnd;
