@@ -327,8 +327,13 @@ public:
         add (&xzLead, 28, "Screen catch-up (ms)");
         setupSlider (xzLead, 0.0, 400.0, 5.0, settings.xzScreenLeadMs);
         xzLead.setTooltip ("The picture takes a moment to reach the XZ: its waveforms are drawn this far ahead so they line up with what you hear. "
+                           "The time spent sending each picture is measured and added automatically; this is the extra on top (the XZ's own display). "
                            "Raise it if the screen is behind the audio, lower it if it's ahead.");
         xzLead.onValueChange = [this] { settings.xzScreenLeadMs = xzLead.getValue(); onChanged(); };
+        add (&xzNeedleLock, 28, {});
+        xzNeedleLock.setButtonText ("Needle lock: touching the XZ screen's overview only moves the track while it's paused");
+        xzNeedleLock.setToggleState (settings.xzNeedleLock, juce::dontSendNotification);
+        xzNeedleLock.onClick = [this] { settings.xzNeedleLock = xzNeedleLock.getToggleState(); onChanged(); };
         add (&xzScreenNote, 44, {});
         xzScreenNote.setText ("The deck's STREAM / STEMS / MODS buttons are hidden while it streams. Map them to the XZ's buttons in Mapping > "
                               "XDJ-XZ screen (streaming on / off, stem controls, mods panel), along with the browser on the XZ screen.",
@@ -769,7 +774,7 @@ private:
     PairRow overviewRow;
     juce::TextButton colourButton;
     juce::ComboBox deck1Out, deck2Out, previewOut, fps, gpuBox, waveDetail, analysisRange, keyNotation, nameOrder;
-    juce::ToggleButton sumToMaster, leds, stemsOnLoad, stemsGpu, foldSkips, quantize, followDeck, frameTime;
+    juce::ToggleButton sumToMaster, leds, stemsOnLoad, stemsGpu, foldSkips, quantize, followDeck, frameTime, xzNeedleLock;
     juce::TextEditor dbPath, dbKey, usbFolder, modelPath, cachePath;
     Resizer dbButtons;
     juce::ComboBox qualityOnLoad, qualityBatch;

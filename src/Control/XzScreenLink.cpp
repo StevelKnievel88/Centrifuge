@@ -90,6 +90,7 @@ void XzScreenLink::setStatus (const juce::String& s)
 void XzScreenLink::submitFrame (const juce::Image& frameIn)
 {
     if (! enabled.load()) return;
+    const double madeAt = juce::Time::getMillisecondCounterHiRes();
     auto frame = frameIn;
     if (frame.getWidth() != width || frame.getHeight() != height)
         frame = frame.rescaled (width, height, juce::Graphics::mediumResamplingQuality);
@@ -124,6 +125,7 @@ void XzScreenLink::submitFrame (const juce::Image& frameIn)
     {
         std::lock_guard<std::mutex> l (frameLock);
         pending = std::move (px);
+        pendingMadeAt = madeAt;
         havePending = true;
     }
     frameArrived.signal();
@@ -239,6 +241,7 @@ void XzScreenLink::serve (const juce::String& ip)
             std::lock_guard<std::mutex> l (frameLock);
             if (! havePending) continue;
             next.swap (pending);
+            nextMadeAt = pendingMadeAt;
             havePending = false;
         }
 
@@ -270,6 +273,10 @@ void XzScreenLink::serve (const juce::String& ip)
         if (! writeAll (s, &h, (int) sizeof (h)) || ! writeAll (s, &next[(size_t) (y0 * width)], (int) h.payloadLength))
             return;
         shown.swap (next);
+        // how long from drawing this picture to it being handed to the XZ (waiting its turn + sending): the XZ's
+        // waveforms are drawn that much further ahead, so a slow or busy link doesn't leave them behind the audio
+        const double took = juce::jlimit (0.0, 250.0, juce::Time::getMillisecondCounterHiRes() - nextMadeAt);
+        sendDelayMs = sendDelayMs.load() * 0.9 + took * 0.1;
     }
 }
 

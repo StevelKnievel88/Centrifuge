@@ -388,6 +388,8 @@ MainComponent::MainComponent()
         const bool on = xzLink.isEnabled() && xzLink.isConnected();
         if (on && ! xzWasStreaming) xzView.startSplash();   // the start-up animation and logo when streaming starts
         xzWasStreaming = on;
+        // draw the waveforms ahead by the measured send time plus the XZ's own display delay (the setting)
+        xzView.getWaves().extraLead = (settings.xzScreenLeadMs + xzLink.getSendDelayMs()) / 1000.0;
         if (on) xzLink.submitFrame (xzView.render());
     };
     xzTimer.startTimerHz (25);
@@ -534,10 +536,10 @@ void MainComponent::applySettings()
         xw.setStemOffFade (settings.stemOffFade);
         xw.setScaleCap (settings.waveformScaleCap);
         xw.setPlayheadPosition (settings.playheadPosition);
-        xw.extraLead = settings.xzScreenLeadMs / 1000.0;
         xw.forceRedraw();
         xzView.setOverviewStyle (settings.overviewStyle, settings.overviewShape == 1, juce::Colour (settings.singleColour), settings.singleFollowsDeck);
         xzView.setOverviewGrid (settings.overviewGrid);
+        xzView.needleLock = settings.xzNeedleLock;
         xzView.getPhaseMeter().setOptions (settings.phraseBars, settings.phraseFollow, false);
         xzLink.setEnabled (settings.xzScreen);
     }

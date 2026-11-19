@@ -54,6 +54,7 @@ void XzScreenView::seekOverview (int d, float x)
     if (r.getWidth() <= 0.0f) return;
     auto& dk = engine.deck (d);
     if (dk.state().trackSerial.load() == 0) return;
+    if (needleLock && dk.state().playing.load()) return;
     const double f = juce::jlimit (0.0, 1.0, (double) ((x - r.getX()) / r.getWidth()));
     const auto& fold = waves.foldFor (d);
     if (fold.isEmpty()) dk.post (Deck::Cmd::seekFraction, f);
@@ -76,7 +77,11 @@ void XzScreenView::sendToWaves (int type, juce::Point<float> p)
 
 void XzScreenView::touch (int type, int x, int y)
 {
-    const juce::Point<float> p ((float) x, (float) y);
+    // The XZ reports a release at the panel's corner (0, 0) rather than where the finger left, which dropped the
+    // overview's needle at the start of the track. A release happens where the finger last was.
+    juce::Point<float> p ((float) x, (float) y);
+    if (type == 2) p = lastTouch;
+    else lastTouch = p;
     if (popup.open)
     {
         // a menu is up: a tap picks from it, anywhere else closes it (the rest of that touch does nothing)

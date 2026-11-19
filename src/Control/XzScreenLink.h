@@ -38,6 +38,8 @@ public:
     /** Force the next frame to be sent whole (not just changed rows): use when the screen's content changes
         wholesale, e.g. opening or closing the browser, so it can't trickle in a row at a time. */
     void requestFullFrame() { forceFull = true; }
+    /** Smoothed time from a picture being drawn to it reaching the XZ's socket (ms; 0 when not streaming). */
+    double getSendDelayMs() const { return connected.load() ? sendDelayMs.load() : 0.0; }
 
     /** A touch on the XZ screen: 1 = down, 3 = moved while down, 2 = up; in screen pixels. Called on the message thread. */
     std::function<void (int type, int x, int y)> onTouch;
@@ -59,6 +61,8 @@ private:
     std::mutex frameLock;
     std::vector<juce::uint16> pending;       // RGB565, newest frame not sent yet
     bool havePending = false;
+    double pendingMadeAt = 0.0, nextMadeAt = 0.0;
+    std::atomic<double> sendDelayMs { 0.0 };
     std::vector<int> commands;
     juce::WaitableEvent frameArrived;
 

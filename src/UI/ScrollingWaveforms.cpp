@@ -1069,14 +1069,8 @@ void ScrollingWaveforms::mouseDown (const juce::MouseEvent& e)
     dragDivider = dividerAt (e.getPosition());
     if (dragDivider >= 0) return;
     if (! touchMode && nearPlayhead (e.getPosition())) { dragPlayhead = true; return; }
-    if (touchMode)
-    {
-        // On the XZ screen, a tap / drag on the waveform drops the playhead there (needle drop); it stays put
-        // on release. The jog wheels still scrub the audio; this just moves the track to where you touch.
-        dragSeek = d;
-        engine.deck (engineDeck (d)).post (Deck::Cmd::seekSeconds, sourceTimeAt (d, e.position.x));
-        return;
-    }
+    // On the XZ screen a touch on the scrolling waveform does nothing (the overview and jog wheels move the track)
+    if (touchMode) return;
     dragDeck = d;
     dragStartPos = decks[(size_t) dragDeck].shownPos;
     // While playing, grabbing the waveform holds it like a hand on the platter; dragging scrubs it (you hear it)

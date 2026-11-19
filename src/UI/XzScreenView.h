@@ -49,6 +49,7 @@ public:
 
     /** A touch on the XZ screen: type 1 down, 3 moved, 2 up. */
     void touch (int type, int x, int y);
+    bool needleLock = false;   // the overview only moves the track while it is paused
 
     void resized() override;
     void paint (juce::Graphics&) override;
@@ -95,6 +96,7 @@ private:
     std::array<Overview, 2> overviews;
     std::array<juce::Rectangle<float>, 2> overviewRects, gridRects, qRects;
     int overviewStyle = 1;
+    juce::Point<float> lastTouch;   // the finger's last real position (a release reports a bogus one)
     bool overviewHalf = false, followDeck = false, overviewGrid = false, browserShown = false;
     juce::Colour singleColour;
 
