@@ -567,6 +567,161 @@ static int runCommandLine (const juce::StringArray& args)
         return 0;
     }
 
+    if (args.contains ("--make-grid-stick"))
+    {
+        // --make-grid-stick <out folder> <file.wav:bpm:first beat sec> ...: a USB stick of test tracks with their true
+        // grids, for checking --gridcheck
+        const juce::File root (argAfter ("--make-grid-stick"));
+        std::vector<ExportItem> items;
+        for (int i = args.indexOf ("--make-grid-stick") + 2; i < args.size(); ++i)
+        {
+            auto parts = juce::StringArray::fromTokens (args[i], ":", "");
+            if (parts.size() != 3) continue;
+            ExportItem it;
+            it.info.file = juce::File (parts[0]);
+            it.info.title = it.info.file.getFileNameWithoutExtension();
+            it.info.artist = "Grid Test";
+            it.info.bpm = parts[1].getDoubleValue();
+            const double beat = 60.0 / it.info.bpm;
+            for (int k = 0; parts[2].getDoubleValue() + k * beat < 600.0; ++k)
+                it.version.beats.push_back ({ parts[2].getDoubleValue() + k * beat, (float) it.info.bpm, k % 4 + 1 });
+            it.centrifuge = it.version;
+            items.push_back (it);
+        }
+        AudioFileLoader loader;
+        juce::String error, summary;
+        ExportList lists;
+        const bool ok = exportToUsb (root, items, lists, loader, {}, error, summary);
+        std::cout << (ok ? "made " : "failed: ") << summary << error << std::endl;
+        return ok ? 0 : 1;
+    }
+
+    if (args.contains ("--gridcheck"))
+    {
+        // --gridcheck <USB stick root...> [--max N]: Centrifuge's own beat grid (the old way and the new kick-aligned way)
+        // against rekordbox's grid for every analysed track on the stick. Writes "Centrifuge grid test.txt" on the desktop.
+        struct Item { juce::File file; std::vector<Beat> beats; double bpm; };
+        std::vector<Item> items;
+        const int maxItems = argAfter ("--max").isNotEmpty() ? argAfter ("--max").getIntValue() : 1000000;
+        for (int i = args.indexOf ("--gridcheck") + 1; i < args.size(); ++i)
+        {
+            if (args[i].startsWith ("--")) break;
+            const juce::File f (args[i].unquoted());
+            if (f.isDirectory() && f.getChildFile ("PIONEER").isDirectory())
+                if (auto src = loadRekordboxUsbExport (f))
+                    for (auto& t : src->tracks)
+                    {
+                        if (! t.file.existsAsFile()) continue;
+                        auto a = loadAnlz (t.anlzBase);
+                        if (a.beats.size() >= 32) items.push_back ({ t.file, a.beats, t.bpm });
+                    }
+        }
+        if ((int) items.size() > maxItems) items.resize ((size_t) maxItems);
+
+        juce::String report;
+        auto out = [&report] (const juce::String& line) { std::printf ("%s\n", line.toRawUTF8()); std::fflush (stdout); report << line << "\n"; };
+        out ("Centrifuge grid test: " + juce::String ((int) items.size()) + " tracks (ms = where Centrifuge's beat is against rekordbox's; + = later)");
+        out ({});
+        const double fracs[] = { 0.05, 0.15, 0.3, 0.5 };
+        out (juce::String ("track").paddedRight (' ', 44) + "   rb BPM   our BPM     old ms     new ms   kicks vs rekordbox at 5% / 15% / 30% / 50% rise");
+
+        // where our grid's beats sit against rekordbox's (median over the middle of the track); nan = tempo differs
+        auto phaseErr = [] (const std::vector<Beat>& ours, const std::vector<Beat>& rb, double len)
+        {
+            std::vector<double> d;
+            size_t j = 0;
+            for (auto& b : ours)
+            {
+                if (b.timeSec < len * 0.2 || b.timeSec > len * 0.8) continue;
+                while (j + 1 < rb.size() && rb[j + 1].timeSec <= b.timeSec) ++j;
+                double best = b.timeSec - rb[j].timeSec;
+                if (j + 1 < rb.size() && std::abs (b.timeSec - rb[j + 1].timeSec) < std::abs (best)) best = b.timeSec - rb[j + 1].timeSec;
+                d.push_back (best);
+            }
+            if (d.empty()) return std::nan ("");
+            std::sort (d.begin(), d.end());
+            return d[d.size() / 2] * 1000.0;
+        };
+        struct Tally { int n = 0, within3 = 0, within10 = 0, offBeat = 0, tempo = 0; double absSum = 0.0, signedSum = 0.0; int aligned = 0; };
+        Tally oldT, newT;
+        std::array<std::vector<double>, 4> kickVsRb;
+        auto tally = [] (Tally& t, double err, double beatMs, bool tempoOk)
+        {
+            ++t.n;
+            if (! tempoOk || std::isnan (err)) { ++t.tempo; return; }
+            const double a = std::abs (err);
+            if (a > beatMs * 0.125) { ++t.offBeat; return; }   // on the wrong sixteenth / off-beat
+            ++t.aligned; t.absSum += a; t.signedSum += err;
+            if (a <= 3.0) ++t.within3;
+            if (a <= 10.0) ++t.within10;
+        };
+        auto fmt = [] (double v) { return std::isnan (v) ? juce::String ("   tempo").paddedLeft (' ', 10) : juce::String (v, 1).paddedLeft (' ', 10); };
+
+        AudioFileLoader loader;
+        for (auto& it : items)
+        {
+            juce::String err;
+            auto audio = loader.load (it.file, err);
+            if (audio == nullptr) { out (it.file.getFileName() + ": " + err); continue; }
+            TrackAnalyser::Options o;
+            o.hintBpm = AudioTags::read (it.file).bpm;
+            o.kickAlign = false;
+            const auto rOld = TrackAnalyser::analyse (*audio, o);
+            o.kickAlign = true;
+            const auto rNew = TrackAnalyser::analyse (*audio, o);
+            const double len = audio->lengthSeconds();
+            const double rbBpm = it.bpm > 0.0 ? it.bpm : it.beats.front().bpm;
+            const double beatMs = 60000.0 / juce::jmax (1.0, rbBpm);
+            auto tempoOk = [&] (double bpm) { return rbBpm > 0.0 && std::abs (bpm - rbBpm) / rbBpm < 0.002; };
+            const double eOld = phaseErr (rOld.beats, it.beats, len), eNew = phaseErr (rNew.beats, it.beats, len);
+            tally (oldT, eOld, beatMs, tempoOk (rOld.bpm));
+            tally (newT, eNew, beatMs, tempoOk (rNew.bpm));
+
+            // where the kick-start finder puts the kicks against rekordbox's own beats, for each threshold
+            std::vector<double> rbTimes;
+            for (auto& b : it.beats) rbTimes.push_back (b.timeSec);
+            juce::String kv;
+            for (int k = 0; k < 4; ++k)
+            {
+                const auto ka = TrackAnalyser::kickOffset (*audio, rbTimes, fracs[k]);
+                if (ka.ok) { kickVsRb[(size_t) k].push_back (ka.offsetSec * 1000.0); kv << juce::String (ka.offsetSec * 1000.0, 1).paddedLeft (' ', 8); }
+                else kv << juce::String ("-").paddedLeft (' ', 8);
+            }
+            out (it.file.getFileName().substring (0, 44).paddedRight (' ', 44) + juce::String (rbBpm, 2).paddedLeft (' ', 9)
+                 + juce::String (rNew.bpm, 2).paddedLeft (' ', 10) + fmt (tempoOk (rOld.bpm) ? eOld : std::nan (""))
+                 + fmt (tempoOk (rNew.bpm) ? eNew : std::nan ("")) + "  " + kv);
+        }
+
+        auto summary = [&out] (const char* name, const Tally& t)
+        {
+            out (juce::String (name).paddedRight (' ', 6) + juce::String (t.within3).paddedLeft (' ', 10) + juce::String (t.within10).paddedLeft (' ', 11)
+                 + juce::String (t.offBeat).paddedLeft (' ', 16) + juce::String (t.tempo).paddedLeft (' ', 15)
+                 + juce::String (t.aligned > 0 ? t.absSum / t.aligned : 0.0, 2).paddedLeft (' ', 14)
+                 + juce::String (t.aligned > 0 ? t.signedSum / t.aligned : 0.0, 2).paddedLeft (' ', 12));
+        };
+        out ({});
+        out ("        within 3 ms  within 10 ms  wrong beat part  tempo differs  average ms off  bias (ms)");
+        summary ("old", oldT);
+        summary ("new", newT);
+        out ({});
+        juce::String kl = "Kick start vs rekordbox's beat (median over tracks, ms):";
+        for (int k = 0; k < 4; ++k)
+        {
+            auto v = kickVsRb[(size_t) k];
+            double m = 0.0;
+            if (! v.empty()) { std::sort (v.begin(), v.end()); m = v[v.size() / 2]; }
+            kl << "  " << juce::String ((int) std::lround (fracs[k] * 100)) << "% rise " << juce::String (m, 1);
+        }
+        out (kl);
+        out ("(the new grid uses 15%; the threshold closest to 0 there matches where rekordbox puts its beats)");
+        if (! args.contains ("--no-report"))
+        {
+            const auto f = juce::File::getSpecialLocation (juce::File::userDesktopDirectory).getChildFile ("Centrifuge grid test.txt");
+            if (f.replaceWithText (report)) f.startAsProcess();
+        }
+        return 0;
+    }
+
     if (args.contains ("--analyse"))
     {
         // --analyse <audio file> [--min 88 --max 175]: tags and Centrifuge's own BPM / grid / key analysis

@@ -320,6 +320,42 @@ TrackAnalyser::Result TrackAnalyser::analyse (const TrackAudio& audio, const Opt
     const double beatSec = 60.0 / bpm;
     t0 -= std::floor (t0 / beatSec) * beatSec;   // first beat at or after 0
 
+    // The onset envelope only places the beat to within a few ms (23 ms windows, 5 ms steps, and kicks with a hard
+    // click peak earlier than round ones). Measure where the kicks actually start, in the audio itself, and move
+    // the grid onto them.
+    if (opt.kickAlign)
+    {
+        auto timesFrom = [&] (double start)
+        {
+            std::vector<double> times;
+            for (double t = start; t < audio.lengthSeconds(); t += beatSec) times.push_back (t);
+            return times;
+        };
+        // A loud bassline between the kicks can pull the grid onto a sixteenth: the kick is the biggest low-end hit,
+        // so check all four sixteenths and move to the one that carries it (only on a clear difference).
+        {
+            std::array<double, 4> str {};
+            for (int q = 0; q < 4; ++q)
+                str[(size_t) q] = kickOffset (audio, timesFrom (t0 + q * beatSec / 4.0), opt.kickFrac, opt.kickCutoffHz, opt.kickSmoothSec).strength;
+            const int best = (int) (std::max_element (str.begin(), str.end()) - str.begin());
+            if (std::getenv ("CF_ANALYSE_DEBUG") != nullptr)
+                std::cerr << "sixteenth strengths " << str[0] << " " << str[1] << " " << str[2] << " " << str[3] << std::endl;
+            if (best != 0 && str[(size_t) best] > 1.15 * str[0])
+            {
+                t0 += best * beatSec / 4.0;
+                t0 -= std::floor (t0 / beatSec) * beatSec;
+            }
+        }
+        const auto ka = kickOffset (audio, timesFrom (t0), opt.kickFrac, opt.kickCutoffHz, opt.kickSmoothSec);
+        if (std::getenv ("CF_ANALYSE_DEBUG") != nullptr)
+            std::cerr << "kick align " << ka.offsetSec * 1000.0 << " ms from " << ka.used << "/" << ka.total << " beats, spread " << ka.spreadMs << " ms" << std::endl;
+        if (ka.ok)
+        {
+            t0 += ka.offsetSec;
+            t0 -= std::floor (t0 / beatSec) * beatSec;
+        }
+    }
+
     // Bar start: the sound changes most from one beat to the next on the one (new bass notes, chords, parts),
     // so the beat position (of four) with the biggest average change is the downbeat.
     const int numBeats = (int) ((audio.lengthSeconds() - t0) / beatSec) + 1;
@@ -358,9 +394,126 @@ TrackAnalyser::Result TrackAnalyser::analyse (const TrackAudio& audio, const Opt
     r.bpm = bpm;
 
     if (! cancelled (cancel))
+    {
         r.key = detectKeyV2 (audio, nullptr, &r.beats);
         r.keyAlt = detectKeyAlt (audio);
+    }
     return r;
+}
+
+//==============================================================================
+TrackAnalyser::KickAlign TrackAnalyser::kickOffset (const TrackAudio& a, const std::vector<double>& beatTimes, double frac,
+                                                    double fc, double smoothSec)
+{
+    KickAlign res;
+    const double sr = a.sampleRate;
+    if (sr <= 0.0 || a.numFrames <= 0) return res;
+    frac = juce::jlimit (0.01, 0.95, frac);
+
+    // low-pass at 120 Hz: two RBJ biquads, run forwards then backwards so the kick isn't delayed (zero phase)
+    struct BQ { double b0, b1, b2, a1, a2; };
+    auto lowpass = [sr] (double fc, double q)
+    {
+        const double w = juce::MathConstants<double>::twoPi * fc / sr, cs = std::cos (w), al = std::sin (w) / (2.0 * q);
+        const double a0 = 1.0 + al;
+        return BQ { (1.0 - cs) / 2.0 / a0, (1.0 - cs) / a0, (1.0 - cs) / 2.0 / a0, -2.0 * cs / a0, (1.0 - al) / a0 };
+    };
+    const BQ f1 = lowpass (fc, 0.5412), f2 = lowpass (fc, 1.3066);   // 4th-order Butterworth
+    auto run = [] (std::vector<double>& x, const BQ& f, bool backwards)
+    {
+        double x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+        const int n = (int) x.size();
+        for (int j = 0; j < n; ++j)
+        {
+            auto& v = x[(size_t) (backwards ? n - 1 - j : j)];
+            const double y = f.b0 * v + f.b1 * x1 + f.b2 * x2 - f.a1 * y1 - f.a2 * y2;
+            x2 = x1; x1 = v; y2 = y1; y1 = y; v = y;
+        }
+    };
+
+    const int pad = (int) (0.12 * sr);                 // room for the filters to settle either side
+    const int half = (int) (0.075 * sr);               // the part looked at: +-75 ms around the beat
+    const int smooth = juce::jmax (1, (int) (smoothSec * sr));   // averages out the kick's own cycles
+    std::vector<double> x, e;
+    struct Hit { double off, w, body = 0.0; };
+    std::vector<Hit> hits;
+
+    for (double t : beatTimes)
+    {
+        ++res.total;
+        const auto c = (int64_t) std::llround (t * sr);
+        const int64_t s0 = c - half - pad, s1 = c + half + pad;
+        if (s0 < 0 || s1 >= a.numFrames) continue;
+        const int n = (int) (s1 - s0);
+        x.resize ((size_t) n);
+        for (int i = 0; i < n; ++i) x[(size_t) i] = 0.5 * ((double) a.left[(size_t) (s0 + i)] + (double) a.right[(size_t) (s0 + i)]);
+        run (x, f1, false); run (x, f2, false); run (x, f2, true); run (x, f1, true);
+
+        // energy, smoothed with a centred window (no time shift)
+        e.assign ((size_t) n, 0.0);
+        double acc = 0.0;
+        for (int i = 0; i < n; ++i)
+        {
+            acc += x[(size_t) i] * x[(size_t) i];
+            if (i >= smooth) acc -= x[(size_t) (i - smooth)] * x[(size_t) (i - smooth)];
+            const int at = i - smooth / 2;
+            if (at >= 0) e[(size_t) at] = acc / smooth;
+        }
+
+        const int mid = pad + half;   // the beat
+        const int lo = mid - (int) (0.045 * sr), hi = mid + (int) (0.045 * sr);
+        int pk = lo;
+        for (int i = lo; i <= hi; ++i) if (e[(size_t) i] > e[(size_t) pk]) pk = i;
+        double base = e[(size_t) pk];
+        for (int i = juce::jmax (0, pk - (int) (0.06 * sr)); i < pk - (int) (0.002 * sr); ++i) base = juce::jmin (base, e[(size_t) i]);
+        const double peak = e[(size_t) pk], rise = peak - base;
+        if (! (peak > 1.0e-9) || rise < 0.5 * peak) continue;   // no clear kick here (bass running through, or silence)
+
+        const double thr = base + frac * rise;
+        int i = pk;
+        while (i > 0 && e[(size_t) i - 1] > thr) --i;
+        if (i <= 0 || i < lo - (int) (0.03 * sr)) continue;
+        const double y0 = e[(size_t) i - 1], y1 = e[(size_t) i];
+        const double onset = (i - 1) + (y1 > y0 ? (thr - y0) / (y1 - y0) : 1.0);
+        // body: the energy over the 80 ms from the start - a kick rings on, a bass note between kicks is short
+        double body = 0.0;
+        const int b1 = juce::jmin (n - 1, i + (int) (0.08 * sr));
+        for (int j = i; j < b1; ++j) body += e[(size_t) j];
+        hits.push_back ({ (onset - mid) / sr, std::sqrt (rise), std::sqrt (body / juce::jmax (1, b1 - i)) });
+    }
+    if (hits.size() < 16) { res.strength = 0.0; return res; }
+
+    // keep the strong kicks (breakdown thumps and stray bass notes are weaker)
+    {
+        std::vector<double> bs;
+        for (auto& h : hits) bs.push_back (h.body);
+        std::nth_element (bs.begin(), bs.begin() + (long) bs.size() / 2, bs.end());
+        res.strength = bs[bs.size() / 2];
+    }
+    std::vector<double> ws;
+    for (auto& h : hits) ws.push_back (h.w);
+    std::nth_element (ws.begin(), ws.begin() + (long) ws.size() / 2, ws.end());
+    const double wMed = ws[ws.size() / 2];
+    std::vector<Hit> strong;
+    for (auto& h : hits) if (h.w >= 0.4 * wMed) strong.push_back (h);
+    if (strong.size() < 16) return res;
+
+    auto wmedian = [] (std::vector<Hit> v)
+    {
+        std::sort (v.begin(), v.end(), [] (const Hit& p, const Hit& q) { return p.off < q.off; });
+        double tot = 0.0; for (auto& h : v) tot += h.w;
+        double run = 0.0;
+        for (auto& h : v) { run += h.w; if (run >= 0.5 * tot) return h.off; }
+        return v.back().off;
+    };
+    const double med = wmedian (strong);
+    std::vector<Hit> dev;
+    for (auto& h : strong) dev.push_back ({ std::abs (h.off - med), h.w });
+    res.spreadMs = wmedian (dev) * 1000.0;
+    res.offsetSec = med;
+    res.used = (int) strong.size();
+    res.ok = res.spreadMs < 6.0;   // the kicks agree (a grid that drifts, or no steady kick, is left as it was)
+    return res;
 }
 
 //==============================================================================
